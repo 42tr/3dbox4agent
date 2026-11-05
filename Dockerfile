@@ -1,0 +1,73 @@
+ARG NODE_IMAGE=node:22-bookworm-slim
+ARG RUST_IMAGE=rust:1.90-slim-bookworm
+
+FROM ${NODE_IMAGE} AS base
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+FROM base AS web-build
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY build.py ./
+COPY src ./src
+COPY examples ./examples
+COPY assets/mission-control ./assets/mission-control
+RUN npm run build && npm prune --omit=dev
+
+FROM base AS python-dependencies
+ARG TARGETARCH
+COPY sdk/python/pyproject.toml /tmp/box-sdk-pyproject.toml
+RUN --mount=type=cache,id=3dbox-python-downloads-${TARGETARCH},target=/root/.cache/pip,sharing=locked \
+    python3 -m venv /opt/box-agent \
+    && /opt/box-agent/bin/python -c "import pathlib,subprocess,tomllib; p=tomllib.loads(pathlib.Path('/tmp/box-sdk-pyproject.toml').read_text()); deps=p['build-system']['requires']+['wheel']+p['project'].get('dependencies',[])+p['project']['optional-dependencies']['grpc-stream']; subprocess.check_call(['/opt/box-agent/bin/python','-m','pip','install','--retries','5','--timeout','180',*deps])"
+
+FROM python-dependencies AS python-build
+COPY sdk/python ./sdk/python
+RUN /opt/box-agent/bin/pip install --no-index --no-deps --no-build-isolation './sdk/python[grpc-stream]'
+
+FROM ${RUST_IMAGE} AS native-build
+WORKDIR /build
+ARG TARGETARCH
+COPY rust/physics ./rust/physics
+COPY scripts/collect-native-licenses.sh ./collect-native-licenses.sh
+RUN --mount=type=cache,id=3dbox-cargo-registry,target=/var/cache/box-cargo,sharing=locked \
+    --mount=type=cache,id=3dbox-cargo-target-${TARGETARCH},target=/build/rust/physics/target,sharing=locked \
+    CARGO_HOME=/var/cache/box-cargo cargo build --release --locked --jobs 1 --manifest-path rust/physics/Cargo.toml \
+    && cp rust/physics/target/release/libbox_physics.so /build/box_physics.node \
+    && CARGO_HOME=/var/cache/box-cargo sh ./collect-native-licenses.sh
+
+# Default Compose target. Compilers and local runtime data stay outside this image.
+FROM base AS world
+COPY --from=web-build /app/node_modules ./node_modules
+COPY --from=web-build /app/index.html ./index.html
+COPY --from=python-build /opt/box-agent /opt/box-agent
+COPY package.json package-lock.json ./
+COPY src ./src
+COPY server ./server
+COPY scripts ./scripts
+COPY third_party ./third_party
+COPY sdk/python ./sdk/python
+COPY proto ./proto
+COPY examples ./examples
+COPY rust/physics ./rust/physics
+RUN mkdir -p /app/.3dbox && chown node:node /app/.3dbox && chmod 700 /app/.3dbox
+ENV PATH="/opt/box-agent/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    WORLD_BIND=0.0.0.0 \
+    WORLD_PORT=8787 \
+    BOX_EVENT_JOURNAL_DIR=/app/.3dbox/event-journals \
+    BOX_REPLAY_JOURNAL=1
+USER node
+EXPOSE 8787
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.WORLD_PORT||8787)+'/health',{signal:AbortSignal.timeout(3000)}).then(async r=>{if(!r.ok||(await r.json()).ok!==true)process.exit(1)}).catch(()=>process.exit(1))"]
+CMD ["node", "server/world-supervisor.js"]
+
+# Native modules are built for the container architecture, never copied from the host.
+FROM world AS world-rust
+COPY --from=native-build /build/box_physics.node ./rust/physics/target/release/box_physics.node
+COPY --from=native-build /build/native-licenses ./third_party/native
+ENV BOX_PHYSICS_BACKEND=rust BOX_TASK_BACKEND=rust BOX_COMM_BACKEND=rust BOX_NAV_BACKEND=rust

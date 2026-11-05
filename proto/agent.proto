@@ -1,0 +1,151 @@
+syntax = "proto3";
+package box.agent.v1;
+
+// Local development interface. Credentials travel in authorization metadata.
+// Observation and result bodies preserve the existing evolving JSON contract.
+service AgentWorld {
+  rpc ObserveAgent(AgentRef) returns (JsonResult);
+  rpc ObserveCoordinator(SessionRef) returns (JsonResult);
+  rpc ObserveAgentTyped(AgentRef) returns (AgentObservation);
+  rpc ObserveCoordinatorTyped(SessionRef) returns (CoordinatorObservation);
+  rpc StreamAgentObservationsTyped(AgentSubscription) returns (stream TypedObservationUpdate);
+  rpc StreamCoordinatorObservationsTyped(CoordinatorSubscription) returns (stream TypedObservationUpdate);
+  rpc StreamAgentObservations(AgentSubscription) returns (stream ObservationUpdate);
+  rpc StreamCoordinatorObservations(CoordinatorSubscription) returns (stream ObservationUpdate);
+  rpc StreamEventHistory(EventHistoryRequest) returns (stream EventHistoryItem);
+  rpc SubscribeEvents(EventHistoryRequest) returns (stream EventHistoryItem);
+  rpc Lidar(LidarRequest) returns (JsonResult);
+  rpc SubmitAction(Action) returns (JsonResult);
+  rpc CancelAction(Cancel) returns (JsonResult);
+  rpc SendMessage(Message) returns (JsonResult);
+  rpc Assign(Assignment) returns (JsonResult);
+  rpc ReportSample(SampleReport) returns (JsonResult);
+  rpc ReportScan(ScanReport) returns (JsonResult);
+  rpc ReadMemory(AgentRef) returns (JsonResult);
+  rpc WriteMemory(MemoryWrite) returns (JsonResult);
+  rpc Revoke(Revocation) returns (JsonResult);
+  rpc ProposeSurvey(SurveyProposal) returns (JsonResult);
+}
+message SessionRef { string session_id = 1; }
+// Finite, administrator-only persisted history. The first item fixes through_seq.
+message EventHistoryRequest { string session_id = 1; uint64 after_seq = 2; }
+message EventHistoryItem {
+  enum Kind { READY = 0; EVENT = 1; }
+  Kind kind = 1; uint64 through_seq = 2; uint64 revision = 3;
+  uint64 seq = 4; bytes event_json_utf8 = 5;
+  bool closed = 6; bool partial_tail = 7; bool active = 8;
+}
+message AgentRef { string session_id = 1; string agent_id = 2; }
+message LidarRequest { string session_id = 1; string agent_id = 2; uint32 count = 3; optional double max_range = 4; }
+message JsonResult { bytes json_utf8 = 1; }
+message Point { double x = 1; double y = 2; }
+message Action {
+  string session_id = 1; string agent_id = 2; string request_id = 3;
+  string type = 4; uint64 target_tick = 5; uint64 expires_tick = 6;
+  Point target = 7; string task_id = 8;
+  string target_agent_id = 9; optional uint64 observed_tick = 10; optional uint64 fault_generation = 11;
+}
+message Cancel { string session_id = 1; string agent_id = 2; string request_id = 3; }
+message Message {
+  string session_id = 1; string agent_id = 2; string recipient_id = 3;
+  string text = 4; repeated string via = 5; string request_id = 6;
+}
+message SampleReport { string session_id = 1; string agent_id = 2; string request_id = 3; string task_id = 4; }
+message Assignment {
+  string session_id = 1; string request_id = 2; string task_id = 3;
+  string agent_id = 4; uint64 observed_tick = 5;
+}
+
+message ScanReport { string session_id = 1; string agent_id = 2; string request_id = 3; string scan_request_id = 4; }
+// Memory remains a bounded, arbitrary JSON object; the revision guards concurrent writes.
+message MemoryWrite { string session_id = 1; string agent_id = 2; uint64 expected_revision = 3; bytes value_json_utf8 = 4; }
+message Revocation {
+  string session_id = 1; string request_id = 2; string task_id = 3;
+  string agent_id = 4; uint64 assignment_id = 5; uint64 observed_tick = 6;
+  optional uint64 require_blocked_since = 7;
+}
+message SurveyProposal {
+  string session_id = 1; string request_id = 2; string task_id = 3;
+  string name = 4; string role = 5; Point target = 6; uint32 duration = 7;
+  uint64 observed_tick = 8; repeated string depends_on = 9;
+  optional uint32 priority = 10; optional uint64 deadline = 11;
+  optional uint64 evidence_id = 12; optional uint64 sensor_evidence_id = 13;
+  optional uint64 sample_report_id = 14;
+}
+
+// A subscription sends a ready marker, then the latest scoped observation and
+// later observations/status updates. Reconnection does not replay history.
+message AgentSubscription { string session_id = 1; string agent_id = 2; optional uint64 after_revision = 3; }
+message CoordinatorSubscription { string session_id = 1; optional uint64 after_revision = 2; }
+message ObservationUpdate {
+  enum Kind { READY = 0; OBSERVATION = 1; STATUS = 2; }
+  Kind kind = 1; uint64 revision = 2; uint64 status_revision = 3;
+  bool running = 4; uint32 speed = 5; bytes observation_json_utf8 = 6;
+  optional uint64 revisions_since = 7;
+}
+
+// Typed scoped observation views. Unmapped fields remain in extra_json_utf8
+// so that adding a field to the world API does not silently discard it.
+message AgentSelf {
+  optional string id = 1; optional string role = 2; double x = 3; double y = 4; double battery = 5;
+  optional string status = 6; double sensor_range = 7; double communication_range = 8;
+  double move_energy_per_unit = 9; double work_energy_per_tick = 10;
+  repeated string capabilities = 11; bool communication_interrupted = 12;
+  optional string mobility = 13; optional bool communication_line_of_sight = 14;
+  optional uint64 communication_bytes_per_tick = 15; optional uint64 route_blocked_since = 16;
+  optional double return_energy_estimate = 17; bytes extra_json_utf8 = 31;
+}
+message SeenItem {
+  optional string kind = 1; optional string id = 2; double x = 3; double y = 4;
+  uint64 observed_tick = 5; optional string role = 6; optional string status = 7;
+  optional string source = 8; optional bool current = 9; optional uint64 age = 10;
+  bytes extra_json_utf8 = 31;
+}
+message AssignedTask {
+  optional string id = 1; optional string name = 2; Point target = 3; optional string status = 4;
+  optional string behavior = 5; optional string phase = 6; Point waypoint = 7;
+  optional bool within_reach = 8; bytes extra_json_utf8 = 31;
+}
+message ObservedAction {
+  optional string agent_id = 1; optional string request_id = 2; optional string type = 3; optional string status = 4;
+  optional uint64 target_tick = 5; optional uint64 expires_tick = 6;
+  optional uint64 submitted_tick = 7; optional uint64 updated_tick = 8;
+  optional string task_id = 9; optional string reason = 10; Point target = 11;
+  bytes extra_json_utf8 = 31;
+}
+message PeerMessage {
+  uint64 id = 1; optional string from = 2; optional string to = 3; optional string text = 4;
+  uint64 sent_tick = 5; uint64 received_tick = 6; bytes extra_json_utf8 = 31;
+}
+message AgentObservation {
+  uint32 version = 1; uint64 tick = 2; bool done = 3; optional string execution_mode = 4;
+  AgentSelf self = 5; repeated SeenItem nearby = 6; repeated SeenItem visible_targets = 7;
+  repeated AssignedTask assigned_tasks = 8; repeated SeenItem memory = 9;
+  repeated ObservedAction actions = 10; repeated PeerMessage inbox = 11;
+  bytes extra_json_utf8 = 31;
+}
+message Candidate {
+  optional string id = 1; double x = 2; double y = 3; double battery = 4;
+  optional double speed = 5; bytes extra_json_utf8 = 31;
+}
+message ReadyTask {
+  optional string id = 1; optional string capability = 2; Point target = 3; optional string name = 4;
+  optional string behavior = 5; uint64 duration = 6; uint32 priority = 7;
+  optional uint64 deadline = 8; repeated Candidate candidates = 9;
+  bytes extra_json_utf8 = 31;
+}
+message ActiveTask {
+  optional string id = 1; optional string name = 2; optional string assignee = 3; uint64 assignment_id = 4;
+  bytes extra_json_utf8 = 31;
+}
+message CoordinatorObservation {
+  uint32 version = 1; uint64 tick = 2; bool done = 3; bool failed = 4;
+  repeated ReadyTask tasks = 5; repeated ActiveTask active = 6;
+  optional uint64 world_revision = 7; optional string coordinator_id = 8;
+  bytes extra_json_utf8 = 31;
+}
+message TypedObservationUpdate {
+  ObservationUpdate.Kind kind = 1; uint64 revision = 2; uint64 status_revision = 3;
+  bool running = 4; uint32 speed = 5; optional uint64 revisions_since = 6;
+  oneof observation { AgentObservation agent = 7; CoordinatorObservation coordinator = 8; }
+}

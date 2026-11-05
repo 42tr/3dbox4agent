@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "box-agent-sdk"
+version = "0.1.0"
+description = "Scoped Python clients for the 3DBox local multi-agent sandbox"
+readme = "SDK-README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+stream = ["websockets>=15,<16", "protobuf>=4.25,<8"]
+grpc = ["grpcio>=1.60,<2", "protobuf>=4.25,<8"]
+grpc-stream = ["grpcio>=1.60,<2", "protobuf>=4.25,<8", "websockets>=15,<16"]
+
+[tool.setuptools.package-data]
+box_agent = ["stream.desc", "agent.desc"]
+
+[tool.setuptools]
+packages = ["box_agent"]

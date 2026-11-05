@@ -1,0 +1,23 @@
+import React,{useState,useEffect,useRef} from 'react';
+import {Cube} from '@phosphor-icons/react';
+import {settingsOptions,settingsBlock,settingsMessage,validateSettings,type SettingsContext,type SettingsResult,type SettingSelect,type SettingField} from './world-settings';
+type Props={context?:SettingsContext;edit:(key:string,field:SettingField,value:string)=>SettingsResult;submit:(key:string,operation:'restart'|'dispatch')=>Promise<SettingsResult>;global:()=>void;live:()=>void};
+const label=(key:SettingSelect,value:string)=>settingsOptions[key].find(([v])=>v===value)?.[1]||value;
+export function WorldSettingControls({context:c,edit,submit,global,live}:Props){
+ const [pending,setPending]=useState(false),[feedback,setFeedback]=useState('');const alive=useRef(true);useEffect(()=>{alive.current=true;return()=>{alive.current=false}},[]);if(!c)return null;
+ const block=settingsBlock(c,'edit'),disabled=!!block||pending,invalid=validateSettings(c),dispatchBlock=settingsBlock(c,'dispatch');
+ const change=(field:SettingField,value:string)=>{const r=edit(c.key,field,value);setFeedback(r.ok?'':settingsMessage(r.reason))};
+ const send=async(operation:'restart'|'dispatch')=>{if(disabled)return;setPending(true);setFeedback(operation==='restart'?'正在创建新的运行…':'正在切换指挥方式…');try{const r=await submit(c.key,operation);if(alive.current)setFeedback(r.ok?(operation==='restart'?'新的运行已就绪。':'指挥方式已切换。'):settingsMessage(r.reason))}catch{if(alive.current)setFeedback(settingsMessage())}finally{if(alive.current)setPending(false)}};
+ const field=(id:SettingSelect,title:string)=><label key={id}>{title}<select aria-label={title} value={c.values[id]} disabled={disabled} onChange={e=>change(id,e.target.value)}>{settingsOptions[id].map(([value,name])=><option key={value} value={value} disabled={id==='sensorMode'&&value==='rapier'&&!c.rays}>{name}</option>)}{id==='scenario'&&c.customLabel&&<option value="_custom">{c.customLabel}</option>}</select></label>;
+ return <section className="mc-world-settings" id="world-settings" data-anchor="world-settings" aria-label="场景与世界设置"><div className="mc-assignment-heading"><Cube size={18}/><h2 tabIndex={-1}>场景与世界设置</h2><span>配置下一次运行</span></div>
+  <div className="mc-settings-current" aria-label="当前运行设置"><b>{c.current.name}</b><span>种子 {c.current.seed} · T+{c.current.tick} · {label('policy',c.current.policy)} · {label('executionMode',c.current.executionMode)} · {label('dispatchMode',c.current.dispatchMode)} · {label('physicsMode',c.current.physicsMode)}</span>{c.networkSummary&&<span>{c.networkSummary}</span>}</div>
+  {block&&block!=='busy'&&<p className="mc-assignment-notice">{settingsMessage(block)}{block==='agent_view'&&<button className="mc-pill" onClick={global}>返回全局视图</button>}</p>}
+  <form onSubmit={e=>{e.preventDefault();void send('restart')}}><fieldset disabled={disabled}><legend>场景与执行</legend><div className="mc-settings-grid">{field('scenario','任务场景')}<label>随机种子<input type="number" aria-label="随机种子" min="0" max="4294967295" step="1" value={c.values.seed} disabled={disabled} onChange={e=>change('seed',e.target.value)}/></label>{field('policy','分配策略')}{field('executionMode','执行方式')}{field('routePolicy','地面寻路')}{field('riskPolicy','风险区域')}</div></fieldset>
+   <fieldset disabled={disabled}><legend>通信与指挥</legend><div className="mc-settings-grid">{field('dispatchMode','指挥方式')}{field('linkProfile','链路配置')}{field('radioVisibility','设备通信遮挡')}{field('bandwidthProfile','设备消息带宽')}</div><p>长延迟示例：链路延迟 12 步、有效期 40 步；状态每 10 步上报，有效期 60 步。丢包率沿用场景配置。</p><button type="button" className="mc-pill" disabled={disabled||!!dispatchBlock||c.values.dispatchMode===c.current.dispatchMode} onClick={()=>void send('dispatch')}>仅切换当前指挥方式</button><p>即时切换会取消在途任务指令，已分配的任务继续执行。</p>{dispatchBlock&&!block&&<p>{settingsMessage(dispatchBlock)}{dispatchBlock==='history_view'&&<button type="button" className="mc-pill" onClick={live}>返回实时视图</button>}</p>}</fieldset>
+   {c.server&&<fieldset disabled={disabled}><legend>世界服务</legend><div className="mc-settings-grid">{field('physicsMode','服务仿真')}{field('sensorMode','服务端感知')}</div></fieldset>}
+   {!c.server&&<p className="mc-settings-note">当前为浏览器运动学预览；从本机世界服务地址访问后，可配置服务端碰撞与感知。</p>}
+   {invalid&&!block&&<p className="mc-assignment-notice" role="status">{settingsMessage(invalid)}</p>}
+   <div className="mc-settings-apply"><p>修改选项不会改变当前世界。应用后创建新运行，时间轴从 T+0 开始；需要保留当前过程时，请先导出回放。</p><button className="mc-pill violet" type="submit" disabled={disabled||!!invalid}>{pending?'处理中…':'应用设置并重新开始'}</button></div>
+  </form><p className="mc-assignment-feedback" role="status" aria-live="polite">{feedback||c.notice||(c.busy?'正在处理世界操作…':'')}</p>
+ </section>;
+}

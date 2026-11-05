@@ -1,0 +1,53 @@
+services:
+  world:
+    build:
+      context: .
+      target: ${BOX_IMAGE_TARGET:-world}
+    image: ${BOX_IMAGE_NAME:-3dbox4agent-local}:${BOX_IMAGE_TARGET:-world}
+    init: true
+    ports:
+      - "127.0.0.1:${BOX_HTTP_PORT:-8787}:8787"
+    environment:
+      BOX_REPLAY_JOURNAL: ${BOX_REPLAY_JOURNAL:-1}
+      BOX_WORLD_WORKERS: ${BOX_WORLD_WORKERS:-4}
+    volumes:
+      - world-data:/app/.3dbox
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 1024
+    stop_grace_period: 10s
+  runner:
+    image: ${BOX_IMAGE_NAME:-3dbox4agent-local}:${BOX_IMAGE_TARGET:-world}
+    profiles:
+      - experiments
+    depends_on:
+      world:
+        condition: service_healthy
+    # Keep the scoped SDK's loopback transport while separating process/filesystem state.
+    network_mode: service:world
+    init: true
+    entrypoint:
+      - python3
+      - sdk/python/multi_agent_demo.py
+    command:
+      - --fault
+      - none
+      - --physics
+      - rapier
+      - --archive
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 1024
+    stop_grace_period: 10s
+volumes:
+  world-data:

@@ -1,0 +1,525 @@
+{
+  "id": "lunar-relay-v1",
+  "name": "月面基地中继部署",
+  "sensorRange": 25,
+  "communication": {
+    "range": 50,
+    "delay": 12,
+    "lossRate": 0.1,
+    "ttl": 40,
+    "maxPerTick": 4,
+    "maxBytes": 256,
+    "statusInterval": 10,
+    "statusMaxAge": 60,
+    "decisionMaxAge": 40
+  },
+  "resource": {
+    "warehouse": [
+      20,
+      74
+    ],
+    "site": [
+      60,
+      52
+    ]
+  },
+  "obstacles": [
+    {
+      "id": "habitat",
+      "x": 46,
+      "y": 27,
+      "w": 18,
+      "h": 18,
+      "height": 9
+    },
+    {
+      "id": "hangar",
+      "x": 29,
+      "y": 34,
+      "w": 14,
+      "h": 12,
+      "height": 7
+    },
+    {
+      "id": "warehouse",
+      "x": 16,
+      "y": 50,
+      "w": 9,
+      "h": 12,
+      "height": 6
+    },
+    {
+      "id": "greenhouse",
+      "x": 66,
+      "y": 29,
+      "w": 23,
+      "h": 9,
+      "height": 5
+    },
+    {
+      "id": "power",
+      "x": 63,
+      "y": 56,
+      "w": 28,
+      "h": 16,
+      "height": 2.8
+    },
+    {
+      "id": "generator",
+      "x": 51,
+      "y": 56,
+      "w": 6,
+      "h": 7,
+      "height": 3
+    },
+    {
+      "id": "comms",
+      "x": 27,
+      "y": 23,
+      "w": 5,
+      "h": 5,
+      "height": 8
+    }
+  ],
+  "agents": [
+    {
+      "role": "rover",
+      "label": "勘察车",
+      "count": 4,
+      "capabilities": [
+        "inspect",
+        "confirm",
+        "sample"
+      ],
+      "speed": 1.5,
+      "thermal": {
+        "ambientC": -20,
+        "initialC": 15,
+        "limitC": 55,
+        "resumeC": 30,
+        "coolingCPerTick": 1.2,
+        "heatCPerEnergy": 30
+      }
+    },
+    {
+      "role": "vehicle",
+      "label": "物资车",
+      "count": 4,
+      "capabilities": [
+        "deliver"
+      ],
+      "speed": 1.5,
+      "thermal": {
+        "ambientC": -20,
+        "initialC": 15,
+        "limitC": 55,
+        "resumeC": 30,
+        "coolingCPerTick": 1.2,
+        "heatCPerEnergy": 30
+      }
+    },
+    {
+      "role": "robot",
+      "label": "作业机器人",
+      "count": 4,
+      "capabilities": [
+        "repair"
+      ],
+      "speed": 1.4,
+      "thermal": {
+        "ambientC": -20,
+        "initialC": 15,
+        "limitC": 55,
+        "resumeC": 30,
+        "coolingCPerTick": 1.2,
+        "heatCPerEnergy": 30
+      }
+    },
+    {
+      "role": "relay",
+      "label": "中继车",
+      "count": 3,
+      "mobility": "ground",
+      "capabilities": [
+        "relay"
+      ],
+      "speed": 1.4,
+      "deployableRelay": true,
+      "communicationRange": 50
+    }
+  ],
+  "tasks": [
+    {
+      "id": "deploy-west",
+      "behavior": "deploy",
+      "name": "部署西侧通信中继",
+      "role": "relay",
+      "capability": "relay",
+      "target": [
+        40,
+        24
+      ],
+      "duration": 8,
+      "dependsOn": [],
+      "materialCost": [
+        {
+          "id": "relay-kit",
+          "amount": 1
+        }
+      ]
+    },
+    {
+      "id": "deploy-east",
+      "behavior": "deploy",
+      "name": "部署东侧通信中继",
+      "role": "relay",
+      "capability": "relay",
+      "target": [
+        76,
+        46
+      ],
+      "duration": 8,
+      "dependsOn": [],
+      "materialCost": [
+        {
+          "id": "relay-kit",
+          "amount": 1
+        }
+      ]
+    },
+    {
+      "id": "inspect",
+      "behavior": "detect",
+      "name": "勘察基地供能设施",
+      "role": "rover",
+      "capability": "inspect",
+      "target": [
+        60,
+        52
+      ],
+      "duration": 8,
+      "dependsOn": [
+        "deploy-west"
+      ]
+    },
+    {
+      "id": "survey",
+      "behavior": "survey",
+      "name": "勘察第二作业区",
+      "role": "rover",
+      "capability": "inspect",
+      "target": [
+        85,
+        45
+      ],
+      "duration": 8,
+      "dependsOn": [
+        "deploy-east"
+      ]
+    },
+    {
+      "id": "sample",
+      "behavior": "sample",
+      "name": "采集月壤样本",
+      "role": "rover",
+      "capability": "sample",
+      "target": [
+        90,
+        46
+      ],
+      "duration": 8,
+      "dependsOn": [
+        "survey"
+      ],
+      "materialCost": [
+        {
+          "id": "sample-case",
+          "amount": 1
+        }
+      ]
+    },
+    {
+      "id": "confirm",
+      "behavior": "confirm",
+      "name": "确认供能设施故障",
+      "role": "rover",
+      "capability": "confirm",
+      "target": [
+        60,
+        52
+      ],
+      "duration": 7,
+      "dependsOn": [
+        "inspect",
+        "sample"
+      ]
+    },
+    {
+      "id": "deliver",
+      "behavior": "deliver",
+      "name": "运送维修组件",
+      "role": "vehicle",
+      "capability": "deliver",
+      "target": [
+        60,
+        52
+      ],
+      "duration": 9,
+      "dependsOn": [
+        "confirm"
+      ]
+    },
+    {
+      "id": "repair",
+      "behavior": "repair",
+      "name": "修复供能设施",
+      "role": "robot",
+      "capability": "repair",
+      "target": [
+        60,
+        52
+      ],
+      "duration": 12,
+      "dependsOn": [
+        "deliver"
+      ],
+      "materialCost": [
+        {
+          "id": "repair-kit",
+          "amount": 2
+        }
+      ]
+    },
+    {
+      "id": "verify",
+      "behavior": "verify",
+      "name": "复核供能设施",
+      "role": "rover",
+      "capability": "confirm",
+      "target": [
+        60,
+        52
+      ],
+      "duration": 5,
+      "dependsOn": [
+        "repair"
+      ]
+    }
+  ],
+  "terrain": [
+    {
+      "id": "soft-regolith",
+      "name": "松软月壤",
+      "x": 68,
+      "y": 40,
+      "w": 25,
+      "h": 13,
+      "speedFactor": 0.55,
+      "energyFactor": 1.8
+    },
+    {
+      "id": "rough-ground",
+      "name": "碎石地带",
+      "x": 35,
+      "y": 76,
+      "w": 24,
+      "h": 14,
+      "speedFactor": 0.7,
+      "energyFactor": 1.4
+    }
+  ],
+  "heightfield": {
+    "rows": 13,
+    "cols": 13,
+    "maxSlopeDegrees": 20,
+    "heights": [
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.25,
+      1.458,
+      1.667,
+      1.875,
+      2.083,
+      2.292,
+      2.5,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.25,
+      1.458,
+      1.667,
+      1.875,
+      2.083,
+      2.292,
+      2.5,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.25,
+      1.458,
+      1.667,
+      1.875,
+      2.083,
+      2.292,
+      2.5,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.25,
+      1.458,
+      1.667,
+      1.875,
+      2.083,
+      2.292,
+      2.5,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.25,
+      1.458,
+      1.667,
+      1.875,
+      2.083,
+      2.292,
+      2.5,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.25,
+      1.458,
+      1.667,
+      1.875,
+      2.083,
+      2.292,
+      2.5,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.25,
+      1.458,
+      1.667,
+      1.875,
+      2.084,
+      2.292,
+      2.5,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.25,
+      1.459,
+      1.672,
+      1.894,
+      2.113,
+      2.309,
+      2.504,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.25,
+      1.466,
+      1.742,
+      2.165,
+      2.528,
+      2.561,
+      2.565,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.252,
+      1.505,
+      2.119,
+      3.624,
+      4.762,
+      3.916,
+      2.89,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.254,
+      1.569,
+      2.748,
+      6.052,
+      8.478,
+      6.171,
+      3.432,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.254,
+      1.563,
+      2.689,
+      5.826,
+      8.133,
+      5.961,
+      3.382,
+      0,
+      0.208,
+      0.417,
+      0.625,
+      0.833,
+      1.042,
+      1.252,
+      1.498,
+      2.05,
+      3.356,
+      4.35,
+      3.667,
+      2.83
+    ]
+  },
+  "navigation": "energy",
+  "materials": [
+    {
+      "id": "sample-case",
+      "name": "采样容器",
+      "quantity": 1
+    },
+    {
+      "id": "repair-kit",
+      "name": "维修耗材",
+      "quantity": 2
+    },
+    {
+      "id": "relay-kit",
+      "name": "中继部署套件",
+      "quantity": 2
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "id": "lunar-relay-v1",
+  "name": "月面中继路径练习",
+  "sensorRange": 24,
+  "materials": [
+    {
+      "id": "relay-kit",
+      "name": "中继部署套件",
+      "quantity": 3
+    }
+  ],
+  "navigation": "energy",
+  "riskZones": [],
+  "terrain": [],
+  "communication": {
+    "range": 24,
+    "delay": 2,
+    "lossRate": 0,
+    "ttl": 160,
+    "maxPerTick": 4,
+    "maxBytes": 256,
+    "lineOfSight": true,
+    "bytesPerTick": 8,
+    "statusInterval": 5,
+    "statusMaxAge": 20,
+    "decisionMaxAge": 5
+  },
+  "resource": {
+    "warehouse": [
+      20,
+      74
+    ],
+    "site": [
+      60,
+      52
+    ]
+  },
+  "obstacles": [],
+  "agents": [
+    {
+      "role": "relay",
+      "label": "中继车",
+      "count": 3,
+      "capabilities": [
+        "relay"
+      ],
+      "speed": 3,
+      "mobility": "ground",
+      "deployableRelay": true,
+      "workEnergyPerTick": 0.001
+    },
+    {
+      "role": "source",
+      "label": "发送端",
+      "count": 1,
+      "capabilities": [
+        "hold-source"
+      ],
+      "speed": 3,
+      "mobility": "ground",
+      "workEnergyPerTick": 0.001
+    },
+    {
+      "role": "target",
+      "label": "接收端",
+      "count": 1,
+      "capabilities": [
+        "hold-target"
+      ],
+      "speed": 3,
+      "mobility": "ground",
+      "workEnergyPerTick": 0.001
+    }
+  ],
+  "tasks": [
+    {
+      "id": "deploy-west",
+      "behavior": "deploy",
+      "name": "部署西侧中继",
+      "role": "relay",
+      "capability": "relay",
+      "target": [
+        30,
+        10
+      ],
+      "duration": 3,
+      "dependsOn": [],
+      "materialCost": [
+        {
+          "id": "relay-kit",
+          "amount": 1
+        }
+      ]
+    },
+    {
+      "id": "deploy-middle",
+      "behavior": "deploy",
+      "name": "部署中段中继",
+      "role": "relay",
+      "capability": "relay",
+      "target": [
+        50,
+        10
+      ],
+      "duration": 3,
+      "dependsOn": [],
+      "materialCost": [
+        {
+          "id": "relay-kit",
+          "amount": 1
+        }
+      ]
+    },
+    {
+      "id": "deploy-east",
+      "behavior": "deploy",
+      "name": "部署东侧中继",
+      "role": "relay",
+      "capability": "relay",
+      "target": [
+        70,
+        10
+      ],
+      "duration": 3,
+      "dependsOn": [],
+      "materialCost": [
+        {
+          "id": "relay-kit",
+          "amount": 1
+        }
+      ]
+    },
+    {
+      "id": "hold-source",
+      "behavior": "survey",
+      "name": "发送端值守",
+      "role": "source",
+      "capability": "hold-source",
+      "target": [
+        10,
+        10
+      ],
+      "duration": 1000,
+      "dependsOn": []
+    },
+    {
+      "id": "hold-target",
+      "behavior": "survey",
+      "name": "接收端值守",
+      "role": "target",
+      "capability": "hold-target",
+      "target": [
+        90,
+        10
+      ],
+      "duration": 1000,
+      "dependsOn": []
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+'use strict';
+const assert=require('node:assert/strict'),M=require('../src/visual-motion');
+const a={sceneId:'park',tick:7},b={sceneId:'park',tick:8};
+assert(M.eligible(a,b,a,'global','global',true,false));
+assert(!M.eligible(a,b,{...a},'global','global',true,false));
+assert(!M.eligible(a,{...b,tick:9},a,'global','global',true,false));
+assert(!M.eligible(a,b,a,'drone-1','global',true,false));
+assert(!M.eligible(a,b,a,'global','global',false,false));
+assert(!M.eligible(a,b,a,'global','global',true,true));
+assert.deepEqual(M.position({x:0,y:2},{x:10,y:6},100,50,125),{x:5,y:4,done:false});
+assert.deepEqual(M.position({x:0,y:2},{x:10,y:6},100,50,200),{x:10,y:6,done:true});
+assert.deepEqual(M.position({x:0,y:2},{x:10,y:6},100,50,90),{x:0,y:2,done:false});
+console.log('display interpolation boundaries passed');

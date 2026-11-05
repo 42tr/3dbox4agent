@@ -1,0 +1,28 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),Replay=require('../src/replay'),{createServer}=require('../server/world-server');
+const baseScene=require('../examples/scenes/shore-surface.json');
+(async()=>{
+ for(const physicsBackend of ['rust','wasm'])for(const weather of [false,true]){
+  const Physics=require(physicsBackend==='rust'?'../server/rust-physics':'../server/physics'),originalCreate=Physics.createPhysics,instances=[];let inject=false,movedBeforeFailure=false;
+  Physics.createPhysics=world=>{const p=originalCreate(world);instances.push(p);return {...p,...(physicsBackend==='rust'?{advanceWorldStep(...args){const at={...world.agents[0]},result=p.advanceWorldStep(...args);if(inject){try{p.move(at,0,0)}catch(e){movedBeforeFailure=/diverged/.test(e.message)}throw Error('private surface post-commit failure')}return result}}:{move(a,dx,dy){const result=p.move(a,dx,dy);if(inject){movedBeforeFailure=Math.hypot(result.x,result.y)>1e-4;throw Error('private surface physical-move failure')}return result}})};};
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'3dbox-surface-rollback-')),server=createServer({physicsBackend,taskBackend:'rust',communicationBackend:'rust',navigationBackend:'rust',journalDir:dir,replayJournal:true});await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port,owned=[];
+  async function req(route,method='GET',body,token){const r=await fetch(base+route,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})}),v=await r.json();if(!r.ok)throw Object.assign(Error(v.error),{status:r.status});return v}
+  try{
+   const config=structuredClone(baseScene);config.id='surface-rollback-'+physicsBackend+(weather?'-weather':'');if(weather){config.terrain=structuredClone(require('../examples/scenes/shore-sea-state.json').terrain);config.navigation='time'};config.agents=[{...config.agents.find(a=>a.role==='boat'),count:1,spawnArea:{x:80,y:20,w:10,h:10}}];config.tasks=[{id:'survey',name:'Survey',behavior:'survey',role:'boat',capability:'survey',target:[80,75],duration:2,dependsOn:[]}];
+   const s=await req('/sessions','POST',{scene:config,physicsMode:'rapier',sensorMode:physicsBackend==='rust'?'rapier':'geometry'});owned.push(s);const root='/sessions/'+s.sessionId,credential=await req(root+'/agents/boat-1/credentials','POST',{},s.adminToken);
+   if(weather)for(const z of config.terrain)await req(root+'/terrain-effect','POST',{zoneId:z.id,duration:20,speedFactor:.35,energyFactor:2.5},s.adminToken);
+   await req(root+'/agents/boat-1/actions','POST',{requestId:'rollback-move',type:'move',target:{x:70,y:20},targetTick:1,expiresTick:40},credential.agentToken);
+   const before=await req(root,'GET',undefined,s.adminToken),ownBefore=await req(root+'/observations/boat-1','GET',undefined,credential.agentToken);inject=true;await assert.rejects(req(root+'/step','POST',{count:1},s.adminToken),e=>e.status===503&&e.message==='world_step_failed');inject=false;assert(movedBeforeFailure,'failure must occur after actual physical motion');
+   const retained=await req(root,'GET',undefined,s.adminToken);assert.equal(retained.sessionError,'world_step_failed');assert.equal(retained.revision,before.revision);assert.deepEqual(retained.world,before.world);const {sessionError,simulationError,...ownAfter}=await req(root+'/observations/boat-1','GET',undefined,credential.agentToken);assert.equal(sessionError,'world_step_failed');assert.equal(simulationError,'world_step_failed');assert.deepEqual(ownAfter,ownBefore);
+   // Lidar intentionally ignores virtual masks. Probe the restored real shape
+   // response itself, then roll back this test-only physical probe.
+   const physical=instances[0],point=physical.checkpoint(),actor=retained.world.agents[0];try{assert.throws(()=>physical.correctPosition(actor,20,actor.y));const m=physical.move(actor,-200,0);assert(m.contacts>0);assert(actor.x+m.x>45.75&&actor.x+m.x<46,'restored shore collider must stop the body before land')}finally{physical.rollback(point);point.free()}
+   const finished=[];for(let i=0;i<2;i++){
+    const branch=await req('/event-journals/'+s.sessionId+'/fork','POST',{revision:before.revision},s.adminToken);owned.push(branch);assert.deepEqual(branch.world.surfaceDomain,config.surfaceDomain);await assert.rejects(req('/sessions/'+branch.sessionId+'/observations/boat-1','GET',undefined,credential.agentToken),e=>e.status===401);
+    const end=await req('/sessions/'+branch.sessionId+'/step','POST',{count:150},branch.adminToken);assert(end.world.done&&!end.world.failed);assert.equal(end.metrics.completed,1);finished.push(end.world);
+    const history=await req('/sessions/'+branch.sessionId+'/history?after=-1','GET',undefined,branch.adminToken);assert(Replay.validateArchive({format:'3dbox-prototype-v1',config:{scene:config,sceneId:config.id,seed:42,policy:'nearest'},frames:history.frames.map(f=>f.world)}));assert.deepEqual((await req(root,'GET',undefined,s.adminToken)).world,before.world);
+   }assert.deepEqual(finished[0],finished[1]);
+   console.log(JSON.stringify({physicsBackend,weather,postPhysicalFailure:true,rawAndScopedRetained:true,actualDomainColliderRestored:true,independentForks:2,forksComplete:true,replayValidated:true}));
+  }finally{inject=false;Physics.createPhysics=originalCreate;for(const s of owned)await req('/sessions/'+s.sessionId,'DELETE',undefined,s.adminToken).catch(()=>{});await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true})}
+ }
+})().catch(e=>{console.error(e);process.exitCode=1});

@@ -1,0 +1,43 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {spawn}=require('node:child_process');
+const Replay=require('../src/replay');
+const {createServer}=require('../server/world-server');
+(async()=>{
+ const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try{
+  const url=`http://127.0.0.1:${server.address().port}`;
+  const child=spawn('python3',['sdk/python/evidence_mission.py','--url',url,'--scene','lunar-terrain-v1','--dispatch','networked_reported','--outage','first-report','--archive','--timeout','45'],{env:{...process.env,BOX_TOKEN:'sentinel-secret-value',BOX_COORDINATOR_TOKEN:'other-sentinel-secret'},stdio:['ignore','pipe','pipe']});
+  let output='',error='';child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');child.stdout.on('data',x=>output+=x);child.stderr.on('data',x=>error+=x);
+  const exit=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',resolve)});
+  if(!output)throw Error(error);const r=JSON.parse(output);assert.equal(exit,0,JSON.stringify({error,reason:r.reason,logs:r.processLogs}));
+  assert(!output.includes('sentinel-secret-value'));assert(!output.includes('other-sentinel-secret'));
+  assert(r.processLogs.find(x=>x.role==='scout').output.includes('已保存本设备记忆'));
+  assert.equal(r.status,'completed');assert(r.outageInjected);assert.equal(r.agentProcesses,1);assert.equal(r.coordinatorProcesses,2);
+  assert(r.evidenceReports.some(x=>x.status==='failed'&&x.reason==='interrupted'));
+  const evidence=r.evidenceReports.find(x=>x.status==='delivered');assert.equal(evidence.result.kind,'anomaly');
+  const scans=r.actions.filter(x=>x.type==='scan'&&x.status==='completed');assert(scans.length>=2);
+  assert.equal(scans[0].result.kind,'not_detected');assert.equal(scans.at(-1).result.kind,'anomaly');
+  assert.equal(evidence.scanRequestId,scans.at(-1).requestId);
+  assert(!r.config.patrolWaypoints.some(p=>p[0]===evidence.result.position[0]&&p[1]===evidence.result.position[1]));
+  const proposal=r.proposals.find(x=>x.status==='accepted');assert.deepEqual(proposal.task.target,evidence.result.position);
+  assert(r.decisions.some(x=>x.taskId===proposal.task.id&&x.status==='accepted'));
+  assert(r.events.some(x=>x.kind==='task_completed'&&x.taskId===proposal.task.id));
+  const loaded=Replay.unwrapArchive(r);assert(loaded.multiprocess);
+  assert(loaded.archive.frames.some(f=>f.actions.some(a=>a.type==='scan'&&a.result?.kind==='not_detected')));
+  const missing=spawn('python3',['sdk/python/evidence_mission.py','--url',url,'--scene','lunar-terrain-v1','--waypoint','35','50','--timeout','45'],{stdio:['ignore','pipe','pipe']});
+  let missingOut='',missingErr='';missing.stdout.setEncoding('utf8');missing.stderr.setEncoding('utf8');missing.stdout.on('data',x=>missingOut+=x);missing.stderr.on('data',x=>missingErr+=x);
+  const missingExit=await new Promise((resolve,reject)=>{missing.on('error',reject);missing.on('close',resolve)});
+  if(!missingOut)throw Error(missingErr);const absent=JSON.parse(missingOut);assert.equal(missingExit,1);assert.equal(absent.status,'failed');
+  assert.equal(absent.reason,'scout_exited:1');assert.equal(absent.evidenceReports.length,0);assert.equal(absent.proposals.length,0);
+  assert(absent.processLogs[0].output.includes('no anomaly detected along patrol route'));
+  const industrial=spawn('python3',['sdk/python/evidence_mission.py','--url',url,'--scene','industrial-park-v1','--dispatch','external','--timeout','45'],{stdio:['ignore','pipe','pipe']});
+  let industrialOut='',industrialErr='';industrial.stdout.setEncoding('utf8');industrial.stderr.setEncoding('utf8');industrial.stdout.on('data',x=>industrialOut+=x);industrial.stderr.on('data',x=>industrialErr+=x);
+  const industrialExit=await new Promise((resolve,reject)=>{industrial.on('error',reject);industrial.on('close',resolve)});
+  if(!industrialOut)throw Error(industrialErr);const park=JSON.parse(industrialOut);
+  assert.equal(industrialExit,0,JSON.stringify({reason:park.reason,logs:park.processLogs}));assert.equal(park.status,'completed');
+  assert(park.actions.filter(x=>x.type==='scan'&&x.status==='completed').length>=2);
+  assert(park.evidenceReports.some(x=>x.status==='delivered'&&x.result.kind==='anomaly'));
+  console.log('scoped evidence mission integration passed');
+ }finally{server.close()}
+})().catch(error=>{console.error(error);process.exitCode=1});

@@ -1,0 +1,14 @@
+'use strict';
+const assert=require('node:assert/strict'),V=require('../src/agent-visual'),S=require('../src/sensors'),E=require('../src/engine');
+const model=a=>V.model(a,S.isAir(a));
+assert.equal(model({role:'drone',capabilities:['inspect']}),'air');
+assert.equal(model({role:'vehicle',capabilities:['deliver']}),'wheeled');
+assert.equal(model({role:'rover',capabilities:['inspect']}),'wheeled');
+assert.equal(model({role:'robot',capabilities:['repair']}),'robot');
+assert.equal(model({role:'scout',mobility:'air',capabilities:['inspect']}),'air');
+assert.equal(model({role:'transporter',mobility:'ground',capabilities:['deliver']}),'wheeled');
+assert.equal(model({role:'repairer',mobility:'ground',capabilities:['repair']}),'robot');
+assert.equal(model({role:'drone',mobility:'ground',capabilities:['inspect']}),'wheeled');
+const scene=require('../examples/scenes/custom-air-scout.json'),world=E.create(42,'nearest',scene);assert.equal(model(world.agents.find(a=>a.role==='scout')),'air');
+assert.equal(V.color('transporter'),V.color('transporter'));
+console.log('custom device visual models follow mobility and capabilities');

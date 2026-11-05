@@ -1,0 +1,393 @@
+{
+  "id": "shore-echelons-v1",
+  "name": "海岸多梯队协同",
+  "sensorRange": 30,
+  "communication": {
+    "range": 60,
+    "delay": 6,
+    "lossRate": 0.1,
+    "ttl": 24,
+    "maxPerTick": 4,
+    "maxBytes": 256,
+    "statusInterval": 6,
+    "statusMaxAge": 30,
+    "decisionMaxAge": 12
+  },
+  "resource": {
+    "warehouse": [
+      45,
+      50
+    ],
+    "site": [
+      25,
+      65
+    ]
+  },
+  "surfaceDomain": {
+    "water": [
+      {
+        "id": "north",
+        "name": "北部水域",
+        "x": 45,
+        "y": 0,
+        "w": 55,
+        "h": 40
+      },
+      {
+        "id": "south",
+        "name": "南部水域",
+        "x": 45,
+        "y": 55,
+        "w": 55,
+        "h": 45
+      },
+      {
+        "id": "west",
+        "name": "岛西水道",
+        "x": 45,
+        "y": 40,
+        "w": 17,
+        "h": 15
+      },
+      {
+        "id": "east",
+        "name": "岛东水道",
+        "x": 72,
+        "y": 40,
+        "w": 28,
+        "h": 15
+      }
+    ]
+  },
+  "obstacles": [
+    {
+      "id": "depot",
+      "x": 9,
+      "y": 10,
+      "w": 20,
+      "h": 15,
+      "height": 8
+    },
+    {
+      "id": "shelter",
+      "x": 20,
+      "y": 80,
+      "w": 20,
+      "h": 8,
+      "height": 5
+    },
+    {
+      "id": "island",
+      "x": 62,
+      "y": 40,
+      "w": 10,
+      "h": 15,
+      "height": 2
+    }
+  ],
+  "agents": [
+    {
+      "role": "drone",
+      "label": "侦察无人机",
+      "count": 4,
+      "mobility": "air",
+      "capabilities": [
+        "inspect",
+        "verify"
+      ],
+      "speed": 3
+    },
+    {
+      "role": "rover",
+      "label": "岸上勘察车",
+      "count": 3,
+      "mobility": "ground",
+      "capabilities": [
+        "confirm",
+        "guide"
+      ],
+      "speed": 2,
+      "spawnArea": {
+        "x": 8,
+        "y": 30,
+        "w": 25,
+        "h": 45
+      }
+    },
+    {
+      "role": "vehicle",
+      "label": "岸上运输车",
+      "count": 2,
+      "mobility": "ground",
+      "capabilities": [
+        "transport"
+      ],
+      "speed": 1.8,
+      "spawnArea": {
+        "x": 8,
+        "y": 30,
+        "w": 25,
+        "h": 45
+      }
+    },
+    {
+      "role": "robot",
+      "label": "维修设备",
+      "count": 3,
+      "mobility": "ground",
+      "capabilities": [
+        "repair"
+      ],
+      "speed": 1.6,
+      "spawnArea": {
+        "x": 8,
+        "y": 30,
+        "w": 25,
+        "h": 45
+      }
+    },
+    {
+      "role": "boat",
+      "label": "水面巡查艇",
+      "count": 4,
+      "mobility": "water",
+      "capabilities": [
+        "survey"
+      ],
+      "speed": 2.2,
+      "spawnArea": {
+        "x": 52,
+        "y": 12,
+        "w": 40,
+        "h": 22
+      }
+    },
+    {
+      "role": "relay",
+      "label": "岸线中继车",
+      "count": 2,
+      "mobility": "ground",
+      "capabilities": [
+        "relay"
+      ],
+      "speed": 1.5,
+      "deployableRelay": true,
+      "spawnArea": {
+        "x": 8,
+        "y": 30,
+        "w": 25,
+        "h": 45
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "inspect",
+      "name": "空中确认岸上异常",
+      "behavior": "detect",
+      "role": "drone",
+      "capability": "inspect",
+      "target": [
+        25,
+        65
+      ],
+      "duration": 4,
+      "dependsOn": [],
+      "priority": 50
+    },
+    {
+      "id": "sea-survey",
+      "name": "勘察北部水域通路",
+      "behavior": "survey",
+      "role": "boat",
+      "capability": "survey",
+      "target": [
+        92,
+        30
+      ],
+      "duration": 5,
+      "dependsOn": [
+        "inspect"
+      ],
+      "priority": 40
+    },
+    {
+      "id": "guide-shore",
+      "name": "标定岸线引导点",
+      "behavior": "survey",
+      "role": "rover",
+      "capability": "guide",
+      "target": [
+        40,
+        60
+      ],
+      "duration": 6,
+      "dependsOn": [
+        "inspect"
+      ],
+      "priority": 30
+    },
+    {
+      "id": "deploy-shore",
+      "name": "部署岸线通信中继",
+      "behavior": "deploy",
+      "role": "relay",
+      "capability": "relay",
+      "target": [
+        40,
+        30
+      ],
+      "duration": 8,
+      "dependsOn": [
+        "sea-survey"
+      ],
+      "priority": 20,
+      "materialCost": [
+        {
+          "id": "relay-kit",
+          "amount": 1
+        }
+      ]
+    },
+    {
+      "id": "confirm",
+      "name": "岸上复核维修需求",
+      "behavior": "confirm",
+      "role": "rover",
+      "capability": "confirm",
+      "target": [
+        25,
+        65
+      ],
+      "duration": 5,
+      "dependsOn": [
+        "guide-shore",
+        "deploy-shore"
+      ],
+      "priority": 25
+    },
+    {
+      "id": "deliver",
+      "name": "从岸边仓储运送备件",
+      "behavior": "deliver",
+      "role": "vehicle",
+      "capability": "transport",
+      "target": [
+        25,
+        65
+      ],
+      "duration": 4,
+      "dependsOn": [
+        "confirm"
+      ],
+      "priority": 20
+    },
+    {
+      "id": "repair",
+      "name": "修复岸上设施",
+      "behavior": "repair",
+      "role": "robot",
+      "capability": "repair",
+      "target": [
+        25,
+        65
+      ],
+      "duration": 10,
+      "dependsOn": [
+        "deliver"
+      ],
+      "priority": 15
+    },
+    {
+      "id": "sea-review",
+      "name": "巡查南部水域",
+      "behavior": "survey",
+      "role": "boat",
+      "capability": "survey",
+      "target": [
+        80,
+        78
+      ],
+      "duration": 5,
+      "dependsOn": [
+        "repair"
+      ],
+      "priority": 10
+    },
+    {
+      "id": "verify",
+      "name": "空中复核设施状态",
+      "behavior": "verify",
+      "role": "drone",
+      "capability": "verify",
+      "target": [
+        25,
+        65
+      ],
+      "duration": 4,
+      "dependsOn": [
+        "sea-review"
+      ],
+      "priority": 5
+    }
+  ],
+  "navigation": "time",
+  "terrain": [
+    {
+      "id": "north-sea",
+      "name": "北部通航海况区",
+      "x": 74,
+      "y": 4,
+      "w": 22,
+      "h": 32,
+      "speedFactor": 1,
+      "energyFactor": 1
+    },
+    {
+      "id": "south-sea",
+      "name": "南部通航海况区",
+      "x": 74,
+      "y": 60,
+      "w": 22,
+      "h": 32,
+      "speedFactor": 1,
+      "energyFactor": 1
+    }
+  ],
+  "materials": [
+    {
+      "id": "relay-kit",
+      "name": "岸线中继套件",
+      "quantity": 1
+    }
+  ],
+  "echelons": [
+    {
+      "id": "advance",
+      "name": "前出准备梯队",
+      "taskIds": [
+        "inspect",
+        "sea-survey",
+        "guide-shore",
+        "deploy-shore"
+      ]
+    },
+    {
+      "id": "support",
+      "name": "岸上处置梯队",
+      "taskIds": [
+        "confirm",
+        "deliver",
+        "repair"
+      ]
+    },
+    {
+      "id": "review",
+      "name": "通道复查梯队",
+      "taskIds": [
+        "sea-review",
+        "verify"
+      ]
+    }
+  ]
+}

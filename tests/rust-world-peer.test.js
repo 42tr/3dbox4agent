@@ -1,0 +1,40 @@
+'use strict';
+const assert=require('node:assert/strict'),E=require('../src/engine'),Peer=require('../server/rust-world-peer'),Rules=require('../server/rust-communication'),R=require('../src/replay'),{WorldPeer}=require('../rust/physics/target/release/box_physics.node');
+function initial(){const world=E.create(42,'nearest',E.scene,{dispatchMode:'external'});return {tick:0,seed:42,agents:world.agents.map(a=>({id:a.id})),peer:Object.fromEntries(Peer.fields.filter(k=>world.communication[k]!==undefined).map(k=>[k,world.communication[k]]))}}
+const devices=value=>value.agents.map((a,i)=>({id:a.id,x:10+i,y:50,disabled:false}));
+const native=value=>new WorldPeer(JSON.stringify(value));
+const send=(n,value,extra={},now=0)=>JSON.parse(n.send(JSON.stringify({from:'drone-1',to:'drone-2',text:'hello',via:[],done:false,agents:devices(value),...extra}),now));
+for(const change of [v=>v.tick=-1,v=>v.agents=[],v=>v.agents.push(v.agents[0]),v=>v.peer.config.bytesPerTick=0,v=>v.peer.config.delay=0,v=>v.peer.nextId=0,v=>v.peer.inboxes.unknown=[],v=>v.peer.sentBy.unknown=1,v=>v.peer.outages=[{agentId:'unknown',startedTick:0,untilTick:3}],v=>v.peer.outages=[{agentId:'drone-1',startedTick:0,untilTick:1001}],v=>v.peer.messageRequests=[{requestId:'one',from:'drone-1',to:'drone-1',text:'a',via:[],messageId:0}]]){const v=initial();change(v);assert.throws(()=>native(v),/invalid world peer/)}
+{
+ const v=initial(),n=native(v);assert.deepEqual(send(n,v,{requestId:'one'}),{ok:true,messageId:1,duplicate:false});const state=n.snapshot();assert(send(n,v,{requestId:'one',done:true,agents:devices(v).map(a=>({...a,disabled:true}))}).duplicate);assert.equal(n.snapshot(),state);assert.equal(send(n,v,{requestId:'one',text:'changed'}).reason,'request_id_conflict');assert.equal(n.snapshot(),state);
+ for(const [extra,reason]of [[{requestId:'x?'},'invalid_request_id'],[{done:true},'world_finished'],[{from:'unknown'},'unknown_agent'],[{to:'drone-1'},'same_agent'],[{via:['drone-2']},'invalid_relay_route'],[{text:'\ufeff \t'},'invalid_message'],[{text:'x'.repeat(257)},'invalid_message']])assert.equal(send(n,v,extra).reason,reason);
+ for(let i=1;i<4;i++)assert(send(n,v).ok);assert.equal(send(n,v).reason,'rate_limit');assert.throws(()=>n.interrupt('drone-1',1001,0),/invalid world peer/);n.interrupt('drone-1',2,0);const before=n.snapshot();assert.throws(()=>n.interrupt('drone-1',1,0),/invalid world peer/);assert.equal(n.snapshot(),before);n.restore(2);assert.equal(JSON.parse(n.snapshot()).outages.length,1);n.restore(3);assert.equal(JSON.parse(n.snapshot()).outages.length,0);assert.throws(()=>n.restore(2),/invalid world peer/);n.free();n.free();assert.throws(()=>n.snapshot(),/closed/);assert.throws(()=>send(n,v),/closed/);
+}
+{
+ const v=initial();v.peer.config.maxPerTick=100;v.peer.config.maxBytes=4096;const n=native(v);for(let i=0;i<256;i++)assert(send(n,v,{from:v.agents[Math.floor(i/100)].id,to:'robot-1'}).ok);assert.equal(send(n,v,{from:'drone-4'}).reason,'queue_full');const saved=n.snapshot();assert.equal(send(n,v,{from:'drone-4'},1).reason,'queue_full');assert.equal(n.snapshot(),saved,'queue rejection at a new tick preserves quota state');for(const mutate of [x=>x.peer.queue[0].from='unknown',x=>x.peer.queue[0].expiresTick++,x=>x.peer.queue[0].hop=3,x=>x.peer.queue.push(x.peer.queue[0])]){const copy=JSON.parse(saved);const x={...v,peer:copy};mutate(x);assert.throws(()=>native(x),/invalid world peer/)}
+ const context={agents:devices(v),obstructions:JSON.parse(saved).queue.map(p=>({id:p.id,obstructed:false}))};context.obstructions[0].id=999;assert.throws(()=>n.advance(JSON.stringify(context),1),/invalid world peer/);assert.equal(n.snapshot(),saved);assert.throws(()=>n.advance(JSON.stringify({...context,obstructions:[]}),2),/invalid world peer/);assert.equal(n.snapshot(),saved);n.free();
+}
+{
+ const v=initial();v.peer.config.delay=1;v.peer.config.lossRate=0;v.peer.config.range=1000;const n=native(v);
+ for(let i=0;i<1000;i++){assert(send(n,v,{requestId:'r-'+i},i).ok);const peer=JSON.parse(n.snapshot());n.advance(JSON.stringify({agents:devices(v),obstructions:peer.queue.map(p=>({id:p.id,obstructed:false}))}),i+1)}
+ assert.equal(send(n,v,{requestId:'overflow'},1000).reason,'message_request_limit');assert(send(n,v,{requestId:'r-0',done:true},1000).duplicate);const restored=native({...v,tick:1000,peer:JSON.parse(n.snapshot())});assert.equal(JSON.parse(restored.snapshot()).messageRequests.length,1000);restored.free();n.free();
+ const large=initial();large.peer.config.maxBytes=4096;large.peer.nextId=1001;large.peer.messageRequests=Array.from({length:1000},(_,i)=>({requestId:'r-'+String(i).padStart(60,'0'),from:'drone-1',to:'drone-2',text:'x'.repeat(4096),via:['drone-3','drone-4','drone-5'],messageId:i+1}));assert(JSON.stringify(large).length>4*1024*1024);const largeNative=native(large);largeNative.free();
+}
+function pair(seed,config={},setup=()=>{}){const scene=E.getScene();Object.assign(scene.communication,{range:35,delay:3,ttl:25,lossRate:0,...config});const a=E.create(seed,'nearest',scene,{dispatchMode:'external'});for(const [i,x]of [10,40,70,90].entries()){a.agents[i].x=x;a.agents[i].y=50}setup(a);const b=E.snapshot(a);E.bindCommunicationRules(b,Rules);E.bindWorldPeer(b,Peer.create(b));return {worlds:[a,b],scene}}
+function both(worlds,fn){const a=fn(worlds[0]),b=fn(worlds[1]);assert.deepEqual(b,a);assert.deepEqual(E.snapshot(worlds[1]),E.snapshot(worlds[0]));return a}
+function steps(worlds,n){for(let i=0;i<n;i++)both(worlds,w=>E.step(w).tick)}
+for(const config of [{},{bytesPerTick:2},{bytesPerTick:2,ttl:5},{range:1000,lossRate:.5},{range:1000,lineOfSight:true,bytesPerTick:4}])for(let seed=0;seed<8;seed++){
+ const {worlds,scene}=pair(seed,config);for(const [from,to,text,via]of [['drone-1','drone-4','中文long',['drone-2','drone-3']],['drone-1','drone-3','abc',['drone-2']],['drone-2','drone-1','other',[]]])assert(both(worlds,w=>E.sendMessage(w,from,to,text,via,'req-'+from+to)).ok);
+ steps(worlds,4);if(seed%3===0)assert(both(worlds,w=>E.interruptCommunication(w,'drone-3',5)).ok);const fork=E.snapshot(worlds[1]);E.bindCommunicationRules(fork,Rules,true);E.bindWorldPeer(fork,Peer.create(fork));for(let t=0;t<24;t++){steps(worlds,1);E.step(fork);assert.deepEqual(E.snapshot(fork),E.snapshot(worlds[1]))}
+ assert.deepEqual(E.metrics(worlds[1]).peerMessages,E.metrics(worlds[0]).peerMessages);assert(R.validateArchive({format:'3dbox-prototype-v1',config:{seed,policy:'nearest',sceneId:scene.id,scene},frames:[E.snapshot(fork)]}));E.disposeWorld(fork);E.disposeWorld(worlds[1]);
+}
+{
+ const {worlds}=pair(42,{range:1000,delay:1,ttl:100,bytesPerTick:4096});const net=worlds[1].communication;for(const fn of [()=>net.queue.push({}),()=>net.queue=[],()=>net.inboxes['drone-1'].push({}),()=>net.outages=[],()=>net.config.range=1,()=>worlds[1].communication={}])assert.throws(fn,TypeError);
+ assert(both(worlds,w=>E.sendMessage(w,'drone-1','drone-2','\u0085',[],'unicode')).ok);steps(worlds,1);
+ for(let i=0;i<25;i++){assert(both(worlds,w=>E.sendMessage(w,'drone-1','drone-2','packet '+i,[],'one-'+i)).ok);steps(worlds,1)}assert.equal(net.inboxes['drone-2'].length,20);assert.throws(()=>net.inboxes['drone-2'][0].text='forged',TypeError);
+ for(const w of worlds)w.agents[1].disabled=true;assert.equal(both(worlds,w=>E.sendMessage(w,'drone-1','drone-2','new',[])).reason,'recipient_unavailable');assert(both(worlds,w=>E.sendMessage(w,'drone-1','drone-2','packet 1',[],'one-1')).duplicate);E.disposeWorld(worlds[1]);
+}
+{
+ const {worlds}=pair(42,{range:1000,delay:10});assert(both(worlds,w=>E.sendMessage(w,'drone-1','drone-2','end',[],'end')).ok);for(const w of worlds)for(const a of w.agents){a.disabled=true;a.status='fault'};steps(worlds,1);assert(worlds[1].done);assert.equal(worlds[1].communication.queue.length,0);assert(both(worlds,w=>E.sendMessage(w,'drone-1','drone-2','end',[],'end')).duplicate);E.disposeWorld(worlds[1]);
+}
+console.log('Rust peer admission/identity/queue limits, immutable queues/inboxes, inclusive outages, shared bandwidth/relay/loss parity, Unicode, inbox eviction, terminal cancellation and independent mid-transfer forks passed');

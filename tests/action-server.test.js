@@ -1,0 +1,8 @@
+'use strict';const assert=require('node:assert/strict');const {createServer}=require('../server/world-server');
+(async()=>{const server=createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const base=`http://127.0.0.1:${server.address().port}`;async function req(path,method='GET',data,token){const r=await fetch(base+path,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:data===undefined?undefined:JSON.stringify(data)});return [r.status,await r.json()]}
+ try{const [,created]=await req('/sessions','POST',{seed:42});const path='/sessions/'+created.sessionId,admin=created.adminToken;const [,issued]=await req(path+'/agents/vehicle-1/credentials','POST',{},admin),token=issued.agentToken;const input={requestId:'job-1',type:'move',target:{x:48,y:50},targetTick:1,expiresTick:10};
+ let [code,sent]=await req(path+'/agents/vehicle-1/actions','POST',input,token);assert.equal(code,200);assert.equal(sent.action.status,'pending');assert(!('world' in sent));let [,duplicate]=await req(path+'/agents/vehicle-1/actions','POST',input,token);assert(duplicate.duplicate);let [,world]=await req(path,'GET',undefined,admin);assert.equal(world.revision,1);
+ [code]=await req(path+'/agents/vehicle-2/actions','POST',input,token);assert.equal(code,403);[code]=await req(path+'/agents/vehicle-1/actions','POST',{...input,agentId:'vehicle-2'},token);assert.equal(code,403);
+ await req(path+'/step','POST',{count:100},admin);let [,observed]=await req(path+'/observations/vehicle-1','GET',undefined,token);assert.equal(observed.actions[0].status,'completed');console.log('action API tests passed');
+ }finally{server.close()}
+})().catch(e=>{console.error(e);process.exitCode=1});

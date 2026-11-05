@@ -1,0 +1,12 @@
+'use strict';
+const assert=require('node:assert/strict'),E=require('../src/engine');
+const s=E.create(42,'nearest',E.scene,{dispatchMode:'external',executionMode:'agent'});
+assert(E.assign(s,'inspect','drone-1').ok);assert(E.fault(s));
+assert(E.assign(s,'inspect','drone-2').ok);assert(E.fault(s));
+assert(E.assign(s,'inspect','drone-3').ok);E.step(s);E.step(s);
+let r=E.metrics(s).faultRecovery;assert.equal(r.faults,2);assert.equal(r.reassigned,2);assert.equal(r.started,0);assert.equal(r.records[0].interrupted,'device_fault');
+assert(E.submitAction(s,'drone-3',{requestId:'resume',type:'execute_task',taskId:'inspect',targetTick:s.tick+1,expiresTick:s.tick+10}).ok);E.step(s);
+r=E.metrics(s).faultRecovery;assert.equal(r.started,1);assert.equal(r.records[0].startDelay,null);assert.equal(r.records[1].startDelay,3);
+const legacy=E.snapshot(s);delete legacy.recoveryEventsVersion;assert.equal(E.metrics(legacy).faultRecovery,null);
+const p=E.create(42,'nearest',E.scene,{dispatchMode:'external',executionMode:'primitive'});assert(E.assign(p,'inspect','drone-1').ok);assert(E.fault(p));assert(E.assign(p,'inspect','drone-2').ok);const t=E.observe(p,'drone-2').assignedTasks[0];assert(E.submitAction(p,'drone-2',{requestId:'move',type:'move',target:{x:t.waypoint[0],y:t.waypoint[1]},targetTick:1,expiresTick:20}).ok);E.step(p);assert.equal(E.metrics(p).faultRecovery.started,1);
+console.log('fault recovery metrics tests passed');

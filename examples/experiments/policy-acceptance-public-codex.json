@@ -1,0 +1,35 @@
+{
+  "files": {
+    "policy-acceptance-codex-20261102-M9yS0t-summary.json": {
+      "bytes": 687717,
+      "sha256": "32b2106dee0d0b6d296a77cd4e09f5c035143c952539fb955866141b696d2b06"
+    },
+    "policy-acceptance-codex-20261102-M9yS0t-seed42-baseline.json": {
+      "bytes": 6782064,
+      "sha256": "ccde50aba709c964b20c3a19401fd26166c01be4f46249acd081d8edc1dec04b"
+    },
+    "policy-acceptance-codex-20261102-M9yS0t-seed42-candidate.json": {
+      "bytes": 6782084,
+      "sha256": "2aaffebd646bd1fee0e65ed6ed557373e8cd59525dd0bf9166f9e886d5d8d9c1"
+    }
+  },
+  "example": {
+    "summary": {
+      "file": "policy-acceptance-codex-20261102-M9yS0t-summary.json",
+      "bytes": 687717,
+      "sha256": "32b2106dee0d0b6d296a77cd4e09f5c035143c952539fb955866141b696d2b06"
+    },
+    "runs": {
+      "42:baseline": {
+        "file": "policy-acceptance-codex-20261102-M9yS0t-seed42-baseline.json",
+        "bytes": 6782064,
+        "sha256": "ccde50aba709c964b20c3a19401fd26166c01be4f46249acd081d8edc1dec04b"
+      },
+      "42:candidate": {
+        "file": "policy-acceptance-codex-20261102-M9yS0t-seed42-candidate.json",
+        "bytes": 6782084,
+        "sha256": "2aaffebd646bd1fee0e65ed6ed557373e8cd59525dd0bf9166f9e886d5d8d9c1"
+      }
+    }
+  }
+}

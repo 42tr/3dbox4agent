@@ -1,0 +1,181 @@
+{
+  "format": "3dbox-service-load-v1",
+  "config": {
+    "sessions": 4,
+    "ticks": 30,
+    "sceneId": "industrial-park-parallel-v1",
+    "seedStart": 42,
+    "messageEveryTicks": 5
+  },
+  "runs": [
+    {
+      "backend": "js",
+      "wallMs": 314.114708,
+      "executedSteps": 120,
+      "stepRequests": 120,
+      "stepLatencyMs": {
+        "p50": 7.462791999999979,
+        "p95": 10.213499999999982,
+        "max": 18.16083400000001
+      },
+      "responseBytes": 7251608,
+      "peakRssBytes": 178601984,
+      "messageAttempts": 24,
+      "worlds": [
+        {
+          "seed": 42,
+          "ticks": 30,
+          "done": false,
+          "failed": false,
+          "sha256": "f57721582eda7c6c55a3abcf25f91af1cdfdfde0550843282b833c3ec794cb8c"
+        },
+        {
+          "seed": 43,
+          "ticks": 30,
+          "done": false,
+          "failed": false,
+          "sha256": "f344eb22ee148df9b512947b97040ae0035fd1fada21078b4c75684f309ffd00"
+        },
+        {
+          "seed": 44,
+          "ticks": 30,
+          "done": false,
+          "failed": false,
+          "sha256": "16a3d1e5929f749b13125d93b198cfa9ac456df3b806e807280307e0675819e5"
+        },
+        {
+          "seed": 45,
+          "ticks": 30,
+          "done": false,
+          "failed": false,
+          "sha256": "1eb5ba00084088b5a072e30f751143a65ae90ff118adc274d0672e2c00bdb0d3"
+        }
+      ],
+      "runtime": {
+        "eventJournalEnabled": false,
+        "replayJournalEnabled": false,
+        "physicsBackend": "wasm",
+        "taskBackend": "js",
+        "communicationBackend": "js",
+        "instanceId": "342df81e-e4f8-4d78-8b04-7ec81f90f10a",
+        "node": "v24.14.1",
+        "platform": "darwin",
+        "arch": "arm64",
+        "rapierPackage": "0.19.3",
+        "sourceSha256": {
+          "src/engine.js": "84d76450d0950a01a6acd54f14a8de676fcdefd781e226addd80ff8a7d3c0383",
+          "src/navigation.js": "3791089c8be5535ae237979043ccb56410366282404fe2bef538feb0338a321d",
+          "src/sensors.js": "87416746723a734c0cc60bb2369738f2bbdb9973d31302f85db361e213302b86",
+          "src/scene-diagnostics.js": "d8462600194ac9079552f309643a55408ff597afc4e488bf3a9c13d339af9bfa",
+          "src/stream-protobuf.js": "3f13032ad6827de992dc604d8f81e6afe2d17a1ce5ab81b76596a53afa41f18b",
+          "proto/stream.proto": "f711b0cc0a57d39456ab3cc646bdc04d88611f388e9a26e41715aafcfbcea5c5",
+          "server/physics.js": "9f7fa1cc2aca00b49792a1f4444bef58432dabe017a873361e493b2af76419d1",
+          "server/world-server.js": "65ddcaa25a8151d3e57bf632804658496f4798e98aafb9b0ec85c8f635527a9c",
+          "server/event-journal.js": "142c19ac9810d95fb965a956c737fd8f3f577aded76cdd89534e69f91b9274a8",
+          "package-lock.json": "bf7a68fafae1471bc34f4a5bcf889194b889e76b1c793111997409984d4cc896"
+        }
+      }
+    },
+    {
+      "backend": "rust",
+      "wallMs": 318.32466600000004,
+      "executedSteps": 120,
+      "stepRequests": 120,
+      "stepLatencyMs": {
+        "p50": 7.682749999999999,
+        "p95": 10.405833000000001,
+        "max": 17.940250000000006
+      },
+      "responseBytes": 7251608,
+      "peakRssBytes": 179257344,
+      "messageAttempts": 24,
+      "worlds": [
+        {
+          "seed": 42,
+          "ticks": 30,
+          "done": false,
+          "failed": false,
+          "sha256": "f57721582eda7c6c55a3abcf25f91af1cdfdfde0550843282b833c3ec794cb8c"
+        },
+        {
+          "seed": 43,
+          "ticks": 30,
+          "done": false,
+          "failed": false,
+          "sha256": "f344eb22ee148df9b512947b97040ae0035fd1fada21078b4c75684f309ffd00"
+        },
+        {
+          "seed": 44,
+          "ticks": 30,
+          "done": false,
+          "failed": false,
+          "sha256": "16a3d1e5929f749b13125d93b198cfa9ac456df3b806e807280307e0675819e5"
+        },
+        {
+          "seed": 45,
+          "ticks": 30,
+          "done": false,
+          "failed": false,
+          "sha256": "1eb5ba00084088b5a072e30f751143a65ae90ff118adc274d0672e2c00bdb0d3"
+        }
+      ],
+      "runtime": {
+        "eventJournalEnabled": false,
+        "replayJournalEnabled": false,
+        "physicsBackend": "wasm",
+        "taskBackend": "rust",
+        "communicationBackend": "rust",
+        "instanceId": "e562b64d-417a-4e94-86d5-cfcb4be74629",
+        "node": "v24.14.1",
+        "platform": "darwin",
+        "arch": "arm64",
+        "rapierPackage": "0.19.3",
+        "sourceSha256": {
+          "src/engine.js": "84d76450d0950a01a6acd54f14a8de676fcdefd781e226addd80ff8a7d3c0383",
+          "src/navigation.js": "3791089c8be5535ae237979043ccb56410366282404fe2bef538feb0338a321d",
+          "src/sensors.js": "87416746723a734c0cc60bb2369738f2bbdb9973d31302f85db361e213302b86",
+          "src/scene-diagnostics.js": "d8462600194ac9079552f309643a55408ff597afc4e488bf3a9c13d339af9bfa",
+          "src/stream-protobuf.js": "3f13032ad6827de992dc604d8f81e6afe2d17a1ce5ab81b76596a53afa41f18b",
+          "proto/stream.proto": "f711b0cc0a57d39456ab3cc646bdc04d88611f388e9a26e41715aafcfbcea5c5",
+          "server/physics.js": "9f7fa1cc2aca00b49792a1f4444bef58432dabe017a873361e493b2af76419d1",
+          "server/world-server.js": "65ddcaa25a8151d3e57bf632804658496f4798e98aafb9b0ec85c8f635527a9c",
+          "server/event-journal.js": "142c19ac9810d95fb965a956c737fd8f3f577aded76cdd89534e69f91b9274a8",
+          "package-lock.json": "bf7a68fafae1471bc34f4a5bcf889194b889e76b1c793111997409984d4cc896",
+          "server/rust-task-rules.js": "a5bfb2a20d191dfa5ec5b3378cf7addf328dfb4b31a8998b15b112f5d98ce4b1",
+          "server/rust-communication.js": "567e27945da6b7778398c3aaf13f75f4e393825fd6fac9dfa13fd7f5cf06871c",
+          "rust/physics/Cargo.toml": "446ffa0460b528a2f31f863beabbbb8c7ba4b0694f96ffc987b55d704cb8f024",
+          "rust/physics/Cargo.lock": "61cd14d185b301bebc0b1b1354e7ada96b305012dc8b815a871d1314a7afb53a",
+          "rust/physics/src/lib.rs": "e166682a6a715deecb8996f07972c89b207343529a8b2bb507366eb4dd6929e3",
+          "rust/physics/target/release/box_physics.node": "5081efcb36f386b96bdd39124728bd16824bf207450d508c96a00a94aac6acce"
+        }
+      }
+    }
+  ],
+  "pairs": [
+    {
+      "seed": 42,
+      "jsHash": "f57721582eda7c6c55a3abcf25f91af1cdfdfde0550843282b833c3ec794cb8c",
+      "rustHash": "f57721582eda7c6c55a3abcf25f91af1cdfdfde0550843282b833c3ec794cb8c",
+      "equal": true
+    },
+    {
+      "seed": 43,
+      "jsHash": "f344eb22ee148df9b512947b97040ae0035fd1fada21078b4c75684f309ffd00",
+      "rustHash": "f344eb22ee148df9b512947b97040ae0035fd1fada21078b4c75684f309ffd00",
+      "equal": true
+    },
+    {
+      "seed": 44,
+      "jsHash": "16a3d1e5929f749b13125d93b198cfa9ac456df3b806e807280307e0675819e5",
+      "rustHash": "16a3d1e5929f749b13125d93b198cfa9ac456df3b806e807280307e0675819e5",
+      "equal": true
+    },
+    {
+      "seed": 45,
+      "jsHash": "1eb5ba00084088b5a072e30f751143a65ae90ff118adc274d0672e2c00bdb0d3",
+      "rustHash": "1eb5ba00084088b5a072e30f751143a65ae90ff118adc274d0672e2c00bdb0d3",
+      "equal": true
+    }
+  ],
+  "allWorldsEqual": true
+}

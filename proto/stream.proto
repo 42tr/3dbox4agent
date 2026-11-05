@@ -1,0 +1,22 @@
+syntax = "proto3";
+package box.stream.v1;
+
+// Versions 1 and 2 carry the same JSON-compatible message tree as the text stream.
+// Version 2 can deduplicate object keys using a per-envelope dictionary.
+// key_index is one-based; index zero is invalid. Version 1 uses json_key only.
+// Strings and object keys are JSON string literals, preserving lone UTF-16
+// surrogates exactly across runtimes; decode them with a JSON string parser.
+message Envelope { uint32 version = 1; Value payload = 2; repeated string json_keys = 3; }
+message Value {
+  oneof kind {
+    bool null_value = 1;
+    bool bool_value = 2;
+    double number_value = 3;
+    string json_string = 4;
+    List list_value = 5;
+    Object object_value = 6;
+  }
+}
+message List { repeated Value values = 1; }
+message Object { repeated Field fields = 1; }
+message Field { oneof key { string json_key = 1; uint32 key_index = 3; } Value value = 2; }

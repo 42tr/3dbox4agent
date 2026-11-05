@@ -1,0 +1,47 @@
+'use strict';
+const assert=require('node:assert/strict'),E=require('../src/engine'),Components=require('../server/native-components');
+let frames=0,activations=0;
+function bind(w){const stores={};for(const [name,method] of [['environment','bindWorldEnvironment'],['ledger','bindWorldLedger'],['motion','bindWorldMotion'],['tasks','bindWorldTasks'],['actions','bindWorldActions'],['resources','bindWorldResources']]){let store=require('../server/rust-world-'+name).create(w);if(name==='actions'){const original=store;store={...original,get views(){return original.views},activate(...args){activations++;return original.activate(...args)}}}stores[name]=store;E[method](w,store);if(name==='ledger'){stores.control=store.control(w);E.bindWorldControl(w,stores.control)}if(name==='motion'){stores.execution=store.execution(w);E.bindWorldExecution(w,stores.execution)}}return stores}
+function pair(options={},prepare=()=>{}){const scene=E.getScene('lunar-outpost-v1');scene.obstacles=[];scene.terrain=[];const a=E.create(42,'nearest',scene,{dispatchMode:'external',...options});prepare(a);const b=E.snapshot(a);for(const w of [a,b])E.bindTaskRules(w,require('../server/rust-task-rules'));const stores=bind(b);return {a,b,stores,close(){E.disposeWorld(b)}}}
+function both(v,fn){assert.deepEqual(fn(v.b),fn(v.a));assert.deepEqual(E.snapshot(v.b),E.snapshot(v.a))}
+function step(v,n=1){for(let i=0;i<n;i++){const due=v.b.actions.filter(a=>a.status==='pending'&&a.targetTick<=v.b.tick+1).length,before=activations;E.step(v.a);E.step(v.b);assert.equal(activations-before,due);assert.deepEqual(E.snapshot(v.b),E.snapshot(v.a));for(const a of v.a.agents)assert.deepEqual(E.observe(v.b,a.id),E.observe(v.a,a.id));frames++}}
+function submit(v,id,type,extra={},requestId='intent'){both(v,w=>E.submitAction(w,id,{requestId,type,targetTick:w.tick+1,expiresTick:w.tick+100,...extra}))}
+for(const type of ['move','scan','charge','execute_task','work_task'])for(const mode of ['auto','agent','primitive']){
+ const v=pair({executionMode:mode},w=>{w.agents[0].battery=70;if(type==='execute_task'||type==='work_task'){w.tasks.find(t=>t.id==='inspect').target=[w.agents[0].x,w.agents[0].y];assert(E.assign(w,'inspect',w.agents[0].id).ok)}});
+ try{submit(v,v.a.agents[0].id,type,type==='move'?{target:{x:30,y:40}}:['execute_task','work_task'].includes(type)?{taskId:'inspect'}:{});step(v,5);assert.equal(v.b.actions[0].status,(type==='execute_task'&&mode!=='agent'||type==='work_task'&&mode!=='primitive')?'rejected':type==='scan'?'completed':'accepted')}finally{v.close()}
+}
+for(const kind of ['low_battery','missing_capability','battery_sufficient','agent_unavailable','task_not_assigned','out_of_reach']){
+ const mode=kind==='out_of_reach'?'primitive':'agent',v=pair({executionMode:mode},w=>{if(kind==='low_battery')w.agents[0].battery=5;if(kind==='agent_unavailable')Object.assign(w.agents[0],{status:'fault',disabled:true});if(kind==='out_of_reach')assert(E.assign(w,'inspect',w.agents[0].id).ok)});
+ try{const type=kind==='battery_sufficient'?'charge':['task_not_assigned','out_of_reach'].includes(kind)?'work_task':'scan';if(kind==='task_not_assigned'){
+   // An enabled agent-mode task action with no actual assignment.
+   submit(v,v.a.agents[0].id,'execute_task',{taskId:'inspect'});
+  }else submit(v,kind==='missing_capability'?v.a.agents.find(a=>a.role==='vehicle').id:v.a.agents[0].id,type,type==='work_task'?{taskId:'inspect'}:{});step(v);assert.equal(v.b.actions[0].reason,kind)}finally{v.close()}
+}
+{
+ const v=pair();try{for(const type of ['scan','move','charge'])submit(v,v.a.agents[0].id,type,type==='move'?{target:{x:35,y:40}}:{},type);step(v);assert.deepEqual(v.b.actions.map(a=>a.status),['accepted','rejected','rejected']);assert.deepEqual(v.b.actions.slice(1).map(a=>a.reason),['agent_unavailable','agent_unavailable'])}finally{v.close()}
+}
+for(const type of ['move','charge','execute_task']){
+ const mode=type==='move'?'primitive':'agent',v=pair({executionMode:mode},w=>{w.agents[0].battery=70;assert(E.assign(w,'inspect',w.agents[0].id).ok);if(type==='execute_task')w.agents[0].taskNeedsRoute=true;assert(E.injectRoadblock(w,{x:55,y:0,w:4,h:100},7).ok)});
+ try{submit(v,v.a.agents[0].id,type,type==='move'?{target:{x:70,y:28}}:type==='execute_task'?{taskId:'inspect'}:{});step(v);const action=v.b.actions[0],actor=v.b.agents[0];assert.equal(action.status,'accepted');if(type==='charge'){assert.equal(action.resumeTaskId,'inspect');assert(v.b.events.some(e=>e.kind==='roadblock_wait_ended'&&e.outcome==='cancelled'));assert.equal(actor.roadblockWait,undefined)}else{assert(actor.roadblockWait);assert.equal(actor.roadblockWait.owner.kind,type==='move'?'action':'task')}step(v,12);assert(v.b.events.some(e=>e.kind==='roadblock_ended'))}finally{v.close()}
+}
+// Exact reach boundaries use native geometry rather than a host-supplied bool.
+for(let n=0;n<100;n++){
+ const angle=n*.73,dx=Math.cos(angle)*4,dy=Math.sin(angle)*4,v=pair({executionMode:'primitive'},w=>{w.tasks.find(t=>t.id==='inspect').target=[w.agents[0].x+dx,w.agents[0].y+dy];assert(E.assign(w,'inspect',w.agents[0].id).ok)});
+ try{submit(v,v.a.agents[0].id,'work_task',{taskId:'inspect'});step(v)}finally{v.close()}
+}
+{
+ const v=pair();try{
+  submit(v,v.a.agents[0].id,'move',{target:{x:35,y:40}});const s=v.stores,raw=Object.fromEntries(['actions','environment','resources','tasks','control','ledger'].map(k=>[k,Components.reference(s[k],k).native]));raw.motion=Components.reference(s.execution,'execution').native;s.ledger.advance();s.environment.expireRoadblocks(1);s.environment.expireTerrain(1);
+  const prepare=()=>raw.actions.prepareActivation(0,1,raw.motion,raw.environment,raw.resources,raw.tasks,raw.control,raw.ledger),commit=(t,route={route:[[35,40]],wait:false},tasks=raw.tasks)=>raw.actions.commitActivation(t,JSON.stringify(route),raw.motion,raw.environment,raw.resources,tasks,raw.control,raw.ledger),state=()=>[raw.actions.snapshot(),raw.motion.snapshot(),raw.motion.snapshotExecution(),raw.environment.snapshot(),raw.resources.snapshot(),raw.tasks.snapshot(),raw.control.snapshot(),raw.ledger.snapshot()];
+  const ticket=prepare(),before=state();assert.equal(JSON.parse(ticket.plan()).routeKind,'action');const foreignOwner=new (require('../rust/physics/target/release/box_physics.node').WorldActions)(JSON.stringify({tick:1,agents:v.b.agents.map(a=>a.id),actions:JSON.parse(raw.actions.snapshot())}));assert.throws(()=>foreignOwner.commitActivation(ticket,JSON.stringify({route:[[35,40]],wait:false}),raw.motion,raw.environment,raw.resources,raw.tasks,raw.control,raw.ledger));assert.deepEqual(state(),before);foreignOwner.free();assert.throws(()=>commit(ticket,{route:[[101,40]],wait:false}));assert.deepEqual(state(),before);
+  const foreign=require('../server/rust-world-tasks').create(v.b),foreignRaw=Components.reference(foreign,'tasks').native;assert.throws(()=>commit(ticket,undefined,foreignRaw));assert.deepEqual(state(),before);foreign.free();
+  raw.motion.commit(0,v.b.agents[0].x,v.b.agents[0].y,50,0);const changed=state();assert.throws(()=>commit(ticket));assert.deepEqual(state(),changed);raw.motion.commit(0,v.b.agents[0].x,v.b.agents[0].y,v.a.agents[0].battery,0);
+  const current=prepare();assert.throws(()=>commit(ticket));assert.deepEqual(state(),before);assert.equal(JSON.parse(commit(current)).status,'accepted');const after=state();assert.throws(()=>commit(current));assert.deepEqual(state(),after);ticket.free();current.free();
+ }finally{v.close()}
+}
+{
+ const v=pair();try{submit(v,v.a.agents[0].id,'scan');const s=v.stores,m=Components.reference(s.execution,'execution').native,env=Components.reference(s.environment,'environment').native,r=Components.reference(s.resources,'resources').native,t=Components.reference(s.tasks,'tasks').native,c=Components.reference(s.control,'control').native,l=Components.reference(s.ledger,'ledger').native,a=Components.reference(s.actions,'actions').native;s.ledger.advance();s.environment.expireRoadblocks(1);s.environment.expireTerrain(1);const ticket=a.prepareActivation(0,1,m,env,r,t,c,l);ticket.free();const before=a.snapshot();assert.throws(()=>a.commitActivation(ticket,JSON.stringify({route:null,wait:false}),m,env,r,t,c,l));assert.equal(a.snapshot(),before);assert.throws(()=>a.prepareActivation(0,2,m,env,r,t,c,l));const checkpoint=a.checkpoint(),orphan=a.prepareActivation(0,1,m,env,r,t,c,l);a.rollback(checkpoint);assert.throws(()=>a.commitActivation(orphan,JSON.stringify({route:null,wait:false}),m,env,r,t,c,l));assert.equal(a.snapshot(),before);orphan.free();checkpoint.free();
+ // A pending intent beyond its expiry is rejected using the real ledger clock.
+ s.ledger.advance();s.ledger.advance();s.environment.expireRoadblocks(3);s.environment.expireTerrain(3);const record={...JSON.parse(before)[0],expiresTick:1};const Native=require('../rust/physics/target/release/box_physics.node'),expired=new Native.WorldActions(JSON.stringify({tick:3,agents:v.b.agents.map(a=>a.id),actions:[record]})),expiry=expired.prepareActivation(0,3,m,env,r,t,c,l);assert.equal(JSON.parse(expiry.plan()).reason,'expired');assert.equal(JSON.parse(expired.commitActivation(expiry,JSON.stringify({route:null,wait:false}),m,env,r,t,c,l)).reason,'expired');expired.free();expiry.free();}finally{v.close()}
+}
+assert(activations>0);console.log('Native action activation: '+frames+' paired frames and '+activations+' native starts, five action types/modes, reasons, declaration order, charge/wait ownership, exact reach, opaque/consumed/freed/stale/foreign tickets and staged route rejection passed');

@@ -1,0 +1,25 @@
+# Dependencies, local runs, and native build output
+node_modules/
+.3dbox/
+rust/physics/target/
+
+# Python environments and caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local configuration and operating system files
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Test coverage and logs
+.coverage
+coverage/
+*.log

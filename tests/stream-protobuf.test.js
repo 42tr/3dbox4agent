@@ -1,0 +1,7 @@
+'use strict';
+const assert=require('node:assert/strict'),protobuf=require('protobufjs'),P=require('../src/stream-protobuf'),E=require('../src/engine');
+const obj=JSON.parse('{"text":"中文 😁 \\ud800","array":[null,false,true,0,-4.5,{},[]],"__proto__":{"ok":true}}');for(const v of [1,2])assert.deepEqual(P.decode(P.encode(obj,v)),obj);assert.equal({}.ok,undefined);
+const Envelope=protobuf.loadSync('proto/stream.proto').lookupType('box.stream.v1.Envelope'),wire=P.encode({type:'test',n:4});const conventional=Envelope.decode(wire);assert.equal(conventional.version,1);assert.equal(conventional.payload.objectValue.fields.length,2);assert.deepEqual(P.decode(Envelope.encode(conventional).finish()),{type:'test',n:4});
+for(const bytes of [[],[8,3,18,2,8,1],[8,1,18,0],[8,1,18,2,8],[8,1,18,4,8,1,16,1],[8,1,18,2,56,1],[8,2,18,8,50,6,10,4,24,1,18,0]])assert.throws(()=>P.decode(Uint8Array.from(bytes)));
+const input={type:'frame',revision:0,world:E.snapshot(E.create(42,'nearest'))};assert.deepEqual(P.decode(P.encode(input)),input);const compact=P.encode(input,2);assert.deepEqual(P.decode(compact),input);assert(compact.length<P.encode(input,1).length*.8);const parsed=Envelope.decode(compact);assert.equal(parsed.version,2);assert(parsed.jsonKeys.length>0);assert.deepEqual(P.decode(Envelope.encode(parsed).finish()),input);
+console.log('protobuf schema compatibility, exact values and invalid wire rejection passed');

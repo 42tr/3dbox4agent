@@ -1,0 +1,13 @@
+'use strict';
+const assert=require('node:assert/strict');const Sensors=require('../src/sensors');const E=require('../src/engine');
+const wall=[{x:4,y:4,w:2,h:2,height:8}];
+assert(Sensors.visible({x:0,y:0,z:2},{x:3,y:3,z:2},10,wall));
+assert(!Sensors.visible({x:0,y:5,z:2},{x:10,y:5,z:2},20,wall));
+assert(Sensors.visible({x:0,y:5,z:16},{x:10,y:5,z:16},20,wall));
+assert(!Sensors.visible({x:0,y:5,z:2},{x:10,y:5,z:2},5,[]));
+const s=E.create(42);s.obstacles=[{id:'wall',x:40,y:30,w:4,h:20,height:8}];s.sensorRange=50;
+const self=s.agents.find(a=>a.id==='vehicle-1'),other=s.agents.find(a=>a.id==='vehicle-2');self.x=35;self.y=40;other.x=38;other.y=40;E.refreshPerceptions(s);let obs=E.observe(s,self.id);assert(obs.nearby.some(x=>x.id===other.id));assert(obs.memory.some(x=>x.id===other.id&&x.current&&x.observedTick===0));
+s.tick=1;other.x=47;E.refreshPerceptions(s);obs=E.observe(s,self.id);assert(!obs.nearby.some(x=>x.id===other.id));assert(obs.memory.some(x=>x.id===other.id&&!x.current&&x.age===1&&x.x===38));
+obs.memory[0].x=999;assert.notEqual(E.observe(s,self.id).memory[0].x,999);s.tick=31;E.refreshPerceptions(s);assert(!E.observe(s,self.id).memory.some(x=>x.id===other.id));
+self.disabled=true;E.refreshPerceptions(s);assert.equal(E.observe(s,self.id).nearby.length,0);
+const d=E.create(42);const a=structuredClone(d);for(let i=0;i<10;i++){E.step(d);E.step(a)}assert.deepEqual(d,a);console.log('sensor tests passed');

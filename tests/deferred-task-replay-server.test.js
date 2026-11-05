@@ -1,0 +1,18 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),R=require('../src/replay'),{createServer}=require('../server/world-server');
+(async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'3dbox-deferred-replay-'));
+ try{for(const backend of ['js','rust']){
+  const server=createServer({taskBackend:backend,physicsBackend:backend==='rust'?'rust':'wasm',journalDir:path.join(dir,backend),replayJournal:true});await new Promise(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${server.address().port}`,sessions=[];
+  async function req(p,method='GET',body,token){const response=await fetch(base+p,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});const data=await response.json();assert(response.ok,`${p}: ${response.status} ${data.error||''}`);return data}
+  async function history(session){const data=await req('/sessions/'+session.sessionId+'/history?after=-1','GET',undefined,session.adminToken);const archive={format:'3dbox-prototype-v1',source:'server',recordingContext:session.recordingContext,config:{seed:42,policy:'nearest'},frames:data.frames.map(f=>f.world),coverage:R.liveCoverage(data.frames.map(f=>f.world),data.revision,!!session.forkedFrom)};assert(R.validateArchive(archive));return archive}
+  try{for(const [type,executionMode]of [['execute_task','agent'],['work_task','primitive']]){
+   const source=await req('/sessions','POST',{seed:42,dispatchMode:'external',executionMode});sessions.push(source);const root='/sessions/'+source.sessionId,input={requestId:'unknown-task',type,taskId:'missing',targetTick:1,expiresTick:100};await req(root+'/agents/drone-1/actions','POST',input,source.adminToken);const pending=(await history(source)).frames.at(-1);assert.equal(pending.actions[0].status,'pending');
+   const branch=await req('/event-journals/'+source.sessionId+'/fork','POST',{revision:1},source.adminToken);sessions.push(branch);assert.deepEqual(branch.world,pending);const branchRoot='/sessions/'+branch.sessionId;const rejected=await req(branchRoot+'/step','POST',{count:1},branch.adminToken);assert.equal(rejected.world.actions[0].status,'rejected');assert.equal(rejected.world.actions[0].reason,'task_not_assigned');assert.equal((await history(branch)).frames.at(-1).actions[0].status,'rejected');assert.equal((await req(root,'GET',undefined,source.adminToken)).world.actions[0].status,'pending');
+   const terminal=await req('/event-journals/'+branch.sessionId+'/fork','POST',{revision:1},branch.adminToken);sessions.push(terminal);assert.deepEqual(terminal.world,rejected.world);await req('/sessions/'+terminal.sessionId+'/step','POST',{count:1},terminal.adminToken);assert.equal((await history(terminal)).frames.at(-1).actions[0].reason,'task_not_assigned');
+   const cancelled=await req(root+'/agents/drone-1/actions/cancel','POST',{requestId:input.requestId},source.adminToken);assert.equal(cancelled.action.status,'cancelled');assert.equal((await history(source)).frames.at(-1).actions[0].reason,'cancel_requested');
+  }}finally{for(const s of sessions)await req('/sessions/'+s.sessionId,'DELETE',undefined,s.adminToken);await new Promise(r=>server.close(r))}
+ }
+ console.log('Deferred unknown-task HTTP histories and journal forks: JS/Rust, both task intention types, pending rejection, terminal continuation, cancellation and independent source histories passed');
+ }finally{fs.rmSync(dir,{recursive:true,force:true})}
+})().catch(error=>{console.error(error);process.exitCode=1});

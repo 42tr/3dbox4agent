@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('node:assert/strict'),E=require('../src/engine'),R=require('../src/replay'),{createServer}=require('../server/world-server');
+const scene=E.getScene();scene.id='custom-communications';scene.obstacles=[];Object.assign(scene.communication,{range:60,delay:2,ttl:20,lossRate:0});scene.agents[0].communicationRange=80;scene.agents[1].communicationRange=30;scene.agents[2].communicationRange=80;
+function world(relayX=40){const s=E.create(42,'nearest',scene,{dispatchMode:'external'});for(const [id,x] of [['drone-1',10],['vehicle-1',relayX],['robot-1',70]]){const a=s.agents.find(a=>a.id===id);a.x=x;a.y=50}E.refreshPerceptions(s);return s}
+function step(s,n){for(let i=0;i<n;i++)E.step(s)}
+(async()=>{
+ const invalid=structuredClone(scene);invalid.agents[0].communicationRange=0;assert.throws(()=>E.normalizeScene(invalid));invalid.agents[0].communicationRange=Infinity;assert.throws(()=>E.normalizeScene(invalid));assert.equal(E.normalizeScene(scene).agents[0].communicationRange,80);
+ let s=world();assert.equal(E.observe(s,'drone-1').self.communicationRange,80);assert.equal(E.observe(s,'vehicle-1').self.communicationRange,30);assert(E.sendMessage(s,'drone-1','robot-1','direct').ok);step(s,2);assert.equal(E.observe(s,'robot-1').inbox[0].text,'direct');
+ assert(E.sendMessage(s,'drone-1','robot-1','relay',['vehicle-1']).ok);step(s,4);assert(E.observe(s,'robot-1').inbox.some(x=>x.text==='relay'));assert.equal(E.metrics(s).relayHops,1);
+ const archive={format:'3dbox-prototype-v1',config:{seed:42,policy:'nearest',sceneId:scene.id,scene:E.normalizeScene(scene)},frames:[E.snapshot(s)]};assert(R.validateArchive(archive));const forged=structuredClone(archive);forged.frames[0].agents.find(a=>a.id==='vehicle-1').communicationRange=80;assert.throws(()=>R.validateArchive(forged));
+ s=world(35);assert(E.sendMessage(s,'drone-1','robot-1','failed',['vehicle-1']).ok);step(s,4);let event=s.events.find(e=>e.kind==='message_failed');assert.equal(event.reason,'out_of_range');assert.equal(event.hop,2);assert.equal(event.hopFrom,'vehicle-1');
+ s=world(45);assert(E.sendMessage(s,'drone-1','robot-1','failed',['vehicle-1']).ok);step(s,2);event=s.events.find(e=>e.kind==='message_failed');assert.equal(event.reason,'out_of_range');assert.equal(event.hop,1);
+ s=world(45);assert(E.sendMessage(s,'vehicle-1','drone-1','reverse').ok);step(s,2);assert.equal(s.events.find(e=>e.kind==='message_failed').reason,'out_of_range');
+ const fallback=E.create(42,'nearest',E.scene);assert.equal(E.observe(fallback,'drone-1').self.communicationRange,E.scene.communication.range);
+ const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));try{const base=`http://127.0.0.1:${server.address().port}`;async function req(p,method='GET',body,token){const r=await fetch(base+p,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:body===undefined?undefined:JSON.stringify(body)});assert(r.ok);return r.json()}const created=await req('/sessions','POST',{scene,dispatchMode:'external'}),root='/sessions/'+created.sessionId,credentials=await req(root+'/agents/vehicle-1/credentials','POST',{},created.adminToken),obs=await req(root+'/observations/vehicle-1','GET',undefined,credentials.agentToken);assert.equal(obs.self.communicationRange,30)}finally{server.close()}
+ console.log('per-device communication ranges, relay hops, replay and scoped API passed');
+})().catch(e=>{console.error(e);process.exitCode=1});

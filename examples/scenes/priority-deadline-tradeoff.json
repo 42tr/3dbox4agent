@@ -1,0 +1,183 @@
+{
+  "id": "priority-deadline-tradeoff-v1",
+  "name": "优先级与截止时间对照",
+  "sensorRange": 22,
+  "communication": {
+    "range": 60,
+    "delay": 3,
+    "lossRate": 0.1,
+    "ttl": 15,
+    "maxPerTick": 4,
+    "maxBytes": 256,
+    "statusInterval": 5,
+    "statusMaxAge": 20,
+    "decisionMaxAge": 5
+  },
+  "resource": {
+    "warehouse": [
+      36,
+      50
+    ],
+    "site": [
+      75,
+      37
+    ]
+  },
+  "obstacles": [
+    {
+      "id": "warehouse",
+      "x": 9,
+      "y": 9,
+      "w": 22,
+      "h": 20,
+      "height": 8
+    },
+    {
+      "id": "workshop",
+      "x": 57.5,
+      "y": 10,
+      "w": 25,
+      "h": 18,
+      "height": 11
+    },
+    {
+      "id": "equipment",
+      "x": 59,
+      "y": 67.5,
+      "w": 28,
+      "h": 21,
+      "height": 7
+    },
+    {
+      "id": "control",
+      "x": 7.5,
+      "y": 70.5,
+      "w": 21,
+      "h": 15,
+      "height": 6
+    }
+  ],
+  "agents": [
+    {
+      "role": "drone",
+      "label": "无人机",
+      "count": 1,
+      "capabilities": [
+        "inspect",
+        "confirm"
+      ],
+      "speed": 2.8
+    },
+    {
+      "role": "vehicle",
+      "label": "运输车",
+      "count": 5,
+      "capabilities": [
+        "deliver"
+      ],
+      "speed": 1.8
+    },
+    {
+      "role": "robot",
+      "label": "维修机器人",
+      "count": 5,
+      "capabilities": [
+        "repair"
+      ],
+      "speed": 1.8
+    }
+  ],
+  "tasks": [
+    {
+      "id": "inspect",
+      "behavior": "detect",
+      "name": "巡检异常区域",
+      "role": "drone",
+      "capability": "inspect",
+      "target": [
+        70,
+        28
+      ],
+      "duration": 8,
+      "dependsOn": [],
+      "priority": 10,
+      "deadline": 60
+    },
+    {
+      "id": "survey",
+      "behavior": "survey",
+      "name": "巡检第二片区域",
+      "role": "drone",
+      "capability": "inspect",
+      "target": [
+        77,
+        58
+      ],
+      "duration": 8,
+      "dependsOn": [],
+      "priority": 1,
+      "deadline": 40
+    },
+    {
+      "id": "confirm",
+      "behavior": "confirm",
+      "name": "确认设备异常",
+      "role": "drone",
+      "capability": "confirm",
+      "target": [
+        75,
+        37
+      ],
+      "duration": 7,
+      "dependsOn": [
+        "inspect",
+        "survey"
+      ]
+    },
+    {
+      "id": "deliver",
+      "behavior": "deliver",
+      "name": "运输维修备件",
+      "role": "vehicle",
+      "capability": "deliver",
+      "target": [
+        75,
+        37
+      ],
+      "duration": 9,
+      "dependsOn": [
+        "confirm"
+      ]
+    },
+    {
+      "id": "repair",
+      "behavior": "repair",
+      "name": "维修设备",
+      "role": "robot",
+      "capability": "repair",
+      "target": [
+        75,
+        37
+      ],
+      "duration": 12,
+      "dependsOn": [
+        "deliver"
+      ]
+    },
+    {
+      "id": "verify",
+      "behavior": "verify",
+      "name": "复核设备状态",
+      "role": "drone",
+      "capability": "confirm",
+      "target": [
+        75,
+        37
+      ],
+      "duration": 5,
+      "dependsOn": [
+        "repair"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "format": "3dbox-scheduled-experiment-v1",
+  "sceneId": "shore-surface-v1",
+  "seed": 42,
+  "policy": "nearest",
+  "physicsMode": "rapier",
+  "maxTicks": 2000,
+  "interventions": [
+    {
+      "id": "boat-low-energy",
+      "tick": 10,
+      "type": "low_energy",
+      "agentId": "boat-1",
+      "level": 5
+    },
+    {
+      "id": "dock-channel-closure",
+      "tick": 10,
+      "type": "roadblock",
+      "rect": {
+        "x": 46,
+        "y": 2,
+        "w": 2,
+        "h": 96
+      },
+      "duration": 12
+    }
+  ]
+}

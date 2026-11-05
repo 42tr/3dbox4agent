@@ -1,0 +1,63 @@
+{
+  "author": "Kenney",
+  "license": "CC0-1.0",
+  "officialSource": "https://kenney-assets.itch.io/space-kit",
+  "mirror": "https://github.com/Hidencod/tge-assets",
+  "note": "Models recolored and composed in Three.js; decorative geometry is not physics collision geometry.",
+  "files": [
+    {
+      "name": "corridor.glb",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/packs/space-kit/corridor.glb",
+      "bytes": 6876,
+      "sha256": "1e3a98e6e0b8f34a7b16b60e7f8d655c920b78881285d05e091893acf91fc6b9"
+    },
+    {
+      "name": "craterlarge.glb",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/packs/space-kit/craterlarge.glb",
+      "bytes": 5688,
+      "sha256": "703f86c085371d5e53e39029a0c74e51cefccd02697ea5e00eb2b4235ed9011b"
+    },
+    {
+      "name": "hangar-largea.glb",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/packs/space-kit/hangar-largea.glb",
+      "bytes": 25304,
+      "sha256": "cae233b3e53aa5004bc8d7d43bd00763a919064af6b5249f354a71cae5fbf29a"
+    },
+    {
+      "name": "hangar-rounda.glb",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/packs/space-kit/hangar-rounda.glb",
+      "bytes": 12104,
+      "sha256": "cf64a33cc795f897971990433c46097d43529ae3ef0dce8ba719761c54dd6a3d"
+    },
+    {
+      "name": "hangar-roundglass.glb",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/packs/space-kit/hangar-roundglass.glb",
+      "bytes": 10076,
+      "sha256": "6b6346d95b90b8c012880832cef3969a108ae2b153bef8e2106b27997e33d601"
+    },
+    {
+      "name": "machine-generatorlarge.glb",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/packs/space-kit/machine-generatorlarge.glb",
+      "bytes": 10220,
+      "sha256": "bbfa33a2e7c7eff7d9ee12f64255249b7e2f5d4b2ada2d681aa35cf38ba599bc"
+    },
+    {
+      "name": "rock-largea.glb",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/packs/space-kit/rock-largea.glb",
+      "bytes": 13224,
+      "sha256": "13b2bf393fcd7ca8c73d8a2a731da0be6c2c2b4e67ef0ae826e816c0d8733f2f"
+    },
+    {
+      "name": "rover.glb",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/packs/space-kit/rover.glb",
+      "bytes": 13384,
+      "sha256": "9784549775017e540ab84e6fc0eb8a1902dbeff9ba4285cecb97c086d2937fa5"
+    },
+    {
+      "name": "satellitedish-detailed.glb",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/packs/space-kit/satellitedish-detailed.glb",
+      "bytes": 26044,
+      "sha256": "143dd36b2c427e3201110967a18fd836bc7aa8002dbf3e44efa42c75fbb44ae5"
+    }
+  ]
+}

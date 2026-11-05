@@ -1,0 +1,20 @@
+{
+  "createdAt": "2026-11-02",
+  "mode": "built-in image_gen",
+  "source": "/Users/liuyang/.codex/generated_images/01a19b23-4034-72b2-99d3-695929bb7ba2/exec-6a1def77-cc6d-42fb-9c89-4393fcf39884.png",
+  "reference": "https://show.42tr.cn/3dbox4agent/640.png",
+  "intendedUse": "Repeatable lunar terrain albedo for interactive Three.js surface; scene reference palette only.",
+  "requestedDimensions": [
+    2048,
+    2048
+  ],
+  "actualDimensions": [
+    1254,
+    1254
+  ],
+  "prompt": "Use case: photorealistic-natural. Asset type: seamless repeatable physically based albedo texture for the ground of an interactive Three.js lunar base scene. Primary request: a 2048 by 2048 square orthographic straight-down texture of dry lunar regolith, matching the warm muted brown / taupe dusty ground of the reference lunar-base screenshot. Surface only fills the entire square: fine dense powdery granular dust with scattered very small naturally irregular angular pebbles and extremely subtle low-relief granular undulation. Palette predominantly desaturated sandy taupe and warm grey brown, similar to #907962 and #a68a6c; restrained neutral dark specks, no large bright areas. Realistic game environment material scan, very fine evenly distributed detail, no obvious focal feature, no large stones, no craters. Lighting: perfectly even diffuse illumination, ambient-occlusion minimal, no directional light, no baked cast shadows or highlights. Composition: exactly straight down, no perspective, no horizon; all four edges seamlessly tile with each other. Constraints: terrain albedo only; no buildings, equipment, people, plants, sky, objects, footprints, tire tracks, painted lines, text, logos, watermark, border, grid, vignette, or gradient. Opaque background.",
+  "qa": {
+    "visual": "Square opaque warm taupe regolith; dense fine grain and small pebbles; no objects, labels, tracks, sky, border, large craters, strong highlights or scene composition.",
+    "limitation": "Built-in tool returned 1254 square despite 2048 prompt. Tileability requested; edge continuity must be checked under final repeating UVs."
+  }
+}

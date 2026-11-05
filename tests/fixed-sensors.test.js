@@ -1,0 +1,22 @@
+'use strict';
+const assert=require('node:assert/strict'),E=require('../src/engine'),R=require('../src/replay');
+const scene=E.getScene('industrial-park-fixed-sensor-v1');scene.communication.lossRate=0;
+const world=E.create(42,'nearest',scene,{dispatchMode:'external'}),frames=[E.snapshot(world)];
+const advance=n=>{for(let i=0;i<n;i++){E.step(world);frames.push(E.snapshot(world))}};
+advance(10);assert.equal(world.fixedSensorState.sent,1);assert.equal(E.coordinatorObservation(world).fixedSensorReports.length,0);assert(!Object.hasOwn(E.observe(world,world.agents[0].id),'fixedSensorReports'));
+advance(3);assert.deepEqual(E.coordinatorObservation(world).fixedSensorReports,[{sensorId:'sensor-1',reportId:1,result:'anomaly',position:[75,37],observedTick:10,receivedTick:13,surveyRoles:['drone']}]);
+world.asset.condition='repaired';advance(7);assert.equal(E.coordinatorObservation(world).fixedSensorReports[0].result,'anomaly');advance(3);assert.equal(E.coordinatorObservation(world).fixedSensorReports[0].result,'normal');
+const archive={format:'3dbox-prototype-v1',config:{seed:42,policy:'nearest',sceneId:scene.id,scene:E.normalizeScene(scene)},frames};R.validateArchive(archive);const forged=structuredClone(archive);forged.frames.at(-1).fixedSensorState.reports['sensor-1'].receivedTick=999;assert.throws(()=>R.validateArchive(forged));
+const blocked=structuredClone(scene);blocked.obstacles.push({id:'sensor-wall',x:71,y:38,w:3,h:3,height:50});const b=E.create(42,'nearest',blocked,{dispatchMode:'external'});for(let i=0;i<15;i++)E.step(b);assert.equal(b.fixedSensorState.sent,0);
+const dropped=structuredClone(scene);dropped.communication.lossRate=1;const d=E.create(42,'nearest',dropped,{dispatchMode:'external'});for(let i=0;i<14;i++)E.step(d);assert.equal(d.fixedSensorState.failed,1);assert.equal(E.coordinatorObservation(d).fixedSensorReports.length,0);
+const expired=structuredClone(scene);expired.communication.ttl=1;const e=E.create(42,'nearest',expired,{dispatchMode:'external'});for(let i=0;i<12;i++)E.step(e);assert.equal(e.fixedSensorState.failed,1);assert.equal(E.coordinatorObservation(e).fixedSensorReports.length,0);
+const invalid=structuredClone(scene);invalid.fixedSensors[0].id='__proto__';assert.throws(()=>E.normalizeScene(invalid));
+console.log('fixed sensor line of sight, delayed delivery, loss, expiry, isolation and replay passed');
+const {spawnSync}=require('node:child_process');
+const policy=spawnSync('python3',['-c',"from policy_coordinator import policy_input; o={'tick':13,'tasks':[],'fixedSensorReports':[{'sensorId':'sensor-1','result':'anomaly'}]}; assert policy_input(o,2)['fixedSensorReports']==o['fixedSensorReports']; assert 'fixedSensorReports' not in policy_input(o,1)"],{env:{...process.env,PYTHONPATH:'sdk/python'},encoding:'utf8'});assert.equal(policy.status,0,policy.stderr);
+const {createServer}=require('../server/world-server');
+(async()=>{const server=createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));try{const base=`http://127.0.0.1:${server.address().port}`;async function request(path,method='GET',data,token){const r=await fetch(base+path,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:data===undefined?undefined:JSON.stringify(data)});assert(r.ok,await r.clone().text());return r.json()}
+ const session=await request('/sessions','POST',{scene,dispatchMode:'external'}),root='/sessions/'+session.sessionId,admin=session.adminToken,coord=(await request(root+'/coordinator/credentials','POST',{},admin)).coordinatorToken,agent=(await request(root+'/agents/drone-1/credentials','POST',{},admin)).agentToken;
+ await request(root+'/step','POST',{count:10},admin);assert.equal((await request(root+'/coordinator/observation','GET',undefined,coord)).fixedSensorReports.length,0);await request(root+'/step','POST',{count:3},admin);assert.equal((await request(root+'/coordinator/observation','GET',undefined,coord)).fixedSensorReports[0].result,'anomaly');const observation=await request(root+'/observations/drone-1','GET',undefined,agent);assert(!('fixedSensorReports' in observation));
+ console.log('fixed sensor coordinator and scoped agent service integration passed');
+ }finally{server.close()}})().catch(e=>{console.error(e);process.exitCode=1});

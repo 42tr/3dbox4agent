@@ -1,0 +1,11 @@
+{
+  "format": "3dbox-scheduled-experiment-v1",
+  "sceneId": "lunar-power-v1",
+  "seed": 42,
+  "policy": "nearest",
+  "physicsMode": "rapier",
+  "maxTicks": 2000,
+  "interventions": [
+    {"id":"relay-radio-loss", "tick":50, "type":"outage", "agentId":"relay-2", "duration":80}
+  ]
+}

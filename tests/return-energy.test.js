@@ -1,0 +1,15 @@
+'use strict';
+const assert=require('node:assert/strict');
+const E=require('../src/engine');
+const s=E.create(42,'nearest',E.getScene('lunar-terrain-v1'),{dispatchMode:'external'}),rover=s.agents.find(a=>a.role==='rover');
+rover.x=60;rover.y=50;assert(E.injectLowEnergy(s,rover.id,5).ok);const start=rover.battery;const estimate=E.observe(s,rover.id).self.returnEnergyEstimate;
+assert(estimate>30*.045,'ground estimate includes soft terrain');
+assert(E.submitAction(s,rover.id,{requestId:'estimate-check',type:'charge',targetTick:1,expiresTick:50}).ok);
+for(let i=0;i<150&&s.actions[0].phase!=='charging';i++)E.step(s);
+const action=s.actions[0];assert.equal(action.phase,'charging');assert(Math.abs(start-(rover.battery-action.energyAdded)-estimate)<1e-7,'estimated cost agrees with actual travel');
+const droneWorld=E.create(42,'nearest',E.scene,{dispatchMode:'external'}),drone=droneWorld.agents[0];drone.x=1;drone.y=99;assert(Math.abs(E.observe(droneWorld,drone.id).self.returnEnergyEstimate-Math.hypot(35,49)*.045)<1e-9);
+const blocked=E.getScene('lunar-base-v1');blocked.obstacles=[{id:'wall',x:45,y:0,w:10,h:100,height:10}];const w=E.create(42,'nearest',blocked,{dispatchMode:'external'}),a=w.agents.find(x=>x.role==='rover');a.x=60;a.y=50;assert.equal(E.observe(w,a.id).self.returnEnergyEstimate,null);
+const old=E.snapshot(w);delete old.chargingStation;assert.equal(E.observe(old,a.id).self.returnEnergyEstimate,null);
+const hidden=E.create(42,'nearest',E.getScene('lunar-terrain-v1'),{dispatchMode:'external'}),observer=hidden.agents.find(x=>x.role==='rover');observer.x=60;observer.y=50;const baseline=E.observe(hidden,observer.id).self.returnEnergyEstimate;
+assert(E.injectTerrainEffect(hidden,'soft-regolith',30,.2,5).ok);assert.equal(E.observe(hidden,observer.id).self.returnEnergyEstimate,baseline,'unobserved live terrain effects must not leak through estimates');
+console.log('return energy estimates cover ground terrain, flight, and unreachable routes');

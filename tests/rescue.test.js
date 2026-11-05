@@ -1,0 +1,16 @@
+'use strict';
+const assert=require('node:assert/strict'),E=require('../src/engine'),R=require('../src/rescue'),{fixture,intent}=require('./rescue-support');
+const scene=fixture(),w=E.create(42,'nearest',scene),initial=E.create(42,'nearest',scene);
+E.step(w);assert(E.fault(w));const target=w.agents[0],helper=w.agents[1],other=w.agents[2],battery=target.battery,pose=[target.x,target.y],fault=w.events.find(e=>e.kind==='device_fault');
+assert(w.agents[0].disabled);E.step(w);assert(!w.done,'world retains opportunity for external physical recovery');
+assert.equal(E.submitAction(w,helper.id,intent(w,'rescue',{targetAgentId:target.id,observedTick:0})).reason,'fault_not_observed');
+const far=intent(w,'rescue',{targetAgentId:target.id,observedTick:w.tick});assert(E.submitAction(w,helper.id,far).ok);E.step(w);assert.equal(w.actions.at(-1).reason,'out_of_reach');
+const move=intent(w,'move',{target:{x:target.x,y:target.y}});assert(E.submitAction(w,helper.id,move).ok);while(w.actions.at(-1).status==='pending'||w.actions.at(-1).status==='accepted')E.step(w);
+const rescue=intent(w,'rescue',{targetAgentId:target.id,observedTick:w.tick});assert(E.submitAction(w,helper.id,rescue).ok);const before=helper.battery;for(let i=0;i<6;i++)E.step(w);
+assert.equal(w.actions.at(-1).status,'completed');assert(Math.abs(helper.battery-(before-6*.08))<1e-9);assert(!target.disabled);assert.equal(target.battery,battery);assert.deepEqual([target.x,target.y],pose);assert.equal(w.events.filter(e=>e.kind==='rescue_completed').length,1);assert.equal(w.events.find(e=>e.kind==='rescue_completed').faultSeq,fault.seq);assert(R.validateWorld(w,initial));
+assert(E.submitAction(w,helper.id,rescue).duplicate);E.step(w);assert.equal(w.tasks[0].assignee,target.id);assert(E.fault(w),'same device can have another fault episode');
+const duplicate=E.submitAction(w,helper.id,rescue);assert(duplicate.duplicate);assert(target.disabled,'retry of completed recovery cannot reset a later fault');
+const a=intent(w,'rescue',{targetAgentId:target.id,observedTick:w.tick});assert(E.submitAction(w,helper.id,a).ok);E.step(w);assert.equal(w.actions.at(-1).progress,1);assert(E.cancelAction(w,helper.id,a.requestId).ok);assert(target.disabled);assert.equal(w.events.filter(e=>e.kind==='rescue_completed').length,1);
+const forged=JSON.parse(JSON.stringify(w));forged.agents[0].disabled=false;forged.agents[0].status='idle';assert.throws(()=>R.validateWorld(forged,initial),/unrecorded device revival/);
+const malformed=fixture();malformed.agents[1].mobility='air';assert.throws(()=>E.normalizeScene(malformed),/rescue profile/);
+console.log('field rescue: proximity, work energy, preserved target charge, cancellation, repeat-fault idempotence and replay provenance passed');

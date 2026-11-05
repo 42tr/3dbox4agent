@@ -1,0 +1,14 @@
+'use strict';
+const assert=require('node:assert/strict'),E=require('../src/engine'),Replay=require('../src/replay'),Delta=require('../src/delta'),Report=require('../src/safety-report'),P=require('../server/physics');
+(async()=>{
+ const scene=E.getScene();scene.id='boundary-test';scene.obstacles=[];
+ const s=E.create(42,'nearest',scene,{physicsMode:'rapier',dispatchMode:'external'}),a=s.agents[0];a.x=99;a.y=50;const before=E.snapshot(s),frames=[before];let corrections=0;
+ const physics={syncRoadblocks(){},move(){return {x:4,y:1,contacts:0}},correctPosition(agent,x,y){assert.equal(agent.id,a.id);assert(x>=0&&x<=100&&y>=0&&y<=100);corrections++}};
+ assert(E.submitAction(s,a.id,{requestId:'edge',type:'move',target:{x:100,y:50},targetTick:1,expiresTick:10}).ok);for(let i=0;i<3;i++){E.step(s,physics);frames.push(E.snapshot(s))}
+ assert(corrections>0);assert.equal(s.events.filter(e=>e.kind==='boundary_exit_prevented').length,1);assert.equal(E.metrics(s).boundaryInterventions,1);assert(s.agents.every(a=>a.x>=0&&a.x<=100&&a.y>=0&&a.y<=100));assert.deepEqual(Delta.apply(before,Delta.diff(before,frames.at(-1))),frames.at(-1));
+ const archive={format:'3dbox-prototype-v1',config:{seed:42,policy:'nearest',sceneId:scene.id,scene:E.normalizeScene(scene)},frames};assert(Replay.validateArchive(archive));const bad=structuredClone(archive);bad.frames.at(-1).events.find(e=>e.kind==='boundary_exit_prevented').attempted={x:50,y:50};assert.throws(()=>Replay.validateArchive(bad));const report=Report.build(frames.at(-1),scene,{start:'complete'},'replay');assert.equal(report.safety.boundaryViolations.preventedExits,1);assert(report.safetyEvents.some(e=>e.kind==='boundary_exit_prevented'));
+ a.boundaryLastTick=s.tick-2;E.step(s,physics);assert.equal(E.metrics(s).boundaryInterventions,2,'a later separate attempt is counted again');
+ const legacy=E.create(42);delete legacy.boundaryMonitoringVersion;assert.equal(E.metrics(legacy).boundaryInterventions,null);assert.equal(Report.build(legacy,E.scene,{start:'unknown'},'replay').safety.boundaryViolations.monitoring,'not_recorded');
+ await P.initialize();const live=E.create(42,'nearest',scene,{physicsMode:'rapier',dispatchMode:'external'}),b=live.agents[0];b.x=99;b.y=50;const real=P.createPhysics(live),wrapper={syncRoadblocks:real.syncRoadblocks,move(agent,dx,dy){return real.move(agent,dx*3,dy)},correctPosition:real.correctPosition};try{assert(E.submitAction(live,b.id,{requestId:'edge-rapier',type:'move',target:{x:100,y:50},targetTick:1,expiresTick:10}).ok);E.step(live,wrapper);assert(b.x<=100&&b.x>=0);assert.equal(E.metrics(live).boundaryInterventions,1);assert.doesNotThrow(()=>real.move(b,-.1,0))}finally{real.free()}
+ console.log('boundary intervention, physics resynchronization, legacy replay and report passed');
+})().catch(e=>{console.error(e);process.exitCode=1});

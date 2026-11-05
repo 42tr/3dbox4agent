@@ -1,0 +1,12 @@
+{
+  "format": "3dbox-scheduled-experiment-v1",
+  "sceneId": "industrial-park-v1",
+  "seed": 42,
+  "policy": "nearest",
+  "physicsMode": "kinematic",
+  "maxTicks": 1000,
+  "interventions": [
+    {"id":"radio-outage", "tick":2, "type":"outage", "agentId":"drone-1", "duration":10},
+    {"id":"battery-drop", "tick":5, "type":"low_energy", "agentId":"vehicle-1", "level":5}
+  ]
+}

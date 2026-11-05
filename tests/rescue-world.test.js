@@ -1,0 +1,16 @@
+'use strict';
+const assert=require('node:assert/strict'),E=require('../src/engine'),Init=require('../server/rust-world-initialization'),P=require('../server/rust-physics'),R=require('../src/replay'),Rescue=require('../src/rescue'),B=require('../src/stream-protobuf'),{bind}=require('./native-task-frame-support');
+for(const physicsMode of ['kinematic','rapier'])for(const navigation of ['distance','time','energy']){
+ const scene=E.getScene('lunar-rescue-v1');scene.navigation=navigation;
+ const a=E.create(42,'nearest',scene,{physicsMode}),b=Init.create(42,'nearest',scene,{physicsMode}),worlds=[a,b],ps=worlds.map(w=>physicsMode==='rapier'?P.createPhysics(w):null),helpers=a.agents.filter(a=>a.rescue).map(a=>a.id),initial=E.snapshot(a);
+ try{assert.deepEqual(a,b);bind(b,ps[1],{batch:true,actionBatch:true,worldBatch:true});const frames=[E.snapshot(b)];let sequence=0;
+  function submit(id,input){const x=worlds.map(w=>E.submitAction(w,id,input));assert.deepEqual(x[1],x[0]);assert(x[0].ok,JSON.stringify(x[0]))}
+  function drive(){for(const id of helpers){const own=E.observe(a,id);assert.deepEqual(E.observe(b,id),own);assert.deepEqual(B.decode(B.encode(own,2)),own);const live=own.actions.find(a=>['pending','accepted'].includes(a.status)),fault=own.nearby.find(c=>c.status==='fault');if(live){if(live.type==='move'&&fault&&Math.hypot(own.self.x-fault.x,own.self.y-fault.y)<=3.8){const x=worlds.map(w=>E.cancelAction(w,id,live.requestId));assert.deepEqual(x[1],x[0]);assert(x[0].ok)}continue}if(own.self.status!=='idle'||!fault)continue;
+   const due=a.tick+1,input={requestId:'scoped-recovery-'+(++sequence),targetTick:due,expiresTick:due+40};if(Math.hypot(own.self.x-fault.x,own.self.y-fault.y)<=3.8)submit(id,{...input,type:'rescue',targetAgentId:fault.id,observedTick:fault.observedTick,faultGeneration:fault.faultGeneration});else {const dx=own.self.x-fault.x,dy=own.self.y-fault.y,d=Math.hypot(dx,dy);submit(id,{...input,type:'move',target:{x:fault.x+3*dx/d,y:fault.y+3*dy/d}})}
+  }}
+  worlds.forEach((w,i)=>E.step(w,ps[i]));assert(E.fault(a));assert(E.fault(b));assert.deepEqual(E.snapshot(a),E.snapshot(b));frames.push(E.snapshot(b));const fault=a.events.find(e=>e.kind==='device_fault'),charge=a.agents.find(a=>a.id===fault.agentId).battery;
+  for(let i=0;i<1000&&!b.done;i++){drive();worlds.forEach((w,i)=>E.step(w,ps[i]));assert.deepEqual(E.snapshot(b),E.snapshot(a),physicsMode+'/'+navigation+'/'+b.tick);Rescue.validateWorld(b,initial);frames.push(E.snapshot(b))}
+  assert(b.done&&!b.failed,JSON.stringify({tick:b.tick,last:b.events.slice(-3)}));assert.equal(E.metrics(b).completed,11);const receipts=b.events.filter(e=>e.kind==='rescue_completed');assert.equal(receipts.length,1);assert.equal(receipts[0].targetAgentId,fault.agentId);assert.equal(receipts[0].battery,charge);assert.equal(b.agents.filter(a=>a.relayState?.deployed).length,2);assert.equal(b.construction.sites.filter(a=>a.status==='built').length,2);assert(R.validateArchive({format:'3dbox-prototype-v1',config:{seed:42,policy:'nearest',sceneId:scene.id,scene},frames}));
+  console.log(JSON.stringify({physicsMode,navigation,tick:b.tick,completed:11,mechanicalResets:1,targetChargePreserved:true,relaysDeployed:2,sitesBuilt:2,scopedDrivers:helpers.length}));
+ }finally{worlds.forEach(E.disposeWorld);ps.forEach(p=>p?.free())}
+}

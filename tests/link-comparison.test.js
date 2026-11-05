@@ -1,0 +1,9 @@
+'use strict';
+const assert=require('node:assert/strict'),X=require('../src/experiments'),E=require('../src/engine');
+const scene=E.getScene('industrial-park-parallel-v1'),config={startSeed:42,count:3,policy:'nearest',maxTicks:1000,sceneId:scene.id,scene,delay:12,lossRate:.5};
+const report=X.runLinkComparison(config);assert.deepEqual(report,X.runLinkComparison(config));assert.equal(report.pairs.length,3);assert.equal(report.config.scene.communication.delay,3);assert.equal(report.summary.length,3);assert(report.summary[1].stale.mean>0);assert.equal(report.summary[1].stale.n,3);
+for(const p of report.pairs){for(const k of ['base','delay','loss'])assert.equal(p[k].seed,p.seed);assert.equal(p.loss.metrics.dispatchFailed,p.loss.events.filter(e=>e.kind==='dispatch_failed').length)}
+for(const k of ['delay','loss']){const complete=report.pairs.filter(p=>p.base.status==='completed'&&p[k].status==='completed');assert.equal(report.paired[k].bothCompleted,complete.length);assert.deepEqual(report.paired[k].completionTickDifference,X.stats(complete.map(p=>p[k].metrics.ticks-p.base.metrics.ticks)))}
+const equal=X.runLinkComparison({...config,count:1,delay:scene.communication.delay,lossRate:scene.communication.lossRate}).pairs[0];assert.deepEqual(equal.base,equal.delay);assert.deepEqual(equal.base,equal.loss);
+const extreme=X.runLinkComparison({...config,count:1,maxTicks:100,delay:30,lossRate:1});assert.equal(extreme.pairs[0].delay.status,'timeout');assert(extreme.pairs[0].delay.events.some(e=>e.kind==='dispatch_failed'&&e.reason==='expired'));assert.equal(extreme.pairs[0].loss.status,'timeout');assert(extreme.pairs[0].loss.events.some(e=>e.kind==='dispatch_failed'&&e.reason==='dropped'));
+assert.throws(()=>X.runLinkComparison({...config,lossRate:1.1}));assert.throws(()=>X.runLinkComparison({...config,delay:0}));console.log('paired link latency and loss comparisons passed');

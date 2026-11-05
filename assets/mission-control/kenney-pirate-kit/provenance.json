@@ -1,0 +1,21 @@
+{
+  "author": "Kenney",
+  "license": "CC0-1.0",
+  "officialSource": "https://kenney.nl/assets/pirate-kit",
+  "mirror": "https://github.com/Hidencod/tge-assets",
+  "note": "A real boat hull for the abstract unmanned water platform; paddles omitted in presentation, centered and scaled in Three.js. Presentation geometry is not the Rapier sphere collider. No fluid/buoyancy model.",
+  "files": [
+    {
+      "name": "boat-row-large.glb",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/packs/pirate-kit/boat-row-large.glb",
+      "bytes": 26024,
+      "sha256": "c3a1ee47defb9a9dab70ff24de848c31eb188d1b3292a1451038e180516058b2"
+    },
+    {
+      "name": "LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/Hidencod/tge-assets/main/LICENSE",
+      "bytes": 510,
+      "sha256": "6913dd72bdc20532b7f02d86469058f45d886c9dabf60831275ed16927aa523b"
+    }
+  ]
+}

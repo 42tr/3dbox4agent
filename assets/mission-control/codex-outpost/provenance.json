@@ -1,0 +1,129 @@
+{
+  "author": "Codex for 3DBox",
+  "source": "scripts/build-outpost-assets.mjs",
+  "kind": "Original code-authored 3D meshes; no external source models or image textures",
+  "purpose": "Interactive presentation only; simulation state, capabilities and simplified colliders remain authoritative",
+  "forwardAxis": "+X",
+  "files": [
+    {
+      "name": "scout-rover.glb",
+      "bytes": 352984,
+      "sha256": "566ebe8e2d7b8b7fe1ebc7f112829c30356518011e3d30fb25f6603687f7905e",
+      "meshes": 6,
+      "triangles": 12796,
+      "bounds": {
+        "min": [
+          -1.218999981880188,
+          0,
+          -0.9469000101089478
+        ],
+        "max": [
+          1.3574999570846558,
+          1.9925001142546535,
+          0.9469000101089478
+        ],
+        "size": [
+          2.5764999389648438,
+          1.9925001142546535,
+          1.8938000202178955
+        ]
+      }
+    },
+    {
+      "name": "cargo-carrier.glb",
+      "bytes": 341752,
+      "sha256": "f3f90cd2b98624c03cc8b1db3ec370ace1fdd261c050af41c6aceba66be03c93",
+      "meshes": 6,
+      "triangles": 12172,
+      "bounds": {
+        "min": [
+          -1.4259999990463257,
+          0,
+          -0.9718999862670898
+        ],
+        "max": [
+          1.537500023841858,
+          1.4725000141188502,
+          0.9718999862670898
+        ],
+        "size": [
+          2.9635000228881836,
+          1.4725000141188502,
+          1.9437999725341797
+        ]
+      }
+    },
+    {
+      "name": "service-robot.glb",
+      "bytes": 236728,
+      "sha256": "98b85d39951fe05d799ea78bd833fa6b231411fe23f58a071e7ca1cc2e02e83a",
+      "meshes": 6,
+      "triangles": 8436,
+      "bounds": {
+        "min": [
+          -0.8029000163078308,
+          0,
+          -0.7218999862670898
+        ],
+        "max": [
+          1.0592292547225952,
+          2.017499971203506,
+          0.7218999862670898
+        ],
+        "size": [
+          1.862129271030426,
+          2.017499971203506,
+          1.4437999725341797
+        ]
+      }
+    },
+    {
+      "name": "power-unit.glb",
+      "bytes": 48224,
+      "sha256": "5ad7d7fc6989593c2c206f822590f18602963af83e9adfa36c083dadce31256a",
+      "meshes": 5,
+      "triangles": 1436,
+      "bounds": {
+        "min": [
+          -2.9000000953674316,
+          0,
+          -3.4000000953674316
+        ],
+        "max": [
+          2.9000000953674316,
+          2.785000091791153,
+          3.4000000953674316
+        ],
+        "size": [
+          5.800000190734863,
+          2.785000091791153,
+          6.800000190734863
+        ]
+      }
+    },
+    {
+      "name": "comms-dish.glb",
+      "bytes": 113672,
+      "sha256": "ca985130a2cf74d3e2b3bf4f109da3d4991fd451bfab0408ba54ea82d3e5af69",
+      "meshes": 3,
+      "triangles": 5732,
+      "bounds": {
+        "min": [
+          -1.5579804182052612,
+          0,
+          -2.1104354858398438
+        ],
+        "max": [
+          2.1094236373901367,
+          5.57288742005825,
+          1.9398541450500488
+        ],
+        "size": [
+          3.667404055595398,
+          5.57288742005825,
+          4.050289630889893
+        ]
+      }
+    }
+  ]
+}

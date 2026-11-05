@@ -1,0 +1,35 @@
+{
+  "format": "3dbox-scheduled-experiment-v1",
+  "sceneId": "shore-echelons-v1",
+  "seed": 42,
+  "policy": "nearest",
+  "physicsMode": "rapier",
+  "maxTicks": 2000,
+  "interventions": [
+    {
+      "id": "north-sea-deteriorates",
+      "tick": 10,
+      "type": "terrain",
+      "zoneId": "north-sea",
+      "duration": 80,
+      "speedFactor": 0.35,
+      "energyFactor": 2.5
+    },
+    {
+      "id": "survey-boat-link-outage",
+      "tick": 45,
+      "type": "outage",
+      "agentId": "boat-3",
+      "duration": 20
+    },
+    {
+      "id": "south-sea-deteriorates",
+      "tick": 70,
+      "type": "terrain",
+      "zoneId": "south-sea",
+      "duration": 180,
+      "speedFactor": 0.4,
+      "energyFactor": 2
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto'),E=require('../src/engine'),H=require('../src/elevation'),R=require('../src/replay'),{createServer}=require('../server/world-server');
+(async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'3dbox-heightfield-')),server=createServer({physicsBackend:'rust',taskBackend:'rust',communicationBackend:'rust',navigationBackend:'rust',journalDir:dir,replayJournal:true});await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port,owned=[];
+ async function request(route,method='GET',data,token){const r=await fetch(base+route,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},...(data===undefined?{}:{body:JSON.stringify(data)})});return {status:r.status,value:await r.json()}}
+ async function ok(...args){const r=await request(...args);assert(r.status>=200&&r.status<300,JSON.stringify(r));return r.value}const root=s=>'/sessions/'+s.sessionId;
+ try{
+  const health=await ok('/health');assert.equal(health.runtime.sourceSha256['src/elevation.js'],crypto.createHash('sha256').update(fs.readFileSync('src/elevation.js')).digest('hex'));assert(health.runtime.sourceSha256['rust/physics/src/heightfield.rs']);
+  for(const sensorMode of ['geometry','rapier']){
+   const s=await ok('/sessions','POST',{sceneId:'lunar-heightfield-v1',seed:42,physicsMode:'rapier',sensorMode});owned.push(s);assert.deepEqual(s.world.heightfield,E.normalizeScene(E.getScene('lunar-heightfield-v1')).heightfield);
+   const id=s.world.agents[0].id,credential=await ok(root(s)+'/agents/'+id+'/credentials','POST',{},s.adminToken),o=await ok(root(s)+'/observations/'+id,'GET',undefined,credential.agentToken);assert.equal(o.self.elevation,H.height(s.world.heightfield,o.self.x,o.self.y));assert(!Object.hasOwn(o,'heightfield'));assert.equal((await request(root(s)+'/state','GET',undefined,credential.agentToken)).status,403);
+   const lidar=await ok(root(s)+'/agents/'+id+'/lidar','POST',{count:8,range:20},credential.agentToken);assert.equal(lidar.origin.z,1.5+o.self.elevation);assert.equal(lidar.distances.length,8);
+   const frame=await ok(root(s)+'/step','POST',{count:5},s.adminToken),branch=await ok('/event-journals/'+s.sessionId+'/fork','POST',{revision:frame.revision},s.adminToken);owned.push(branch);assert.deepEqual(branch.world,frame.world);assert.equal((await request(root(branch)+'/observations/'+id,'GET',undefined,credential.agentToken)).status,401);
+   for(const target of [s,branch]){const end=await ok(root(target)+'/step','POST',{count:600},target.adminToken);assert(end.world.done&&!end.world.failed);assert.equal(end.world.tasks.filter(t=>t.status==='done').length,7);const history=await ok(root(target)+'/history?after=-1','GET',undefined,target.adminToken);assert(R.validateArchive({format:'3dbox-prototype-v1',config:{seed:42,policy:'nearest',sceneId:s.scene.id,scene:s.scene},frames:history.frames.map(f=>f.world)}));console.log(JSON.stringify({sensorMode,branch:target===branch,tick:end.world.tick,tasks:7,heightfield:true}))}
+  }
+  for(const field of [null,{rows:1,cols:2,heights:[0,0]},{rows:2,cols:2,heights:[0,0,0,11]}]){const scene=E.getScene('lunar-outpost-v1');scene.heightfield=field;assert.equal((await request('/sessions','POST',{scene})).status,400)}
+  console.log('Heightfield HTTP: actual native missions, scoped surface/lidar origin, independent journal forks and replay map retention, runtime source identity and invalid input admission passed');
+ }finally{for(const s of owned)await request(root(s),'DELETE',undefined,s.adminToken).catch(()=>{});await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true})}
+})().catch(e=>{console.error(e);process.exitCode=1});

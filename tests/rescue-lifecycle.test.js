@@ -1,0 +1,13 @@
+'use strict';
+const assert=require('node:assert/strict'),E=require('../src/engine'),P=require('../server/rust-physics'),Rescue=require('../src/rescue'),{bind,hashes,raw}=require('./native-task-frame-support'),{fixture,intent}=require('./rescue-support');
+for(const physicsMode of ['kinematic','rapier']){
+ const scene=fixture(),a=E.create(42,'nearest',scene,{physicsMode}),b=E.snapshot(a),worlds=[a,b],ps=worlds.map(w=>physicsMode==='rapier'?P.createPhysics(w):null);let fail=false,committed=false;
+ const stores=bind(b,ps[1],{batch:true,actionBatch:true,worldBatch:true,worldProbe(w,s,c,args){const r=c.advanceWorldStep(...args);if(fail){assert(!w.agents[0].disabled);assert.equal(w.events.filter(e=>e.kind==='rescue_completed').length,1);committed=true;fail=false;throw Error('after actual mechanical reset')}return r}});
+ const both=fn=>{const result=worlds.map(fn);assert.deepEqual(result[0],result[1]);assert.deepEqual(E.snapshot(a),E.snapshot(b));return result[0]},step=()=>{worlds.forEach((w,i)=>E.step(w,ps[i]));assert.deepEqual(E.snapshot(a),E.snapshot(b))};
+ try{step();assert(both(E.fault));step();const target=b.agents[0],helper=b.agents[1],move=intent(b,'move',{target:{x:target.x,y:target.y}});assert(both(w=>E.submitAction(w,helper.id,move)).ok);for(let i=0;i<60&&Math.hypot(helper.x-target.x,helper.y-target.y)>3.8;i++)step();if(['pending','accepted'].includes(b.actions.at(-1).status))assert(both(w=>E.cancelAction(w,helper.id,move.requestId)).ok);
+  const action=intent(b,'rescue',{targetAgentId:target.id,observedTick:b.tick});assert(both(w=>E.submitAction(w,helper.id,action)).ok);for(let i=0;i<5;i++)step();assert.equal(b.actions.at(-1).progress,5);
+  const n=raw(stores);assert.throws(()=>n.execution.updateExecution(0,JSON.stringify({faultGeneration:2})));assert.throws(()=>n.execution.updateExecution(0,JSON.stringify({disabled:false,status:'idle'})));assert.throws(()=>n.actions.update(b.actions.length-1,JSON.stringify({progress:6}),b.tick));
+  const saved=E.snapshot(b),before=hashes(stores,ps[1],b);E.step(a,ps[0]);fail=true;assert.throws(()=>E.step(b,ps[1]),e=>e.rollbackRestored&&e.cause?.message==='after actual mechanical reset');assert(committed);assert.deepEqual(E.snapshot(b),saved);assert.deepEqual(hashes(stores,ps[1],b),before);assert(target.disabled);E.step(b,ps[1]);assert.deepEqual(E.snapshot(b),E.snapshot(a));assert(!target.disabled);assert.equal(b.events.filter(e=>e.kind==='rescue_completed').length,1);assert(Rescue.validateWorld(b,E.create(42,'nearest',scene,{physicsMode})));
+  console.log(JSON.stringify({physicsMode,committedRecoveryRollback:true,allComponentAndColliderHashesRestored:true,retryResetOnce:true,hostRevivalAndProgressRejected:true}));
+ }finally{worlds.forEach(E.disposeWorld);ps.forEach(p=>p?.free())}
+}

@@ -1,0 +1,20 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),Replay=require('../src/replay'),D=require('../src/surface-domain'),{createServer}=require('../server/world-server');
+(async()=>{
+ for(const physicsBackend of ['rust','wasm']){
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'3dbox-echelons-')),server=createServer({physicsBackend,taskBackend:'rust',communicationBackend:'rust',navigationBackend:'rust',journalDir:dir,replayJournal:true});await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port,owned=[];
+  async function req(route,method='GET',body,token){const r=await fetch(base+route,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})}),v=await r.json();if(!r.ok)throw Object.assign(Error(v.error),{status:r.status});return v}
+  try{
+   const s=await req('/sessions','POST',{sceneId:'shore-echelons-v1',seed:42,physicsMode:'rapier',sensorMode:physicsBackend==='rust'?'rapier':'geometry'});owned.push(s);assert.equal(s.scene.echelons.length,3);assert.equal(s.world.agents.length,18);const root='/sessions/'+s.sessionId,post=(route,body)=>req(root+route,'POST',body,s.adminToken),get=()=>req(root,'GET',undefined,s.adminToken);
+   const before=await get();await assert.rejects(post('/assign',{taskId:'confirm',agentId:'rover-1'}),e=>e.status===409);assert.deepEqual((await get()).world,before.world,'echelon labels cannot bypass the real task DAG');
+   const state=await post('/step',{count:9});assert.equal(state.world.tasks.filter(t=>['sea-survey','guide-shore'].includes(t.id)&&t.status==='active').length,2);const credential=await post('/agents/rover-1/credentials',{}),observer=await post('/observer/credentials',{}),observation=await req(root+'/observations/rover-1','GET',undefined,credential.agentToken);assert(!Object.hasOwn(observation,'echelons'));assert(!Object.hasOwn(observation,'scene'));assert(!Object.hasOwn(state.world,'echelons'));
+   await assert.rejects(req(root+'/assign','POST',{taskId:'confirm',agentId:'rover-1'},observer.observerToken),e=>e.status===403);const original=await get(),ends=[];
+   for(let i=0;i<2;i++){
+    const branch=await req('/event-journals/'+s.sessionId+'/fork','POST',{revision:original.revision},s.adminToken);owned.push(branch);assert.deepEqual(branch.scene.echelons,s.scene.echelons);await assert.rejects(req('/sessions/'+branch.sessionId+'/observations/rover-1','GET',undefined,credential.agentToken),e=>e.status===401);
+    const end=await req('/sessions/'+branch.sessionId+'/step','POST',{count:700},branch.adminToken);assert(end.world.done&&!end.world.failed);assert.equal(end.metrics.completed,9);assert.equal(end.metrics.materials[0].consumed,1);assert.equal(end.world.agents.filter(a=>a.relayState?.deployed).length,1);ends.push(end.world);
+    const history=await req('/sessions/'+branch.sessionId+'/history?after=-1','GET',undefined,branch.adminToken),frames=history.frames.map(f=>f.world);for(const w of frames)for(const a of w.agents)assert(D.bodyFree(w.surfaceDomain,a.mobility,[a.x,a.y]));assert(Replay.validateArchive({format:'3dbox-prototype-v1',config:{scene:branch.scene,sceneId:branch.scene.id,seed:42,policy:'nearest'},frames}));assert.deepEqual(await get(),original);
+   }
+   const end=await post('/step',{count:700});assert.deepEqual(ends[0],ends[1]);assert.deepEqual(end.world,ends[0]);console.log(JSON.stringify({physicsBackend,actualHttp:true,parallelGuideAndWater:true,prematureAssignmentRefused:true,observerReadOnly:true,ownGroupMetadataOmitted:true,twoIndependentActiveForks:true,allThreeComplete:9,realDeploymentAndDebit:true,replayValidated:true,tick:end.world.tick}));
+  }finally{for(const s of owned)await req('/sessions/'+s.sessionId,'DELETE',undefined,s.adminToken).catch(()=>{});await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true})}
+ }
+})().catch(e=>{console.error(e);process.exitCode=1});
