@@ -262,7 +262,7 @@ Linux 服务器通过代理联网时，需把代理传入 Docker 构建；代理
 
 打开 `http://127.0.0.1:8787/`，点击“连接本地世界服务”。镜像会重新构建页面，默认启动独立世界进程入口，包含 Node 世界服务、Rapier WASM、Python SDK 及 WebSocket/gRPC 可选依赖；主机无需安装 Node、Python、Rust。默认使用 WASM 物理和 JavaScript 规则，可用 `BOX_WORLD_WORKERS` 配置进程数。首次构建需下载基础镜像和依赖；构建锁定 npm/Cargo 依赖，但基础镜像标签和 Python 可选依赖仍可变化，因此不保证镜像逐位复现。可通过 Dockerfile 的 `NODE_IMAGE`、`RUST_IMAGE` 构建参数指定镜像摘要。 镜像的 `third_party` 目录保存补充许可文本；原生镜像同时保留构建时下载的 Cargo 包许可、清单及锁文件。
 
-需要原生 Rust 物理、任务、通信与导航后端时使用 `BOX_IMAGE_TARGET=world-rust docker compose up --build -d`；每次重新创建该栈时沿用这个选择。原生模块在镜像内按目标架构编译，主机的 `.node` 和 `target` 不会进入构建上下文。默认只把 8787 发布到主机回环地址；端口冲突时可用 `BOX_HTTP_PORT=8877 docker compose up --build -d`，再打开相应本机端口。直接使用 Node 时仍默认只监听 `127.0.0.1`；新增 `WORLD_BIND=0.0.0.0` 只用于显式选择容器监听，HTTP/WebSocket 的回环 Host 与同源检查仍保留。
+需要原生 Rust 物理、任务、通信与导航后端时使用 `BOX_IMAGE_TARGET=world-rust docker compose up --build -d`；每次重新创建该栈时沿用这个选择。原生模块在镜像内按目标架构编译，主机的 `.node` 和 `target` 不会进入构建上下文。默认只把 8787 发布到主机回环地址；端口冲突时可用 `BOX_HTTP_PORT=8877 docker compose up --build -d`，再打开相应本机端口。直接使用 Node 时仍默认只监听 `127.0.0.1`；`WORLD_BIND=0.0.0.0` 用于显式监听所有网卡。HTTP/WebSocket 支持域名与 IP 访问，并校验浏览器请求同源；HTTPS 反向代理及端口映射配置见[远程访问说明](docs/remote-access.md)。
 
 默认按需启动独立 `runner` 容器，设备与指挥进程在其中各自使用凭据。它共享世界容器的网络命名空间，因此 SDK 仍访问本机地址；两者的进程与文件系统分开，执行器不挂载世界数据卷。下列命令使用内置参数（15 台设备、无故障、Rapier、包含回放），报告由主机保存：
 
@@ -282,7 +282,7 @@ docker compose run --rm -T runner > container-run.json
 
 管理员 API `POST /sessions/:id/observer/credentials` 签发一个会话范围的 `observerToken`，再次签发使旧令牌失效；`DELETE` 同一路径撤销令牌并关闭对应状态流。观察者仅可通过 `GET /sessions/:id/observer` 读取场景、会话和运行环境，通过 `GET /sessions/:id`、`GET /sessions/:id/history` 和 `/stream` 读取全局快照及 Protobuf／差量状态流。其余会话 API（包括控制、私有记忆、凭据、实验目录和事件日志）不开放；算法仍应使用设备或协调者凭据，不能把观察凭据当作局部认知接口。世界步出错后可继续读取最后成功快照，管理员仍可撤销观察凭据。
 
-观察文件格式为 `3dbox-observer-access-v1`，只含 `sessionId` 和明文 `observerToken`。不要交给不应查看全局世界的人；页面不把令牌放入 URL、浏览器存储或回放文件，也不从文件指定任意服务地址。撤销阻止后续读取，无法收回已下载的数据。观察端断开不会删除原会话；管理员删除会话或服务重启后，观察访问失效。此入口仍限本机开发服务，不新增公网分享或多用户身份系统。
+观察文件格式为 `3dbox-observer-access-v1`，只含 `sessionId` 和明文 `observerToken`。不要交给不应查看全局世界的人；页面不把令牌放入 URL、浏览器存储或回放文件，也不从文件指定任意服务地址。撤销阻止后续读取，无法收回已下载的数据。观察端断开不会删除原会话；管理员删除会话或服务重启后，观察访问失效。此入口支持同源的 HTTP／HTTPS 世界服务，不新增多用户身份系统。
 
 ### 实时订阅协议
 
@@ -1131,7 +1131,7 @@ python3 sdk/python/experiment_catalog.py verify
 
 页面支持按场景 ID、报告格式精确筛选，以及按标签包含文字筛选；点击“刷新记录”应用筛选，每页 50 条，可前后翻页。按创建时间与内容 ID 倒序定位，时间相同的记录也不会在静态目录中漏掉；目录在翻页期间新增内容时，刷新可查看最新结果。接口 `GET /sessions/:id/catalog` 支持 `scene`、`format`、`label`、`limit`（1–500），响应的 `nextCursor` 提供下一页的 `beforeCreatedAt` 与 `beforeId`，两项必须一起传入；命令行 `list` 同样支持筛选和这两个游标参数。
 
-接口为管理员凭据访问的 `POST /sessions/:id/catalog`（`{"label":"标签"}`）、`GET /sessions/:id/catalog` 和 `GET /sessions/:id/catalog/:sha256`；仅本机、同源服务，单体和协调者凭据不可访问。服务调用 `python3` 与标准库 SQLite，若 Python 不可用，目录操作失败但世界仿真仍可运行；可用 `BOX_PYTHON` 指定 Python 解释器。记录和当前内存会话分开：服务重启后创建新的管理员会话仍可检索已保存记录，但不能从快照恢复继续运行。命令行 `add -` 从标准输入读取 JSON，`read ID` 将原始报告写入标准输出。在线静态预览不连接本机数据库；目录访问不提供生产级多用户身份隔离。
+接口为管理员凭据访问的 `POST /sessions/:id/catalog`（`{"label":"标签"}`）、`GET /sessions/:id/catalog` 和 `GET /sessions/:id/catalog/:sha256`；支持同源的本机或远程服务，单体和协调者凭据不可访问。服务调用 `python3` 与标准库 SQLite，若 Python 不可用，目录操作失败但世界仿真仍可运行；可用 `BOX_PYTHON` 指定 Python 解释器。记录和当前内存会话分开：服务重启后创建新的管理员会话仍可检索已保存记录，但不能从快照恢复继续运行。命令行 `add -` 从标准输入读取 JSON，`read ID` 将原始报告写入标准输出。在线静态预览不连接本机数据库；目录访问不提供生产级多用户身份隔离。
 
 连接本地世界服务后，“本机实验目录”还可选择“导入报告到目录”，将本机 JSON 文件按原字节保存到同一 SQLite 目录；标签沿用输入框，重复内容保留首次标签。文件最大 50 MiB，目录只校验 UTF-8 JSON、重复键和报告格式标识，不执行各报告的完整语义验证；下载后仍须通过对应页面入口校验。该操作把文件发送到同一台本机上的服务，不会发送到线上静态进度页。管理员 API 为 `POST /sessions/:id/catalog/import?label=...`，请求体为 `application/json` 原字节；内容寻址 ID 是原字节 SHA-256。
 

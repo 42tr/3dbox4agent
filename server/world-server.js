@@ -1,5 +1,5 @@
 'use strict';
-// Loopback development service with per-session bearer credentials.
+// World service with per-session bearer credentials.
 const http=require('node:http');
 const crypto=require('node:crypto');
 const fs=require('node:fs');
@@ -10,6 +10,7 @@ const Elevation=require('../src/elevation');
 const Replay=require('../src/replay');
 const Recording=require('../src/recording-context');
 const PublicExperimentAssets=require('./public-experiment-assets');
+const {requestOriginError}=require('./request-origin');
 const SceneDiagnostics=require('../src/scene-diagnostics');
 const Delta=require('../src/delta');
 const StreamProtobuf=require('../src/stream-protobuf');
@@ -115,9 +116,7 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
  const server=http.createServer(async(req,res)=>{
   let mutationSession=null;
   try{
-   // A browser from another origin must not control a loopback service (DNS rebinding/CSRF).
-   const host=req.headers.host||'';if(!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host))return json(res,403,{error:'invalid_host'});
-   const origin=req.headers.origin;if(origin&&origin!==`http://${host}`)return json(res,403,{error:'invalid_origin'});
+   const originError=requestOriginError(req);if(originError)return json(res,403,{error:originError});
    const url=new URL(req.url,'http://localhost'),parts=url.pathname.split('/').filter(Boolean);
    if(PublicExperimentAssets.serve(req,res,url))return;
    if(req.method==='GET'&&url.pathname==='/'){const html=fs.readFileSync(path.join(__dirname,'../index.html'));res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});return res.end(html)}
@@ -338,7 +337,7 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
    const world=session.frames[session.frames.length-1].world;if(fullText===null)fullText=JSON.stringify({type:'frame',...meta,world});
    if(client.delta&&previous&&client.lastRevision===previous.revision){if(deltaText===null)deltaText=JSON.stringify({type:'delta',...meta,baseRevision:previous.revision,patch:Delta.diff(previous.world,world)});safeSend(client,Buffer.byteLength(deltaText)<Buffer.byteLength(fullText)?deltaText:fullText)}else safeSend(client,fullText);client.lastRevision=session.revision;
   }else if(client.identity.role==='agent')safeSend(client,{type:'observation',...meta,observation:agentObservation(session,client.identity.agent)});else safeSend(client,{type:'observation',...meta,observation:coordinatorObservation(session,client.identity.coordinator)})}}
- server.on('upgrade',(req,socket,head)=>{const host=req.headers.host||'',origin=req.headers.origin;if(req.url!=='/stream'||!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host)||(origin&&origin!==`http://${host}`)||wss.clients.size>=64){socket.destroy();return}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws))});
+ server.on('upgrade',(req,socket,head)=>{if(req.url!=='/stream'||requestOriginError(req)||wss.clients.size>=64){socket.destroy();return}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws))});
  const heartbeat=setInterval(()=>{for(const client of wss.clients){if(!client.isAlive){client.terminate();continue}client.isAlive=false;client.ping()}},20000);heartbeat.unref();
  wss.on('connection',client=>{client.isAlive=true;client.on('pong',()=>{client.isAlive=true});let session=null;const authTimer=setTimeout(()=>client.close(1008,'authentication timeout'),5000);authTimer.unref();client.on('error',()=>{});client.on('close',()=>{clearTimeout(authTimer);if(session)session.clients.delete(client)});client.on('message',(raw,isBinary)=>{
   if(session||isBinary){client.close(1008,'invalid message');return}let message;try{message=JSON.parse(raw.toString('utf8'))}catch{client.close(1008,'invalid message');return}

@@ -90,7 +90,9 @@ def main():
             assert status == 200 and len(asset) == ref['bytes']
             assert hashlib.sha256(asset).hexdigest() == ref['sha256']
         assert request('/policy-acceptance-codex-not-allowed.json')[0] == 404
-        assert request('/health', headers={'Host': 'invalid.invalid'})[0] == 403
+        assert request('/health', headers={'Host': '3dbox.42tr.cn'})[0] == 200
+        assert request('/health', headers={'Host': '3dbox.42tr.cn', 'Origin': 'https://3dbox.42tr.cn'})[0] == 200
+        assert request('/health', headers={'Host': 'bad@host'})[0] == 403
         assert request('/health', headers={'Origin': 'https://invalid.invalid'})[0] == 403
 
         session = required('/sessions', 'POST', {'seed': 42, 'physicsMode': 'rapier',

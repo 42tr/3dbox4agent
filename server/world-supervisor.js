@@ -1,7 +1,8 @@
 'use strict';
-// Same loopback API, with one child process per world; this is not an OS security sandbox.
+// One child process per world; this is not an OS security sandbox.
 const http=require('node:http'),crypto=require('node:crypto'),path=require('node:path'),{fork}=require('node:child_process');
 const {WebSocket,WebSocketServer}=require('ws'),{createServer}=require('./world-server');
+const {requestOriginError}=require('./request-origin');
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,TOKEN=/^[A-Za-z0-9_-]{43}$/;
 function createSupervisor({maxWorkers=4,maxSessions=32,startTimeoutMs=10000,requestTimeoutMs=30000,worldOptions={}}={}){
  for(const [name,n,max] of [['worker limit',maxWorkers,32],['session limit',maxSessions,32],['startup timeout',startTimeoutMs,60000],['request timeout',requestTimeoutMs,120000]])if(!Number.isInteger(n)||n<1||n>max)throw Error('invalid '+name);
@@ -10,7 +11,7 @@ function createSupervisor({maxWorkers=4,maxSessions=32,startTimeoutMs=10000,requ
  const options=structuredClone(worldOptions),control=createServer(options),routes=new Map(),workers=new Set();
  const wss=new WebSocketServer({noServer:true,maxPayload:8192,perMessageDeflate:false});let closing=false;
  function json(res,status,value){if(res.destroyed||res.writableEnded)return;res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(value))}
- function originAllowed(req){const host=req.headers.host||'';return /^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host)&&(!req.headers.origin||req.headers.origin===`http://${host}`)}
+ function originAllowed(req){return requestOriginError(req)===null}
  function headers(req,port,length){const out={host:`127.0.0.1:${port}`};for(const name of ['authorization','content-type','accept','content-length'])if(req.headers[name]!==undefined)out[name]=req.headers[name];if(req.headers.origin)out.origin=`http://127.0.0.1:${port}`;if(length!==undefined)out['content-length']=length;return out}
  function responseHeaders(upstream){return {'content-type':upstream.headers['content-type']||'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}}
  function retire(entry){

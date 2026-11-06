@@ -21,9 +21,9 @@ async function start(bind){
   assert.match(output,new RegExp('World API: http://'+(bind||'127.0.0.1').replaceAll('.','\\.')+':'+port));
   const url=`http://127.0.0.1:${port}`;
   assert.equal((await fetch(url+'/health')).status,200);
-  const invalidHost=await new Promise((resolve,reject)=>{const req=http.get(url+'/health',{headers:{host:`192.0.2.1:${port}`}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode))});req.on('error',reject)});
-  assert.equal(invalidHost,403);
+  const remoteHost=await new Promise((resolve,reject)=>{const req=http.get(url+'/health',{headers:{host:`192.0.2.1:${port}`}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode))});req.on('error',reject)});
+  assert.equal(remoteHost,200);
   assert.equal((await fetch(url+'/health',{headers:{origin:'https://invalid.invalid'}})).status,403);
  }finally{if(child.exitCode===null)child.kill('SIGTERM');await exited}
 }
-(async()=>{await start();await start('0.0.0.0');await start('invalid.invalid');console.log('default loopback, explicit container bind, host and origin guards passed')})().catch(e=>{console.error(e);process.exitCode=1});
+(async()=>{await start();await start('0.0.0.0');await start('invalid.invalid');console.log('default loopback, explicit container bind, remote hosts and same-origin guards passed')})().catch(e=>{console.error(e);process.exitCode=1});
