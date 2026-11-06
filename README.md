@@ -247,6 +247,8 @@ curl -X POST "http://127.0.0.1:8787/sessions/会话ID/step" -H 'Content-Type: ap
 
 ### 容器启动（单机开发）
 
+构建 Rust 镜像可直接执行 `bash scripts/build-image.sh`。默认目标为 `linux/amd64`，自动传递终端代理并生成版本标签；ARM64 使用 `--arch arm64`。成功后执行 `source .3dbox/builds/last-build.env`，即可继续使用 `$release_image` 等变量打包。自定义镜像名、构建网络及下载源见[构建脚本说明](docs/docker-build-network.md#使用构建脚本)。
+
 已有 Docker Engine 和 Docker Compose 时，在项目目录运行：
 
 ```sh

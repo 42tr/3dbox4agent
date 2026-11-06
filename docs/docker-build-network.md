@@ -4,6 +4,45 @@
 
 宿主机、Docker daemon 和构建容器的代理设置分别生效。为构建内的 npm、pip、Cargo、apt 提供代理时，使用 Docker 的预定义 `HTTP_PROXY`、`HTTPS_PROXY` 构建参数，具体行为见 [Docker 代理配置文档](https://docs.docker.com/engine/cli/proxy/)。这些参数无需写入 Dockerfile。
 
+## 使用构建脚本
+
+在拉取源码后，可直接运行：
+
+```bash
+bash scripts/build-image.sh
+```
+
+脚本默认构建 `linux/amd64` 的 `world-rust` 镜像并加载到本机 Docker。标签由当前 Git 短号和时间生成；代理使用终端已导出的大小写环境变量。Linux 默认采用宿主机网络，其他系统默认采用 `default` 网络。脚本需要 Bash、Git、Docker 和 Buildx；源码更新由你在运行脚本前执行。
+
+支持以下选项：
+
+```bash
+# ARM64 目标服务器
+bash scripts/build-image.sh --arch arm64
+
+# 指定镜像名称
+bash scripts/build-image.sh --image 3dbox4agent:world-rust
+
+# 使用默认构建网络
+bash scripts/build-image.sh --network default
+
+# 查看全部选项
+bash scripts/build-image.sh --help
+```
+
+脚本默认使用官方 PyPI 和 npm 下载源；可通过 `PIP_INDEX_URL`、`NPM_REGISTRY` 环境变量覆盖。宿主机网络及代理地址的适用条件见下文。
+
+使用 `--image` 自定义镜像名时，部署包中的镜像配置也需使用对应的名称和标签，以 `$release_image` 保存的实际镜像为准。
+
+成功后会将本次构建的 `source_commit`、`release_id`、`release_arch`、`release_platform`、`release_name`、`release_image` 和 `release_dir` 保存到 `.3dbox/builds/last-build.env`。在仓库根目录执行以下命令，即可继续使用此前的打包步骤：
+
+```bash
+source .3dbox/builds/last-build.env
+printf '镜像：%s\n打包目录：%s\n' "$release_image" "$release_dir"
+```
+
+构建失败时脚本返回失败状态，并保留上次成功构建的变量记录；本次镜像只有在构建成功后才会记录。脚本参数和失败处理可通过 `npm run test:build-image` 验证，该检查使用模拟 Docker，不执行镜像构建。
+
 ## Linux 上沿用终端代理或宿主机路由
 
 以下命令适用于同一台 Linux 服务器上的 Docker Engine 和默认 `docker` 构建驱动。宿主机 `curl https://google.com` 成功，只确认了宿主机到该地址的访问；还需要检查 PyPI 地址和构建容器的联网路径。
