@@ -27,10 +27,20 @@ RUN npm run build && npm prune --omit=dev
 
 FROM base AS python-dependencies
 ARG TARGETARCH
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 COPY sdk/python/pyproject.toml /tmp/box-sdk-pyproject.toml
 RUN --mount=type=cache,id=3dbox-python-downloads-${TARGETARCH},target=/root/.cache/pip,sharing=locked \
     python3 -m venv /opt/box-agent \
-    && /opt/box-agent/bin/python -c "import pathlib,subprocess,tomllib; p=tomllib.loads(pathlib.Path('/tmp/box-sdk-pyproject.toml').read_text()); deps=p['build-system']['requires']+['wheel']+p['project'].get('dependencies',[])+p['project']['optional-dependencies']['grpc-stream']; subprocess.check_call(['/opt/box-agent/bin/python','-m','pip','install','--retries','5','--timeout','180',*deps])"
+    && for pip_attempt in 1 2 3; do \
+        if /opt/box-agent/bin/python -c "import pathlib,subprocess,tomllib; p=tomllib.loads(pathlib.Path('/tmp/box-sdk-pyproject.toml').read_text()); deps=p['build-system']['requires']+['wheel']+p['project'].get('dependencies',[])+p['project']['optional-dependencies']['grpc-stream']; subprocess.check_call(['/opt/box-agent/bin/python','-m','pip','install','--retries','5','--timeout','180',*deps])"; then \
+            break; \
+        fi; \
+        if [ "$pip_attempt" -eq 3 ]; then exit 1; fi; \
+        printf 'Python dependency installation failed (attempt %s/3); retrying in 5 seconds.\n' "$pip_attempt" >&2; \
+        sleep 5; \
+    done
 
 FROM python-dependencies AS python-build
 COPY sdk/python ./sdk/python
