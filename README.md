@@ -258,6 +258,8 @@ docker compose ps
 
 Python 构建依赖默认从[清华 PyPI 镜像](https://mirrors.tuna.tsinghua.edu.cn/help/pypi/)下载，可通过 `--build-arg PIP_INDEX_URL=https://pypi.org/simple` 更换源。保留 pip 的 5 次连接重试、180 秒读写超时及 BuildKit 下载缓存；若文件传输中途失败，整次依赖安装最多尝试 3 次，间隔 5 秒，连续失败仍会中止构建。
 
+Linux 服务器通过代理联网时，需把代理传入 Docker 构建；代理监听宿主机 `127.0.0.1` 时还需处理构建网络。遇到 `Network is unreachable` 或下载超时，可按[构建网络与代理说明](docs/docker-build-network.md)先验证 Python 依赖阶段，再构建完整镜像。
+
 打开 `http://127.0.0.1:8787/`，点击“连接本地世界服务”。镜像会重新构建页面，默认启动独立世界进程入口，包含 Node 世界服务、Rapier WASM、Python SDK 及 WebSocket/gRPC 可选依赖；主机无需安装 Node、Python、Rust。默认使用 WASM 物理和 JavaScript 规则，可用 `BOX_WORLD_WORKERS` 配置进程数。首次构建需下载基础镜像和依赖；构建锁定 npm/Cargo 依赖，但基础镜像标签和 Python 可选依赖仍可变化，因此不保证镜像逐位复现。可通过 Dockerfile 的 `NODE_IMAGE`、`RUST_IMAGE` 构建参数指定镜像摘要。 镜像的 `third_party` 目录保存补充许可文本；原生镜像同时保留构建时下载的 Cargo 包许可、清单及锁文件。
 
 需要原生 Rust 物理、任务、通信与导航后端时使用 `BOX_IMAGE_TARGET=world-rust docker compose up --build -d`；每次重新创建该栈时沿用这个选择。原生模块在镜像内按目标架构编译，主机的 `.node` 和 `target` 不会进入构建上下文。默认只把 8787 发布到主机回环地址；端口冲突时可用 `BOX_HTTP_PORT=8877 docker compose up --build -d`，再打开相应本机端口。直接使用 Node 时仍默认只监听 `127.0.0.1`；新增 `WORLD_BIND=0.0.0.0` 只用于显式选择容器监听，HTTP/WebSocket 的回环 Host 与同源检查仍保留。
