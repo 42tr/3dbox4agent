@@ -254,6 +254,8 @@ docker compose up --build -d
 docker compose ps
 ```
 
+前端构建默认通过 `https://registry.npmmirror.com` 下载 npm 依赖，并统一锁文件中的下载源；依赖版本和完整性校验仍由 `package-lock.json` 固定。构建阶段的 npm 网络请求失败时最多重试 5 次，下载缓存由 BuildKit 保留，依赖安装和开发依赖裁剪均使用同一配置。如需其他源，可给 `docker buildx build` 增加 `--build-arg NPM_REGISTRY=https://registry.npmjs.org`。此配置仅用于前端构建阶段。
+
 打开 `http://127.0.0.1:8787/`，点击“连接本地世界服务”。镜像会重新构建页面，默认启动独立世界进程入口，包含 Node 世界服务、Rapier WASM、Python SDK 及 WebSocket/gRPC 可选依赖；主机无需安装 Node、Python、Rust。默认使用 WASM 物理和 JavaScript 规则，可用 `BOX_WORLD_WORKERS` 配置进程数。首次构建需下载基础镜像和依赖；构建锁定 npm/Cargo 依赖，但基础镜像标签和 Python 可选依赖仍可变化，因此不保证镜像逐位复现。可通过 Dockerfile 的 `NODE_IMAGE`、`RUST_IMAGE` 构建参数指定镜像摘要。 镜像的 `third_party` 目录保存补充许可文本；原生镜像同时保留构建时下载的 Cargo 包许可、清单及锁文件。
 
 需要原生 Rust 物理、任务、通信与导航后端时使用 `BOX_IMAGE_TARGET=world-rust docker compose up --build -d`；每次重新创建该栈时沿用这个选择。原生模块在镜像内按目标架构编译，主机的 `.node` 和 `target` 不会进入构建上下文。默认只把 8787 发布到主机回环地址；端口冲突时可用 `BOX_HTTP_PORT=8877 docker compose up --build -d`，再打开相应本机端口。直接使用 Node 时仍默认只监听 `127.0.0.1`；新增 `WORLD_BIND=0.0.0.0` 只用于显式选择容器监听，HTTP/WebSocket 的回环 Host 与同源检查仍保留。

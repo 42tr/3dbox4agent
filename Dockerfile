@@ -8,8 +8,17 @@ RUN apt-get update \
 WORKDIR /app
 
 FROM base AS web-build
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
+    NPM_CONFIG_REPLACE_REGISTRY_HOST=always \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,id=3dbox-npm-downloads,target=/root/.npm,sharing=locked \
+    npm ci
 COPY build.py ./
 COPY src ./src
 COPY examples ./examples
