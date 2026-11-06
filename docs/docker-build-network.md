@@ -6,13 +6,13 @@
 
 ## 使用构建脚本
 
-在拉取源码后，可直接运行：
+在拉取源码后，执行一条命令即可完成构建和部署包导出：
 
 ```bash
 bash scripts/build-image.sh
 ```
 
-脚本默认构建 `linux/amd64` 的 `world-rust` 镜像并加载到本机 Docker。标签由当前 Git 短号和时间生成；代理使用终端已导出的大小写环境变量。Linux 默认采用宿主机网络，其他系统默认采用 `default` 网络。脚本需要 Bash、Git、Docker 和 Buildx；源码更新由你在运行脚本前执行。
+脚本默认构建并加载 `linux/amd64` 的 `world-rust` 镜像，随后导出镜像、生成部署配置和校验文件，最后输出完整压缩包路径。代理使用终端已导出的大小写环境变量；Linux 默认采用宿主机网络，其他系统默认采用 `default` 网络。构建机器需要 Bash、Git、Docker、Buildx、tar、gzip，以及 sha256sum 或 shasum。源码更新由你在运行脚本前执行。
 
 支持以下选项：
 
@@ -20,7 +20,7 @@ bash scripts/build-image.sh
 # ARM64 目标服务器
 bash scripts/build-image.sh --arch arm64
 
-# 指定镜像名称
+# 指定镜像名称，包内配置会同步使用这个镜像
 bash scripts/build-image.sh --image 3dbox4agent:world-rust
 
 # 使用默认构建网络
@@ -32,16 +32,35 @@ bash scripts/build-image.sh --help
 
 脚本默认使用官方 PyPI 和 npm 下载源；可通过 `PIP_INDEX_URL`、`NPM_REGISTRY` 环境变量覆盖。宿主机网络及代理地址的适用条件见下文。
 
-使用 `--image` 自定义镜像名时，部署包中的镜像配置也需使用对应的名称和标签，以 `$release_image` 保存的实际镜像为准。
+产物位于 `.3dbox/releases/`：
 
-成功后会将本次构建的 `source_commit`、`release_id`、`release_arch`、`release_platform`、`release_name`、`release_image` 和 `release_dir` 保存到 `.3dbox/builds/last-build.env`。在仓库根目录执行以下命令，即可继续使用此前的打包步骤：
-
-```bash
-source .3dbox/builds/last-build.env
-printf '镜像：%s\n打包目录：%s\n' "$release_image" "$release_dir"
+```text
+3dbox4agent-版本-linux-amd64.tar.gz
+3dbox4agent-版本-linux-amd64.tar.gz.sha256
+3dbox4agent-版本-linux-amd64/            # 同时保留解包后的内容
+  image.tar.gz
+  compose.yaml
+  .env
+  README.md
+  RELEASE.txt
+  SHA256SUMS
 ```
 
-构建失败时脚本返回失败状态，并保留上次成功构建的变量记录；本次镜像只有在构建成功后才会记录。脚本参数和失败处理可通过 `npm run test:build-image` 验证，该检查使用模拟 Docker，不执行镜像构建。
+上传压缩包与同名 `.sha256` 文件，在目标 Linux 服务器上执行以下命令；将“实际包名”替换为脚本输出的文件名中 `.tar.gz` 前的部分：
+
+```bash
+sha256sum -c 实际包名.tar.gz.sha256
+tar -xzf 实际包名.tar.gz
+cd 实际包名
+sha256sum -c SHA256SUMS
+docker image load -i image.tar.gz
+docker compose -p 3dbox4agent up --no-build --pull never --wait world
+curl -fsS http://127.0.0.1:8787/health
+```
+
+目标服务器的 CPU 架构须与镜像一致，只需要 Docker Engine 和 Compose。包内 `.env` 已写入实际镜像名和平台，默认映射 `0.0.0.0:8787`；绑定地址、端口与世界并发数可在解压后修改。Compose 配置没有源码路径或 `build` 依赖，重启策略为 `unless-stopped`，世界服务默认上限为 2 CPU、2 GiB 内存。更完整的操作说明随包提供。
+
+构建、镜像导出或压缩失败时脚本返回失败状态，清理临时打包文件，并保留上次成功的结果记录。成功后 `.3dbox/builds/last-build.env` 仍记录镜像与压缩包路径，供自动化使用；手工部署无需加载此文件。校验归档、代理转发和失败处理可执行 `npm run test:build-image` 验证，该检查模拟 Docker，实际创建并检查压缩包。
 
 ## Linux 上沿用终端代理或宿主机路由
 
