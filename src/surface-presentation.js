@@ -32,7 +32,7 @@ function tint(original,color){const key=original.uuid+'|'+color;if(!tints.has(ke
     const paddles=gltf.scene.getObjectByName('paddles');if(paddles){paddles.removeFromParent();paddles.traverse(o=>{if(o.isMesh)o.geometry.dispose()})}
     const object=gltf.scene,bounds=new THREE.Box3().setFromObject(object),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
     object.position.set(-center.x,-bounds.min.y,-center.z);const pivot=new THREE.Group();pivot.add(object);
-    const scale=4/Math.max(size.x,size.z);pivot.scale.setScalar(scale);if(size.z>size.x)pivot.rotation.y=Math.PI/2;
+    const scale=1.56/Math.hypot(size.x,size.z);pivot.scale.setScalar(scale);if(size.z>size.x)pivot.rotation.y=Math.PI/2;
     pivot.position.y=.04;pivot.traverse(o=>{if(o.isMesh){o.geometry.userData.sharedSurfaceAsset=true;o.castShadow=true;o.receiveShadow=true}});model=pivot;
     const callbacks=pending;pending=[];callbacks.forEach(fn=>fn());settled(true);
    },undefined,error=>{pending=[];console.error('3DBox boat asset could not be loaded',error);settled(false)})}

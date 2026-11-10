@@ -142,9 +142,10 @@ impl WorldMotion {
                 approach=Some(serde_json::json!({"kind":"task_approach_reached","taskId":task.id,"assignmentId":task.assignment_id,"phase":task.phase.flatten(),"target":goal,"position":[current.x,current.y],"mobility":"air","occupiedBy":occupied}));
             }
         }
+        let bodies:Vec<_>=actors.iter().map(|(_,a,e)|(a.id.clone(),a.x,a.y,e.mobility.as_deref().map_or(e.role=="drone",|m|m=="air"))).collect();
         let events=if let Some(event)=approach{
             state.route.clear();state.blocked_ticks=Some(0);state.progress_waypoint=Some(String::new());state.best_waypoint_distance=Some(0.0);state.collision_active=Some(false);vec![event]
-        }else{crate::world_route::advance(&mut next,&mut state,&map,&context,physical.as_mut())?};
+        }else{crate::world_route::advance(&mut next,&mut state,&map,&context,&bodies,physical.as_mut())?};
         if !valid(next.x,next.y,next.battery,next.distance)||!state.valid(next.distance){return Err(invalid())}
         let mut next_control=control.clone();let mut next_ledger=ledger.clone();
         for effect in &events{
@@ -268,7 +269,8 @@ impl WorldMotion {
         let physics_id=physics.as_ref().map_or(0,|p|p.checkpoint_id);
         if self.route_environment.is_some_and(|id|id!=map.identity)||self.route_physics.is_some_and(|id|id!=physics_id){return Err(invalid())}
         let mut next=current.clone();let mut state=execution.clone();let mut physical=physics.as_ref().map(|p|(**p).clone());
-        let events=crate::world_route::advance(&mut next,&mut state,&map,&context,physical.as_mut())?;
+        let bodies:Vec<_>=self.agents.iter().zip(self.execution.as_ref().unwrap()).map(|(a,e)|(a.id.clone(),a.x,a.y,e.mobility.as_deref().map_or(e.role=="drone",|m|m=="air"))).collect();
+        let events=crate::world_route::advance(&mut next,&mut state,&map,&context,&bodies,physical.as_mut())?;
         if !valid(next.x,next.y,next.battery,next.distance)||!state.valid(next.distance){return Err(invalid())}
         let encoded=serde_json::to_string(&events).map_err(|_|invalid())?;
         self.agents[i]=next;self.execution.as_mut().unwrap()[i]=state;self.route_environment=Some(map.identity);self.route_physics=Some(physics_id);

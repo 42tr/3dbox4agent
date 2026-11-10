@@ -22,6 +22,12 @@ pub(crate) struct Terrain{pub id:String,pub rect:[f64;4],pub speed:f64,pub energ
 pub(crate) struct Map{pub identity:u64,pub surface_domain:Option<crate::surface_domain::Profile>,pub heightfield:Option<crate::heightfield::Heightfield>,pub terrain:Vec<Terrain>,pub risks:Vec<(String,[f64;4])>}
 // V8's bounded two-argument hypot; identical rounding matters at route corners.
 fn distance(x:f64,y:f64)->f64{let scale=x.abs().max(y.abs());if scale==0.0{0.0}else{let a=x.abs()/scale;let b=y.abs()/scale;(a*a+b*b).sqrt()*scale}}
+fn kinematic_move(id:&str,x:f64,y:f64,air:bool,dx:f64,dy:f64,others:&[(String,f64,f64,bool)])->[f64;3]{
+ let length=distance(dx,dy);if length<1e-12{return [0.0,0.0,0.0]}
+ let radius=1.6;let mut fraction=1.0;let mut contact=false;
+ for (other_id,ox,oy,other_air) in others{if other_id==id||*other_air!=air{continue}let sx=x-*ox;let sy=y-*oy;let inside=sx*sx+sy*sy;if inside<=radius*radius+1e-9{fraction=0.0;contact=true;continue}let aa=dx*dx+dy*dy;let bb=2.0*(sx*dx+sy*dy);let cc=inside-radius*radius;let discriminant=bb*bb-4.0*aa*cc;if discriminant<0.0{continue}let enter=(-bb-discriminant.max(0.0).sqrt())/(2.0*aa);if enter>=0.0&&enter<=fraction{fraction=(enter-1e-7).max(0.0);contact=true}}
+ [dx*fraction,dy*fraction,if contact{1.0}else{0.0}]
+}
 fn contains(p:[f64;2],r:[f64;4])->bool{p[0]>=r[0]&&p[0]<=r[0]+r[2]&&p[1]>=r[1]&&p[1]<=r[1]+r[3]}
 fn intersects(p:[f64;2],d:[f64;2],r:[f64;4])->bool{
  let(mut lo,mut hi)=(0.0_f64,1.0_f64);
@@ -63,7 +69,7 @@ fn field_segment(p:[f64;2],u:[f64;2],d:f64,map:&Map,minimum:f64)->Segment{
  if micro{boundary=d.min(minimum);let target=[p[0]+u[0]*boundary,p[1]+u[1]*boundary];let ts=h.cuts(p,target);for pair in ts.windows(2){let t=(pair[0]+pair[1])/2.0;let g=h.factor(p[0]+(target[0]-p[0])*t,p[1]+(target[1]-p[1])*t);speed=speed.min(g.speed);energy=energy.max(g.energy)}}
  s.speed=s.speed.min(speed);s.energy=s.energy.max(energy);s.boundary=s.boundary.min(boundary);s.micro=s.micro||micro;s
 }
-pub(crate) fn advance(a:&mut Motion,e:&mut Execution,map:&Map,c:&Context,mut physics:Option<&mut PhysicsWorld>)->Result<Vec<Value>>{
+pub(crate) fn advance(a:&mut Motion,e:&mut Execution,map:&Map,c:&Context,others:&[(String,f64,f64,bool)],mut physics:Option<&mut PhysicsWorld>)->Result<Vec<Value>>{
  if a.id!=e.id||e.disabled||c.exposures.iter().any(|(id,t)|!map.terrain.iter().any(|z|&z.id==id&&z.started==Some(*t))){return Err(invalid())}
  let air=e.mobility.as_deref().unwrap_or(if e.role=="drone"{"air"}else{"ground"})=="air";
  if e.mobility.as_deref()==Some("water")&&map.surface_domain.is_none(){return Err(invalid())}
@@ -78,7 +84,7 @@ pub(crate) fn advance(a:&mut Motion,e:&mut Execution,map:&Map,c:&Context,mut phy
   let rate=e.move_energy_per_unit.unwrap_or(0.045);let minimum=if physics.is_some(){2e-5}else{1e-6};let heat_limit=e.thermal_move_limit(rate*energy,minimum)?;
   if heat_limit<=minimum{e.thermal_protect("heat_budget")?;break}
   let desired=d.min(boundary).min(remaining*speed).min(a.battery/(rate*energy)).min(heat_limit);
-  let raw=if let Some(p)=physics.as_mut(){p.move_agent(a.id.clone(),a.x,a.y,ux*desired,uy*desired)?}else if map.surface_domain.as_ref().is_some_and(|p|!p.clear(if air{"air"}else if e.mobility.as_deref()==Some("water"){"water"}else{"ground"},[a.x,a.y],[a.x+ux*desired,a.y+uy*desired],0.8).unwrap_or(false)){vec![0.0,0.0,1.0]}else{vec![ux*desired,uy*desired,0.0]};
+  let raw=if let Some(p)=physics.as_mut(){p.move_agent(a.id.clone(),a.x,a.y,ux*desired,uy*desired)?}else if map.surface_domain.as_ref().is_some_and(|p|!p.clear(if air{"air"}else if e.mobility.as_deref()==Some("water"){"water"}else{"ground"},[a.x,a.y],[a.x+ux*desired,a.y+uy*desired],0.8).unwrap_or(false)){vec![0.0,0.0,1.0]}else{kinematic_move(&a.id,a.x,a.y,air,ux*desired,uy*desired,others).to_vec()};
   let(mut mx,mut my)=(raw[0],raw[1]);let ex=a.x+mx;let ey=a.y+my;let outside=ex<0.0||ex>100.0||ey<0.0||ey>100.0;
   let crossing=ex< -1e-7||ex>100.0+1e-7||ey< -1e-7||ey>100.0+1e-7;
   if outside{

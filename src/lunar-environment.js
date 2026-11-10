@@ -127,7 +127,7 @@ export function createLunarEnvironment(scene,renderer){
  function agentModel(target,role='rover'){
   const name=role==='vehicle'?'cargo':role==='robot'?'service':'scout',holder=new THREE.Group();
   target.traverse(o=>{if(o.isMesh&&!o.userData.agentId)o.visible=false});target.add(holder);
-  const load=()=>{if(!target.parent)return;const object=models[name].clone(true);object.name='lunar-vehicle-'+name;holder.add(object)};
+  const load=()=>{if(!target.parent)return;const object=models[name].clone(true);object.name='lunar-vehicle-'+name;const bounds=new THREE.Box3().setFromObject(object),size=bounds.getSize(new THREE.Vector3()),radius=Math.hypot(size.x,size.z)/2;if(radius>.78)holder.scale.setScalar(.78/radius);holder.add(object)};
   if(models[name])load();else pending.push(load);return holder;
  }
  function setConstruction(plan){const states=new Map(plan.map(s=>[s.obstacleId,s.state]));for(const [id,objects]of facilityObjects)for(const object of objects)object.visible=!states.has(id)||states.get(id)==='built'}
