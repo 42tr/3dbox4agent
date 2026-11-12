@@ -770,22 +770,26 @@ function boundMovement(s,a,result,physics){
 }
 // Kinematic mode has no Rapier character controller, so apply the same
 // horizontal 0.8-radius body separation used by the physics backends here.
-// This keeps the browser preview and the server's kinematic mode from letting
-// devices pass through one another or end a step at the same position.
+function kinematicBodyFraction(ox,oy,dx,dy){
+ const dot=ox*dx+oy*dy;
+ // A touching body must still be able to move away or along the tangent.
+ if(dot>=0)return 1;
+ const gap=ox*ox+oy*oy-1.6*1.6;
+ if(gap<=1e-9)return 0;
+ const discriminant=dot*dot-(dx*dx+dy*dy)*gap;
+ if(discriminant<0)return 1;
+ const enter=gap/(-dot+Math.sqrt(discriminant));
+ return enter>1?1:Math.max(0,enter-1e-7);
+}
 function kinematicAgentMove(s,a,dx,dy){
  const distance=Math.hypot(dx,dy);if(distance<1e-12)return {x:0,y:0,contacts:0};
- const radius=1.6,air=Sensors.isAir(a),px=a.x,py=a.y;
- let fraction=1,contact=false;
+ const air=Sensors.isAir(a),px=a.x,py=a.y;
+ let fraction=1;
  for(const other of s.agents){
   if(other.id===a.id||Sensors.isAir(other)!==air)continue;
-  const ox=px-other.x,oy=py-other.y,inside=ox*ox+oy*oy;
-  if(inside<=radius*radius+1e-9){fraction=0;contact=true;continue}
-  const aa=dx*dx+dy*dy,bb=2*(ox*dx+oy*dy),cc=inside-radius*radius,discriminant=bb*bb-4*aa*cc;
-  if(discriminant<0)continue;
-  const enter=(-bb-Math.sqrt(Math.max(0,discriminant)))/(2*aa);
-  if(enter>=0&&enter<=fraction){fraction=Math.max(0,enter-1e-7);contact=true}
+  fraction=Math.min(fraction,kinematicBodyFraction(px-other.x,py-other.y,dx,dy));
  }
- return {x:dx*fraction,y:dy*fraction,contacts:contact?1:0};
+ return {x:dx*fraction,y:dy*fraction,contacts:fraction<1?1:0};
 }
 // Air bodies share a flight layer. An occupied task center can be served
 // from the existing work radius; standalone moves retain exact targets.
@@ -823,11 +827,11 @@ const waypoint=a.route[0],waypointKey=waypoint?waypoint.join(','):'';let remaini
  if(delivery&&a.deliveryTravel&&moved>0){const loaded=s.part.location==='carried'&&s.part.carrierId===a.id;const d=a.deliveryTravel,distKey=loaded?'loadedDistance':'emptyDistance',tickKey=loaded?'loadedTicks':'emptyTicks';setAgentExecution(s,a,{deliveryTravel:{...d,[distKey]:d[distKey]+moved,[tickKey]:d[tickKey]+1}})}
  if(contact&&!a.collisionActive){incrementWorldCounter(s,'collisionContacts');log(s,`${a.name} 遇到障碍，运动已受限`,'warning',{kind:'collision_contact',agentId:a.id})}setAgentExecution(s,a,{collisionActive:contact});const current=a.route[0],key=current?current.join(','):'';if(!contact||!current||key!==waypointKey||a.progressWaypoint!==key){setAgentExecution(s,a,{blockedTicks:0});setAgentExecution(s,a,{progressWaypoint:key});setAgentExecution(s,a,{bestWaypointDistance:current?Math.hypot(current[0]-a.x,current[1]-a.y):0})}else{const distance=Math.hypot(current[0]-a.x,current[1]-a.y);if(distance<(a.bestWaypointDistance??Infinity)-.05){setAgentExecution(s,a,{bestWaypointDistance:distance});setAgentExecution(s,a,{blockedTicks:0})}else setAgentExecution(s,a,{blockedTicks:(a.blockedTicks||0)+1})}
 }
-// Replan around stationary nearby ground devices after repeated contact.
-// Another ground body can occupy the exact work point, even while healthy and
+// Replan around same-layer devices after repeated contact.
+// Another body can occupy the exact work point, even while healthy and
 // idle after an earlier task. Keep that collider and route to a clear approach
 // inside the existing work radius instead of requiring the occupied center.
-function occupiedTaskTarget(s,a,goal){return !!goal&&s.agents.some(b=>b.id!==a.id&&!Sensors.isAir(b)&&Math.hypot(b.x-goal[0],b.y-goal[1])<1.6+1e-9)}
+function occupiedTaskTarget(s,a,goal){return !!goal&&s.agents.some(b=>b.id!==a.id&&Sensors.isAir(b)===Sensors.isAir(a)&&Math.hypot(b.x-goal[0],b.y-goal[1])<1.6+1e-9)}
 function ownedCollisionReplan(s,a){const execution=worldExecutions.get(s),environment=worldEnvironments.get(s),resources=worldResources.get(s),tasks=worldTasks.get(s),actions=worldActions.get(s)?.store,control=worldControls.get(s),ledger=worldLedgers.get(s);if(typeof execution?.store.replan!=='function'||!environment||!resources||!tasks||!actions||!control||!ledger)return null;const result=execution.store.replan(execution.indices.get(a),environment,resources,tasks,actions,control,ledger,s.tick);if(typeof result?.replanned!=='boolean')throw Error('invalid native collision replan');return result.replanned}
 function replanAroundAgents(s,a,goal,reach,radius=3.7){
  const owned=ownedCollisionReplan(s,a);if(owned!==null)return owned;
@@ -835,7 +839,14 @@ function replanAroundAgents(s,a,goal,reach,radius=3.7){
  // Agent obstacles include both 0.8-radius bodies and a small safety margin.
  const obstacles=planning.concat(other.map(b=>({x:b.x-.8,y:b.y-.8,w:1.6,h:1.6,padding:.9})));
  const escapePlanning=air||s.surfaceDomain?planning.map(b=>({...b,padding:.8})):planning;
- function escapeClear(end){if(!Nav.clearSegment(start,end,escapePlanning))return false;const dx=end[0]-start[0],dy=end[1]-start[1],length=dx*dx+dy*dy;return other.every(b=>{const t=length?Math.max(0,Math.min(1,((b.x-start[0])*dx+(b.y-start[1])*dy)/length)):0;return Math.hypot(start[0]+t*dx-b.x,start[1]+t*dy-b.y)>=1.59})}
+ function escapeClear(end){
+  if(!Nav.clearSegment(start,end,escapePlanning))return false;
+  const dx=end[0]-start[0],dy=end[1]-start[1];
+  // Check the first leg out of the planning margin with the same sweep as movement.
+  if(s.physicsMode==='kinematic')return other.every(b=>kinematicBodyFraction(start[0]-b.x,start[1]-b.y,dx,dy)===1);
+  const length=dx*dx+dy*dy;
+  return other.every(b=>{const t=length?Math.max(0,Math.min(1,((b.x-start[0])*dx+(b.y-start[1])*dy)/length)):0;return Math.hypot(start[0]+t*dx-b.x,start[1]+t*dy-b.y)>=1.59});
+ }
  const entries=[];if(Nav.free(...start,obstacles))entries.push({point:start,prefix:[],cost:0});else for(const length of [1,2,3,4,5,6])for(let i=0;i<24;i++){const theta=2*Math.PI*i/24,p=[start[0]+length*Math.cos(theta),start[1]+length*Math.sin(theta)];if(Nav.free(...p,obstacles)&&escapeClear(p))entries.push({point:p,prefix:[p],cost:length})}
  entries.sort((u,v)=>(u.cost+Math.hypot(u.point[0]-goal[0],u.point[1]-goal[1]))-(v.cost+Math.hypot(v.point[0]-goal[0],v.point[1]-goal[1])));
  const targets=[];if(Nav.free(...goal,obstacles))targets.push(goal);if(reach)for(let i=0;i<24;i++){const theta=2*Math.PI*i/24,p=[goal[0]+radius*Math.cos(theta),goal[1]+radius*Math.sin(theta)];if(Nav.free(...p,obstacles)&&(air?Sensors.visible({x:p[0],y:p[1],z:16},{x:goal[0],y:goal[1],z:16},4,worldObstacles(s),s.heightfield):(Nav.clearSegment(p,goal,physical,0)&&Elevation.traversable(s.heightfield,p,goal,0))))targets.push(p)}
@@ -885,7 +896,7 @@ function updateActions(s,physics){for(const action of s.actions.filter(x=>x.stat
  if(action.type==='scan'){if(ownedStationaryTick(s,action,a,physics))continue;if(!thermalWork(s,a))continue;const rules=taskRuleProviders.get(s),effect=rules?nativeStationaryTick(s,action,a,rules):null;if(!rules){thermalSpent(s,a,Math.min(a.battery,a.workEnergyPerTick??.08));setAgentMotion(s,a,{battery:Math.max(0,a.battery-(a.workEnergyPerTick??.08))});setAction(s,action,{progress:action.progress+1})}if(rules?effect==='energy_depleted':a.battery<=0){setAgentExecution(s,a,{disabled:true,status:'fault'});actionStatus(s,action,'failed','energy_depleted');log(s,`${a.name} 扫描时电量耗尽`,'warning',{kind:'energy_depleted',agentId:a.id,actionId:action.requestId})}else if(rules?effect==='completed':action.progress>=3){const [x,y]=s.part.site,visible=sensorVisible(s,Sensors.position(a,s.heightfield),{x,y,z:1+Elevation.height(s.heightfield,x,y)},a.sensorRange??s.sensorRange);setAction(s,action,{result:visible?{kind:s.asset.condition==='fault'?'anomaly':'normal',position:[x,y],observedTick:s.tick}:{kind:'not_detected',observedTick:s.tick}});setAgentExecution(s,a,{status:'idle'});actionStatus(s,action,'completed')}continue}
  const task=action.resumeTaskId?s.tasks.find(t=>t.id===action.resumeTaskId&&t.status==='active'&&t.assignee===a.id):null,goal=task?taskWaypoint(s,task):null;
  if(physics&&goal&&action.target.x===goal[0]&&action.target.y===goal[1]&&taskReachable(s,a,task))setAgentExecution(s,a,{route:[]});
- if(task)markTaskStarted(s,task,a);moveAlongRoute(s,a,physics,task?.behavior==='deliver');if(physics&&task&&a.blockedTicks===10&&(a.collisionReplans||0)<3&&a.route.length)replanAroundAgents(s,a,[action.target.x,action.target.y],!!goal&&action.target.x===goal[0]&&action.target.y===goal[1]);
+ if(task)markTaskStarted(s,task,a);moveAlongRoute(s,a,physics,task?.behavior==='deliver');if(task&&a.blockedTicks===10&&(a.collisionReplans||0)<3&&a.route.length)replanAroundAgents(s,a,[action.target.x,action.target.y],!!goal&&action.target.x===goal[0]&&action.target.y===goal[1]);
  if(ownedSettleTravel(s,action,a))continue;
  if(a.battery<=0){setAgentExecution(s,a,{disabled:true,status:'fault',route:[]});actionStatus(s,action,'failed','energy_depleted');if(task){releaseTaskResource(s,task,a);requeueTask(s,task);setAgentExecution(s,a,{work:0});incrementWorldCounter(s,'replans');}log(s,`${a.name} 电量耗尽${task?'，任务重新分配':''}`,'warning',{kind:'energy_depleted',agentId:a.id,actionId:action.requestId,...(task?{taskId:task.id}:{})})}
  else if(a.blockedTicks>=60){setAgentExecution(s,a,{route:[]});setAgentExecution(s,a,{status:task?'assigned':'idle'});actionStatus(s,action,'failed','collision_blocked')}

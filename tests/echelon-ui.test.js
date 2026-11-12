@@ -5,7 +5,10 @@ const T=bundle('src/task-chain.ts'),V=bundle('src/echelon-view.ts'),Panel=bundle
 const scene=E.getScene('shore-echelons-v1'),w=E.create(42,'nearest',scene),first=E.snapshot(w),view=()=>T.projectTaskChain(w,null,'global',scene),initial=T.projectTaskChain(first,null,'global',scene);
 const native=require('../server/rust-world-initialization').create(42,'nearest',scene);assert(T.projectTaskChain(native,null,'global',scene).echelons,'actual native material-item JSON order must not hide groups');
 assert.deepEqual(plain(initial.echelons.groups.map(g=>g.taskIds.length)),[4,3,2]);assert.equal(initial.echelons.groups[0].ready,1);assert.equal(initial.echelons.groups[1].ready,0);assert(initial.echelons.groups.every(g=>g.participants.length===0));
-while(w.tick<9)E.step(w);assert.equal(view().echelons.groups[0].active,2);assert.equal(view().echelons.groups[0].participants.length,3);while(w.tick<49)E.step(w);assert.equal(view().echelons.groups[0].done,4);assert.equal(view().echelons.groups[1].ready,1);
+while(w.tick<9)E.step(w);assert.equal(view().echelons.groups[0].active,2);assert.equal(view().echelons.groups[0].participants.length,3);
+const deployment=w.tasks.find(task=>task.id==='deploy-shore');
+while(!w.done&&deployment.status!=='done')E.step(w);
+assert.equal(view().echelons.groups[0].done,4);assert.equal(view().echelons.groups[1].ready,1);
 assert.deepEqual(plain(view().echelons.groups[1].incoming),[{id:'advance',name:'前出准备梯队'}]);assert.equal(V.filterEchelonTasks(view(),'support').nodes.length,3);assert.equal(V.filterEchelonTasks(view(),'invalid').nodes.length,9);assert.equal(V.filterEchelonTasks(view(),'*').nodes.length,0);
 while(!w.done)E.step(w);const end=view();assert(end.echelons.groups.every(g=>g.done===g.taskIds.length));const past=T.projectTaskChain(first,null,'global',scene);assert(past.echelons.groups.every(g=>g.done===0&&g.participants.length===0),'past frame must not inherit future completion/actors');
 const html=renderToStaticMarkup(React.createElement(Panel,{view:end,history:false,source:'测试快照',assign(){throw Error('SSR must not submit')},observe(){}}));for(const text of ['梯队协同','前出准备梯队','岸上处置梯队','通道复查梯队','完成 4/4','跨梯队前置','已记录执行设备'])assert(html.includes(text),text);

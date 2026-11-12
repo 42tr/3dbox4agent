@@ -147,7 +147,7 @@ impl WorldEnvironment {
         let zones:serde_json::Value=if baseline{serde_json::to_value(self.state.terrain.clone().unwrap_or_default()).map_err(|_|invalid())?}else{decode(&self.effective_terrain()?)?};
         let metric=self.state.navigation.unwrap_or(Navigation::Distance);let input=serde_json::json!({"start":start,"target":target,"obstacles":obstacles,"zones":zones,"heightfield":self.state.heightfield,"metric":metric});decode(&crate::navigation::plan_ground_route(encode(&input)?)?)
     }
-    pub(crate) fn collision_route(&self,actor:&str,start:[f64;2],goal:[f64;2],reach:bool,radius:f64,actors:&[(usize,crate::world_motion::Motion,crate::world_execution::Execution)])->Result<Option<Vec<[f64;2]>>>{
+    pub(crate) fn collision_route(&self,actor:&str,start:[f64;2],goal:[f64;2],reach:bool,radius:f64,actors:&[(usize,crate::world_motion::Motion,crate::world_execution::Execution)],rapier:bool)->Result<Option<Vec<[f64;2]>>>{
         self.check()?;let spec=self.agents.iter().find(|a|a.id==actor).ok_or_else(invalid)?;let air=spec.air;
         let mut obstacles:Vec<_>=self.state.obstacles.iter().filter(|b|!air||self.obstacle_top(b.x,b.y,b.w,b.h,b.height)>=15.2).map(|b|serde_json::json!({"x":b.x,"y":b.y,"w":b.w,"h":b.h})).collect();
         for b in self.blocks().filter(|b|!air||self.obstacle_top(b.x,b.y,b.w,b.h,b.height)>=15.2){obstacles.push(serde_json::json!({"x":b.x,"y":b.y,"w":b.w,"h":b.h}))}
@@ -156,7 +156,7 @@ impl WorldEnvironment {
         let zones:serde_json::Value=if air{serde_json::json!([])}else{decode(&self.effective_terrain()?)?};
         let input=serde_json::json!({"start":start,"target":goal,"obstacles":obstacles,"zones":zones,"heightfield":if air{None}else{self.state.heightfield.as_ref()},"metric":if air{Navigation::Distance}else{self.state.navigation.unwrap_or(Navigation::Distance)}});
         let others:Vec<_>=self.agents.iter().zip(actors).filter(|(spec,(_,a,_))|spec.air==air&&a.id!=actor).map(|(_,(_,a,_))|[a.x,a.y]).collect();
-        crate::navigation::collision_route(encode(&input)?,reach,radius,&others,if air||self.state.surface_domain.is_some(){Some(0.8)}else{None},|p|if air{self.air_task_approach_clear(p,goal)}else{self.activation_reachable(p,goal,false)})
+        crate::navigation::collision_route(encode(&input)?,reach,radius,&others,if air||self.state.surface_domain.is_some(){Some(0.8)}else{None},rapier,|p|if air{self.air_task_approach_clear(p,goal)}else{self.activation_reachable(p,goal,false)})
     }
     pub(crate) fn ending_recoverable(&self,agent:&str,start:[f64;2],battery:f64,rate:f64,speed:f64,operating:Option<f64>)->Result<bool>{
         let spec=self.agents.iter().find(|a|a.id==agent).ok_or_else(invalid)?;

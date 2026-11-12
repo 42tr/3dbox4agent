@@ -42,7 +42,7 @@ impl WorldControl{
      }
      if let Some(p)=next_physics.as_mut(){next_motion.advance_route_events_rapier(index as f64,expected,environment,&next_resources,&next_tasks,&next_actions,&mut next_control,&mut next_ledger,p)?;}else{next_motion.advance_route_events(index as f64,expected,environment,&next_resources,&next_tasks,&next_actions,&mut next_control,&mut next_ledger)?;}
      let(_,_,e,_)=next_motion.activation_components(&row.agent)?;
-     if next_physics.is_some()&&task.is_some()&&e.blocked_ticks==Some(10)&&e.collision_replans.unwrap_or(0)<3&&!e.route.is_empty(){next_motion.replan_collision_events(index as f64,expected,environment,&next_resources,&next_tasks,&next_actions,&mut next_control,&mut next_ledger)?;}
+     if task.is_some()&&e.blocked_ticks==Some(10)&&e.collision_replans.unwrap_or(0)<3&&!e.route.is_empty(){next_motion.replan_collision_events(index as f64,expected,environment,&next_resources,&next_tasks,&next_actions,&mut next_control,&mut next_ledger)?;}
      next_actions.settle_travel_events(action_index,expected,&mut next_motion,environment,&mut next_resources,&mut next_tasks,&mut next_control,&mut next_ledger)?;continue
     },
    }

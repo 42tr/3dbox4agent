@@ -22,4 +22,15 @@ const worker=world.agents[0],blocker=world.agents[1];
 assert(world.events.some(e=>e.kind==='collision_contact'),'blocked kinematic movement records contact');
 assert(world.events.some(e=>e.kind==='collision_replan'),'blocked kinematic movement replans around the device');
 assert.equal(world.tasks[0].status,'done');
-console.log('Kinematic agent collision: same-layer bodies stop at the 1.6-unit proxy diameter and replan around parked devices');
+
+const escapeScene=fixture();
+escapeScene.tasks[0].target=[20,50];
+const touching=E.create(42,'nearest',escapeScene,{physicsMode:'kinematic',dispatchMode:'external'});
+const [escaping,parked]=touching.agents;
+Object.assign(escaping,{x:28.4,y:50});
+Object.assign(parked,{x:30,y:50});
+assert(E.assign(touching,'survey','worker-1').ok);
+E.step(touching);
+assert(escaping.x<28.4,'a touching body can move away on its first step');
+assert(!touching.events.some(e=>e.kind==='collision_contact'));
+console.log('Kinematic agent collision: same-layer bodies stop at the 1.6-unit proxy diameter, replan around parked devices, and can move away from contact');

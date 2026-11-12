@@ -22,11 +22,24 @@ pub(crate) struct Terrain{pub id:String,pub rect:[f64;4],pub speed:f64,pub energ
 pub(crate) struct Map{pub identity:u64,pub surface_domain:Option<crate::surface_domain::Profile>,pub heightfield:Option<crate::heightfield::Heightfield>,pub terrain:Vec<Terrain>,pub risks:Vec<(String,[f64;4])>}
 // V8's bounded two-argument hypot; identical rounding matters at route corners.
 fn distance(x:f64,y:f64)->f64{let scale=x.abs().max(y.abs());if scale==0.0{0.0}else{let a=x.abs()/scale;let b=y.abs()/scale;(a*a+b*b).sqrt()*scale}}
+pub(crate) fn kinematic_body_fraction(ox:f64,oy:f64,dx:f64,dy:f64)->f64{
+ let dot=ox*dx+oy*dy;
+ // A touching body must still be able to move away or along the tangent.
+ if dot>=0.0{return 1.0}
+ let gap=ox*ox+oy*oy-1.6*1.6;
+ if gap<=1e-9{return 0.0}
+ let discriminant=dot*dot-(dx*dx+dy*dy)*gap;
+ if discriminant<0.0{return 1.0}
+ let enter=gap/(-dot+discriminant.sqrt());
+ if enter>1.0{1.0}else{(enter-1e-7).max(0.0)}
+}
 fn kinematic_move(id:&str,x:f64,y:f64,air:bool,dx:f64,dy:f64,others:&[(String,f64,f64,bool)])->[f64;3]{
- let length=distance(dx,dy);if length<1e-12{return [0.0,0.0,0.0]}
- let radius=1.6;let mut fraction=1.0;let mut contact=false;
- for (other_id,ox,oy,other_air) in others{if other_id==id||*other_air!=air{continue}let sx=x-*ox;let sy=y-*oy;let inside=sx*sx+sy*sy;if inside<=radius*radius+1e-9{fraction=0.0;contact=true;continue}let aa=dx*dx+dy*dy;let bb=2.0*(sx*dx+sy*dy);let cc=inside-radius*radius;let discriminant=bb*bb-4.0*aa*cc;if discriminant<0.0{continue}let enter=(-bb-discriminant.max(0.0).sqrt())/(2.0*aa);if enter>=0.0&&enter<=fraction{fraction=(enter-1e-7).max(0.0);contact=true}}
- [dx*fraction,dy*fraction,if contact{1.0}else{0.0}]
+ if distance(dx,dy)<1e-12{return [0.0,0.0,0.0]}
+ let mut fraction=1.0_f64;
+ for (other_id,ox,oy,other_air) in others{
+  if other_id!=id&&*other_air==air{fraction=fraction.min(kinematic_body_fraction(x-ox,y-oy,dx,dy))}
+ }
+ [dx*fraction,dy*fraction,if fraction<1.0{1.0}else{0.0}]
 }
 fn contains(p:[f64;2],r:[f64;4])->bool{p[0]>=r[0]&&p[0]<=r[0]+r[2]&&p[1]>=r[1]&&p[1]<=r[1]+r[3]}
 fn intersects(p:[f64;2],d:[f64;2],r:[f64;4])->bool{

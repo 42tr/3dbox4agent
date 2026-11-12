@@ -292,7 +292,7 @@ impl WorldMotion {
         let ids:Vec<_>=actors.iter().map(|(_,a,_)|a.id.clone()).collect();let(all,_)=tasks.ending_tasks()?;let catalog:Vec<_>=all.iter().map(|t|t.id.clone()).collect();
         let(t,_)=tasks.revocation_context("",&actors,&catalog)?;let(c,l,mode,_,_,_,rapier)=control.route_events_context(expected,&ids,&catalog,ledger)?;let now=expected as u64;
         let e=environment.dispatch_context(now,&actors)?;let roster:Vec<_>=actors.iter().map(|(_,a,e)|(a.id.clone(),e.role.clone(),e.capabilities.iter().any(|c|c=="inspect"))).collect();let(r,_)=resources.proposal_catalog(now,&all,&roster)?;let(a,_)=actions.ending_context(now as u32,&ids)?;let binding=[e,r,t,a,c,l];
-        if !rapier||self.route_environment.is_some_and(|id|id!=e)||self.route_event_binding.is_some_and(|b|b!=binding)||self.collision_event_binding.is_some_and(|b|b!=binding)||self.collision_event_ticks.get(&i).is_some_and(|tick|*tick>=now){return Err(invalid())}
+        if self.route_environment.is_some_and(|id|id!=e)||self.route_event_binding.is_some_and(|b|b!=binding)||self.collision_event_binding.is_some_and(|b|b!=binding)||self.collision_event_ticks.get(&i).is_some_and(|tick|*tick>=now){return Err(invalid())}
         tasks.event_context(now as u32,self,environment,resources,actions,control,ledger)?;actions.collision_identity([self.checkpoint_id,e,r,t,c,l])?;
         let no=||Ok("{\"replanned\":false}".to_owned());let air=execution.mobility.as_deref().map_or(execution.role=="drone",|m|m=="air");
         if execution.disabled||execution.lifecycle_waiting()||execution.blocked_ticks!=Some(10)||execution.collision_replans.unwrap_or(0)>=3||execution.route.is_empty(){return no()}
@@ -307,7 +307,7 @@ impl WorldMotion {
                 if moving{let waypoint=waypoint.ok_or_else(invalid)?;let goal=target.ok_or_else(invalid)?;(goal,goal==waypoint,3.7)}else{if current.battery<=0.0{return no()}(environment.activation_station()?,true,2.7)}},
             _=>return Err(invalid()),
         };
-        let Some(route)=environment.collision_route(&current.id,[current.x,current.y],goal,reach,radius,&actors)?else{return no()};
+        let Some(route)=environment.collision_route(&current.id,[current.x,current.y],goal,reach,radius,&actors,rapier)?else{return no()};
         let mut next=self.clone();let mut state=execution.clone();state.route=route;state.collision_replans=Some(state.collision_replans.unwrap_or(0)+1);state.blocked_ticks=Some(0);state.progress_waypoint=Some(String::new());next.commit_stationary(i,current.clone(),state)?;
         let mut next_control=control.clone();let mut next_ledger=ledger.clone();next_control.task_event(&mut next_ledger,serde_json::json!({"message":format!("{} 绕行受阻设备",execution.name),"type":"info","kind":"collision_replan","agentId":current.id}))?;next_control.validate_commit(&next_ledger)?;
         next.collision_event_binding=Some(binding);next.collision_event_ticks.insert(i,now);*self=next;*control=next_control;*ledger=next_ledger;Ok("{\"replanned\":true}".to_owned())

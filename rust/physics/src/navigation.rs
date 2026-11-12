@@ -196,7 +196,7 @@ pub fn plan_ground_route(input: String) -> Result<String> {
 // Same finite escape/approach stencil as the shared engine. Values are fixed
 // doubles from that stencil so libm trigonometric rounding cannot reorder ties.
 const COLLISION_DIRECTIONS:[[f64;2];24]=[[1.0,0.0],[0.9659258262890683,0.25881904510252074],[0.8660254037844387,0.49999999999999994],[0.7071067811865476,0.7071067811865475],[0.5000000000000001,0.8660254037844386],[0.25881904510252074,0.9659258262890683],[6.123233995736766e-17,1.0],[-0.25881904510252063,0.9659258262890683],[-0.4999999999999998,0.8660254037844387],[-0.7071067811865475,0.7071067811865476],[-0.8660254037844387,0.49999999999999994],[-0.9659258262890682,0.258819045102521],[-1.0,1.2246467991473532e-16],[-0.9659258262890683,-0.2588190451025208],[-0.8660254037844388,-0.4999999999999997],[-0.7071067811865479,-0.7071067811865471],[-0.5000000000000004,-0.8660254037844385],[-0.25881904510252063,-0.9659258262890683],[-1.8369701987210297e-16,-1.0],[0.2588190451025203,-0.9659258262890684],[0.5000000000000001,-0.8660254037844386],[0.7071067811865474,-0.7071067811865477],[0.8660254037844384,-0.5000000000000004],[0.9659258262890681,-0.25881904510252157]];
-pub(crate) fn collision_route(input:String,reach:bool,radius:f64,others:&[Point],escape_padding:Option<f64>,clear_goal:impl Fn(Point)->Result<bool>)->Result<Option<Vec<Point>>>{
+pub(crate) fn collision_route(input:String,reach:bool,radius:f64,others:&[Point],escape_padding:Option<f64>,rapier:bool,clear_goal:impl Fn(Point)->Result<bool>)->Result<Option<Vec<Point>>>{
     let mut v:Input=serde_json::from_str(&input).map_err(|_|Error::from_reason("invalid collision map"))?;
     v=prepare_input(v)?;let start=v.start;let goal=v.target;let planning=v.obstacles;
     let mut escape_planning=planning.clone();if let Some(padding)=escape_padding{for b in &mut escape_planning{b.padding=Some(padding)}}
@@ -205,7 +205,9 @@ pub(crate) fn collision_route(input:String,reach:bool,radius:f64,others:&[Point]
     let distance=|a:Point,b:Point|crate::world_perceptions::sensor_distance(a[0]-b[0],a[1]-b[1]);
     let escape_clear=|end:Point|{
         if !clear(start,end,&escape_planning){return false}
-        let dx=end[0]-start[0];let dy=end[1]-start[1];let length=dx*dx+dy*dy;
+        let dx=end[0]-start[0];let dy=end[1]-start[1];
+        if !rapier{return others.iter().all(|p|crate::world_route::kinematic_body_fraction(start[0]-p[0],start[1]-p[1],dx,dy)==1.0)}
+        let length=dx*dx+dy*dy;
         others.iter().all(|p|{let t=if length!=0.0{(((p[0]-start[0])*dx+(p[1]-start[1])*dy)/length).clamp(0.0,1.0)}else{0.0};distance([start[0]+t*dx,start[1]+t*dy],*p)>=1.59})
     };
     let mut entries:Vec<(Point,Vec<Point>,f64)>=Vec::new();

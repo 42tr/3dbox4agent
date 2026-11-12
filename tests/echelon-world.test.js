@@ -19,6 +19,14 @@ for(const physicsMode of ['kinematic','rapier'])for(const navigation of ['distan
    for(const a of native.agents){assert(D.bodyFree(native.surfaceDomain,a.mobility,[a.x,a.y]),a.id+' left its domain');equal(E.observe(js,a.id),E.observe(native,a.id),'observation/'+a.id+'/'+native.tick)}
   }
   assert(native.done&&!native.failed,'mission must finish');assert.equal(native.tasks.filter(t=>t.status==='done').length,9);assert(native.agents.filter(a=>a.mobility==='water').some(a=>a.distance>20));assert(native.events.some(e=>e.kind==='part_loaded'));assert.equal(native.part.location,'consumed');
+  if(physicsMode==='kinematic'&&executionMode==='auto'){
+   const recovery=native.events.filter(event=>event.agentId==='relay-1'&&['collision_contact','collision_replan','relay_deployed'].includes(event.kind));
+   assert.deepEqual(recovery.map(event=>event.kind),['collision_contact','collision_replan','relay_deployed']);
+   for(const frame of history){
+    const relay=frame.agents.find(agent=>agent.id==='relay-1'),vehicle=frame.agents.find(agent=>agent.id==='vehicle-1');
+    assert(Math.hypot(relay.x-vehicle.x,relay.y-vehicle.y)>=1.6-1e-8,'the relay must clear the parked vehicle without overlap');
+   }
+  }
   const archive={format:'3dbox-prototype-v1',config:{seed:42,policy:'nearest',sceneId:config.id,scene:config},frames:history};assert(Replay.validateArchive(archive));
   const bad=structuredClone(archive);bad.frames[0].surfaceDomain.water[0].x=44;assert.throws(()=>Replay.validateArchive(bad));
   const pose=structuredClone(archive);Object.assign(pose.frames[1].agents.find(a=>a.mobility==='water'),{x:25,y:50});assert.throws(()=>Replay.validateArchive(pose));

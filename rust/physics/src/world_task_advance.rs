@@ -80,7 +80,7 @@ impl WorldControl{
    if !e.route.is_empty(){if let Some(p)=next_physics.as_mut(){next_motion.advance_route_events_rapier(index as f64,expected,environment,&next_resources,&next_tasks,&next_actions,&mut next_control,&mut next_ledger,p)?;}else{next_motion.advance_route_events(index as f64,expected,environment,&next_resources,&next_tasks,&next_actions,&mut next_control,&mut next_ledger)?;}}
    else{next_tasks.advance_work_events(id.clone(),json!({"tick":now}).to_string(),&mut next_motion,environment,&mut next_resources,&mut next_actions,&mut next_control,&mut next_ledger)?;}
    let(_,a,e,_)=next_motion.activation_components(actor)?;
-   if next_physics.is_some()&&e.blocked_ticks==Some(10)&&e.collision_replans.unwrap_or(0)<3&&!e.route.is_empty(){next_motion.replan_collision_events(index as f64,expected,environment,&next_resources,&next_tasks,&next_actions,&mut next_control,&mut next_ledger)?;}
+   if e.blocked_ticks==Some(10)&&e.collision_replans.unwrap_or(0)<3&&!e.route.is_empty(){next_motion.replan_collision_events(index as f64,expected,environment,&next_resources,&next_tasks,&next_actions,&mut next_control,&mut next_ledger)?;}
    let current=next_tasks.ending_tasks()?.0.into_iter().find(|t|t.id==id).ok_or_else(invalid)?;let(_,_,e,_)=next_motion.activation_components(actor)?;
    if e.blocked_ticks.unwrap_or(0)>=60&&current.status==TaskStatus::Active{next_control.task_route_failure(&current,true,now as u32,&mut next_motion,&mut next_tasks,&mut next_actions,&mut next_resources,&mut next_ledger)?;break}
    if next_ledger.done()?{break}
