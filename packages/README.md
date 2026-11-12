@@ -1,5 +1,7 @@
 # 3DBox 分层目录
 
+完整架构说明见 [`docs/architecture.md`](../docs/architecture.md)。
+
 仓库保持单一 Git，按层组织代码：
 
 - `packages/world`：世界运行时和服务端适配；当前 `world-core` 仍在根目录，运行时端口已迁入；
