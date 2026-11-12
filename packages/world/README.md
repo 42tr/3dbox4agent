@@ -10,3 +10,11 @@ Rust/WASM 后端、World HTTP/WS 宿主和部分实验报告模块仍在 `server
 
 World 服务的物理适配、Rust 绑定、事件日志、事务、请求和报告组件已经迁入
 `packages/world/server`；根目录 `server/*.js` 只保留兼容入口。
+
+World 的单体服务、Supervisor 和 Worker 入口也位于 `packages/world/server`。
+根目录入口继续支持原有命令：
+
+~~~sh
+node server/world-server.js
+node server/world-supervisor.js
+~~~

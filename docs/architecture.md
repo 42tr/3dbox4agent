@@ -142,6 +142,7 @@ control-contracts ───────► Control Server
 - World Core 与运行时端口；
 - World Core 直接依赖的主要领域模块已迁入 `packages/world/src`；
 - World 服务的物理、Rust 绑定、日志和事务支持已迁入 `packages/world/server`；
+- World 单体服务、Supervisor 和 Worker 入口已迁入 `packages/world/server`；
 - World Server、Rapier 适配器和构建脚本已优先读取迁移后的 World 模块；
 - Control 契约和独立 Rust Control Server 骨架；
 - Axum HTTP 代理与 `/health`；
@@ -155,7 +156,7 @@ control-contracts ───────► Control Server
 
 - World 的 Rust、server、场景和领域模块；
 - World 的实验报告、回放视图和剩余纯领域工具；
-- World HTTP/WS 入口与 Supervisor 仍保留在根目录，待应用入口迁入 `packages/world`；
+- 根目录 World 入口现在只是兼容启动包装，后续可在调用方完成迁移后移除；
 - Console 面板依赖、纯视图模块和 3D 资源；
 - Agent 和 Console 从直连 World 迁移到 Control Server；
 - Control Server 的 HTTP/MCP 集成测试与部署配置；
