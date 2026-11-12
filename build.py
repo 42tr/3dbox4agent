@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
 import subprocess
-html = Path('src/app.html').read_text()
+html = Path('packages/console/src/app.html').read_text()
 engine = Path('src/echelons.js').read_text()+'\n'+Path('packages/world/src/world-core.js').read_text().replace('/* SHORE_RESCUE_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-rescue.json').read_text()), ensure_ascii=True)).replace('/* SHORE_ECHELONS_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-echelons.json').read_text()), ensure_ascii=True)).replace('/* SHORE_SEA_STATE_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-sea-state.json').read_text()), ensure_ascii=True)).replace('/* SHORE_SURFACE_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-surface.json').read_text()), ensure_ascii=True))
 thermal = Path('src/thermal.js').read_text()
 operating_power = Path('src/operating-power.js').read_text()
@@ -59,7 +59,7 @@ yaml_license = Path('node_modules/yaml/LICENSE').read_text()
 protobuf_licenses = '\n'.join(p.read_text() for p in [Path('node_modules/protobufjs/LICENSE'), *sorted(Path('node_modules/@protobufjs').glob('*/LICENSE'))])
 stream_protobuf = subprocess.check_output(['node_modules/.bin/esbuild', 'src/stream-protobuf-browser.js', '--bundle', '--minify', '--format=iife', '--target=es2020'], text=True)
 scene_format = subprocess.check_output(['node_modules/.bin/esbuild', 'src/scene-format-browser.js', '--bundle', '--minify', '--format=iife', '--target=es2020'], text=True)
-mission_ui = subprocess.check_output(['node_modules/.bin/esbuild', 'src/mission-control.tsx', '--bundle', '--minify', '--format=iife', '--target=es2020', '--loader:.css=text', '--define:process.env.NODE_ENV="production"'], text=True)
+mission_ui = subprocess.check_output(['node_modules/.bin/esbuild', 'packages/console/src/mission-control.tsx', '--bundle', '--minify', '--format=iife', '--target=es2020', '--loader:.css=text', '--define:process.env.NODE_ENV="production"'], text=True)
 scene = subprocess.check_output(['node_modules/.bin/esbuild', 'src/scene3d.js', '--loader:.png=dataurl', '--loader:.glb=dataurl', '--bundle', '--minify', '--format=iife', '--target=es2020'], text=True)
 if '</script' in mission_ui.lower() or '</script' in scene.lower() or '</script' in scene_format.lower() or '</script' in stream_protobuf.lower():
     raise ValueError('JavaScript bundle contains an HTML script closing tag')
