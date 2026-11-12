@@ -6,6 +6,7 @@ import re
 import sys
 import time
 from box_agent import AgentClient, SandboxError
+from box_agent.client import CONTROL_HTTP_ORIGIN
 
 
 def emit(kind, **values):
@@ -59,7 +60,7 @@ def main():
     a = p.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,32}', a.logical_id) or not 1 <= a.retry_ticks <= 1000 or not 1 <= a.max_attempts <= 20 or not .01 <= a.poll <= 1 or not 1 <= a.timeout <= 120:
         p.error('invalid protocol parameters')
-    client = AgentClient(os.environ['BOX_SESSION'], os.environ['BOX_AGENT'], os.environ['BOX_TOKEN'], os.environ.get('BOX_URL', 'http://127.0.0.1:8787'))
+    client = AgentClient(os.environ['BOX_SESSION'], os.environ['BOX_AGENT'], os.environ['BOX_TOKEN'], os.environ.get('BOX_URL', CONTROL_HTTP_ORIGIN))
     deadline = time.monotonic() + a.timeout
     attempts, next_tick, last_incoming = 0, 0, set()
     data = json.dumps({'v': 1, 'kind': 'data', 'id': a.logical_id, 'body': '状态确认'}, ensure_ascii=False, separators=(',', ':'))

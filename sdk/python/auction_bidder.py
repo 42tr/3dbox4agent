@@ -1,6 +1,7 @@
 """Bid on coordinator calls using only this agent's scoped observation and peer link."""
 import argparse, json, math, os, re, sys, time
 from box_agent import AgentClient, SandboxError
+from box_agent.client import CONTROL_HTTP_ORIGIN
 
 
 def bid(observation, call):
@@ -17,7 +18,7 @@ def bid(observation, call):
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--auctioneer',required=True);p.add_argument('--poll',type=float,default=.03);args=p.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',args.auctioneer) or not .01<=args.poll<=1: p.error('invalid auctioneer or poll interval')
-    client=AgentClient(os.environ['BOX_SESSION'],os.environ['BOX_AGENT'],os.environ['BOX_TOKEN'],os.environ.get('BOX_URL','http://127.0.0.1:8787'))
+    client=AgentClient(os.environ['BOX_SESSION'],os.environ['BOX_AGENT'],os.environ['BOX_TOKEN'],os.environ.get('BOX_URL',CONTROL_HTTP_ORIGIN))
     processed=set()
     while True:
         observation=client.observe();error=observation.get('sessionError') or observation.get('simulationError')

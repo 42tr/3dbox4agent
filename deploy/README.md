@@ -20,15 +20,15 @@ cd 实际包名
 sha256sum -c SHA256SUMS
 docker image load -i image.tar.gz
 docker compose -p 3dbox4agent config --quiet
-docker compose -p 3dbox4agent up --no-build --pull never --wait --wait-timeout 120 world
+docker compose -p 3dbox4agent up --no-build --pull never --wait --wait-timeout 120 control
 docker compose -p 3dbox4agent ps
-curl -fsS http://127.0.0.1:8787/health
+curl -fsS http://127.0.0.1:8787/control/world/health
 ```
 
 容器应显示 `healthy`，健康接口应返回 `"ok": true`。启动失败时执行：
 
 ```bash
-docker compose -p 3dbox4agent logs --tail=100 world
+docker compose -p 3dbox4agent logs --tail=100 world control
 ```
 
 包内 `.env` 已记录实际镜像名和 CPU 平台，无需从构建终端加载变量。默认映射 `0.0.0.0:8787`、最多同时运行 2 个世界进程；世界容器上限为 2 CPU、2 GiB 内存。容器重启策略为 `unless-stopped`，运行配置不包含构建路径。

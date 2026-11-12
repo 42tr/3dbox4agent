@@ -226,7 +226,13 @@ agent.close()
 node server/world-server.js
 ```
 
-服务监听 `127.0.0.1:8787`；可用 `WORLD_PORT` 更改端口。打开 `http://127.0.0.1:8787/`，可在实验设置的“服务仿真”中选择运动学或 Rapier 碰撞，再点击“连接本地世界服务”，即可让服务端以每秒 20 步为基准推进会话，界面优先通过 WebSocket 接收快照，断线时回退到 HTTP 轮询并尝试重连；支持暂停、倍速、故障与回放。在线进展页面仍是独立浏览器预览，不会连接本机服务。
+World 默认监听 `127.0.0.1:8787`，可用 `WORLD_PORT` 更改端口。使用 Console 连接服务仿真时，先运行 `npm run build` 生成页面，再在另一终端运行：
+
+```sh
+cargo run --locked --manifest-path packages/control-server/Cargo.toml
+```
+
+Control 默认监听 `127.0.0.1:8789`，并通过 `WORLD_URL` 找到 World。Agent HTTP 默认连接 Control。Console 经 World 入口的同源 `/control` 路由访问 Control，实时 WebSocket 直连 World 的 `/stream`。自定义 Control 监听地址时，同时设置 World 进程的 `BOX_CONTROL_URL`。打开 `http://127.0.0.1:8787/`，可在实验设置的“服务仿真”中选择运动学或 Rapier 碰撞，再点击“连接本地世界服务”，即可让服务端以每秒 20 步为基准推进会话，界面优先通过 WebSocket 接收快照，断线时回退到 HTTP 轮询并尝试重连；支持暂停、倍速、故障与回放。在线进展页面仍是独立浏览器预览，不会连接本机服务。
 
 `POST /sessions` 创建会话，`sceneId` 可选 `industrial-park-v1`（默认）或 `industrial-park-parallel-v1`，`physicsMode` 可设为 `kinematic`（默认）或 `rapier`；响应一次性返回 `sessionId` 与 `adminToken`。后续管理请求使用 `Authorization: Bearer <adminToken>`，例如：
 
@@ -239,7 +245,7 @@ curl -X POST "http://127.0.0.1:8787/sessions/会话ID/step" -H 'Content-Type: ap
 
 ### 独立世界进程
 
-运行 `node server/world-supervisor.js`，仍从 `http://127.0.0.1:8787/` 访问页面与原有 HTTP、WebSocket、Python SDK、gRPC 网关。每次新建会话或从日志创建分支都会启动独立 Node 世界进程；该进程使用所选的 Rust／WASM 后端，只容纳一个会话。入口进程负责路由、配额、静态页面及已停止世界的日志读取，不推进世界。直接运行 `node server/world-server.js` 仍提供单进程调试服务。
+运行 `node server/world-supervisor.js`，仍从 `http://127.0.0.1:8787/` 访问页面与原有 World HTTP、WebSocket 和 gRPC 网关。按上面的命令启动 Control 供 Console 和 Agent 使用。每次新建会话或从日志创建分支都会启动独立 Node 世界进程；该进程使用所选的 Rust／WASM 后端，只容纳一个会话。入口进程负责路由、配额、静态页面及已停止世界的日志读取，不推进世界。直接运行 `node server/world-server.js` 仍提供单进程调试服务。
 
 默认同时最多 4 个世界进程，可用 `BOX_WORLD_WORKERS=8 node server/world-supervisor.js` 调整为 1–32；未释放的会话（含失败会话）总数最多 32。超出配额返回 429。创建失败或客户端在创建过程中断开会回收工作进程；删除活动会话会停止对应进程，其他会话保持运行。工作进程丢失入口 IPC 连接时自行退出，入口正常关闭也会清理子进程。
 
@@ -266,9 +272,9 @@ Python 构建依赖默认从[清华 PyPI 镜像](https://mirrors.tuna.tsinghua.e
 
 Linux 服务器通过代理联网时，需把代理传入 Docker 构建；代理监听宿主机 `127.0.0.1` 时还需处理构建网络。遇到 `Network is unreachable` 或下载超时，可按[构建网络与代理说明](docs/docker-build-network.md)先验证 Python 依赖阶段，再构建完整镜像。
 
-打开 `http://127.0.0.1:8787/`，点击“连接本地世界服务”。镜像会重新构建页面，默认启动独立世界进程入口，包含 Node 世界服务、Rapier WASM、Python SDK 及 WebSocket/gRPC 可选依赖；主机无需安装 Node、Python、Rust。默认使用 WASM 物理和 JavaScript 规则，可用 `BOX_WORLD_WORKERS` 配置进程数。首次构建需下载基础镜像和依赖；构建锁定 npm/Cargo 依赖，但基础镜像标签和 Python 可选依赖仍可变化，因此不保证镜像逐位复现。可通过 Dockerfile 的 `NODE_IMAGE`、`RUST_IMAGE` 构建参数指定镜像摘要。 镜像的 `third_party` 目录保存补充许可文本；原生镜像同时保留构建时下载的 Cargo 包许可、清单及锁文件。
+打开 `http://127.0.0.1:8787/`，点击“连接本地世界服务”。镜像会重新构建页面，Compose 启动 World 和 Control 两个服务。Agent HTTP 可从宿主机回环端口 8789 访问 Control，可用 `BOX_CONTROL_PORT` 调整宿主端口。镜像包含 Node 世界服务、Rapier WASM、Python SDK 及 WebSocket/gRPC 可选依赖；主机无需安装 Node、Python、Rust。默认使用 WASM 物理和 JavaScript 规则，可用 `BOX_WORLD_WORKERS` 配置进程数。首次构建需下载基础镜像和依赖；构建锁定 npm/Cargo 依赖，但基础镜像标签和 Python 可选依赖仍可变化，因此不保证镜像逐位复现。可通过 Dockerfile 的 `NODE_IMAGE`、`RUST_IMAGE` 构建参数指定镜像摘要。 镜像的 `third_party` 目录保存补充许可文本；原生镜像同时保留构建时下载的 Cargo 包许可、清单及锁文件。
 
-需要原生 Rust 物理、任务、通信与导航后端时使用 `BOX_IMAGE_TARGET=world-rust docker compose up --build -d`；每次重新创建该栈时沿用这个选择。原生模块在镜像内按目标架构编译，主机的 `.node` 和 `target` 不会进入构建上下文。默认只把 8787 发布到主机回环地址；端口冲突时可用 `BOX_HTTP_PORT=8877 docker compose up --build -d`，再打开相应本机端口。直接使用 Node 时仍默认只监听 `127.0.0.1`；`WORLD_BIND=0.0.0.0` 用于显式监听所有网卡。HTTP/WebSocket 支持域名与 IP 访问，并校验浏览器请求同源；HTTPS 反向代理及端口映射配置见[远程访问说明](docs/remote-access.md)。
+需要原生 Rust 物理、任务、通信与导航后端时使用 `BOX_IMAGE_TARGET=world-rust docker compose up --build -d`；每次重新创建该栈时沿用这个选择。原生模块在镜像内按目标架构编译，主机的 `.node` 和 `target` 不会进入构建上下文。World 的 8787 和 Control 的 8789 默认发布到主机回环地址。World 端口冲突时可用 `BOX_HTTP_PORT=8877 docker compose up --build -d`，再打开相应本机端口。直接使用 Node 时仍默认只监听 `127.0.0.1`；`WORLD_BIND=0.0.0.0` 用于显式监听所有网卡。HTTP/WebSocket 支持域名与 IP 访问，并校验浏览器请求同源；HTTPS 反向代理及端口映射配置见[远程访问说明](docs/remote-access.md)。
 
 默认按需启动独立 `runner` 容器，设备与指挥进程在其中各自使用凭据。它共享世界容器的网络命名空间，因此 SDK 仍访问本机地址；两者的进程与文件系统分开，执行器不挂载世界数据卷。下列命令使用内置参数（15 台设备、无故障、Rapier、包含回放），报告由主机保存：
 

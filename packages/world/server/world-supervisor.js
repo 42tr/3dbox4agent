@@ -4,11 +4,11 @@ const http=require('node:http'),crypto=require('node:crypto'),path=require('node
 const {WebSocket,WebSocketServer}=require('ws'),{createServer}=require('./world-server');
 const {requestOriginError}=require('./request-origin');
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,TOKEN=/^[A-Za-z0-9_-]{43}$/;
-function createSupervisor({maxWorkers=4,maxSessions=32,startTimeoutMs=10000,requestTimeoutMs=30000,worldOptions={}}={}){
+function createSupervisor({maxWorkers=4,maxSessions=32,startTimeoutMs=10000,requestTimeoutMs=30000,worldOptions={},controlUrl}={}){
  for(const [name,n,max] of [['worker limit',maxWorkers,32],['session limit',maxSessions,32],['startup timeout',startTimeoutMs,60000],['request timeout',requestTimeoutMs,120000]])if(!Number.isInteger(n)||n<1||n>max)throw Error('invalid '+name);
  const allowed=['maxHistoryBytes','catalogPath','physicsBackend','taskBackend','communicationBackend','navigationBackend','journalDir','replayJournal'];
  if(!worldOptions||typeof worldOptions!=='object'||Array.isArray(worldOptions)||Object.keys(worldOptions).some(k=>!allowed.includes(k)))throw Error('invalid worker options');
- const options=structuredClone(worldOptions),control=createServer(options),routes=new Map(),workers=new Set();
+ const options=structuredClone(worldOptions),control=createServer({...options,controlUrl}),routes=new Map(),workers=new Set();
  const wss=new WebSocketServer({noServer:true,maxPayload:8192,perMessageDeflate:false});let closing=false;
  function json(res,status,value){if(res.destroyed||res.writableEnded)return;res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(value))}
  function originAllowed(req){return requestOriginError(req)===null}

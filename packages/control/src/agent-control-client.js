@@ -11,7 +11,7 @@ class AgentControlError extends Error {
   }
 }
 
-function createHttpAgentClient({baseUrl = 'http://127.0.0.1:8787', sessionId, agentId, token, fetchImpl = globalThis.fetch} = {}) {
+function createHttpAgentClient({baseUrl = 'http://127.0.0.1:8789', sessionId, agentId, token, fetchImpl = globalThis.fetch} = {}) {
   const origin = new URL(baseUrl);
   if (origin.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(origin.hostname) || origin.username || origin.password || origin.pathname !== '/' && origin.pathname !== '' || origin.search || origin.hash) throw new TypeError('baseUrl must be an HTTP loopback origin');
   if (typeof fetchImpl !== 'function') throw new TypeError('Agent HTTP client requires fetch');

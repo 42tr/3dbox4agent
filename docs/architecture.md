@@ -61,7 +61,7 @@ Agent 层负责从观察生成动作：
 
 位置：`packages/console`。
 
-Console 只负责展示和人工操作：
+Console 负责展示和人工操作：
 
 - React 控制台、面板和样式；
 - Three.js 场景、镜头和模型；
@@ -102,7 +102,7 @@ World 只接受语义命令，不接受普通调用方直接改写位置、电�
 1. World Service：运行场景和仿真时钟，持有唯一世界状态，监听 World HTTP/WebSocket。
 2. Control Server：独立 Rust 进程，监听 Axum HTTP 和 RMCP MCP；它转发请求，不复制 World 状态。
 3. Agent Runtime：规则或 LLM 进程，通过 Control HTTP 或 MCP 读取观察并提交动作。
-4. Console：浏览器应用，通过 Control HTTP 提交人工命令；实时观察在迁移期间仍可使用 World WebSocket。
+4. Console：浏览器应用，通过 Control HTTP 提交人工命令；实时观察通过 World WebSocket。
 
 本地开发时可以把 Agent 逻辑嵌在任意宿主进程里，但它仍只能通过 Control
 协议访问 World。生产部署时四个单元可以分别扩缩容，Control 和 Agent 不需要
@@ -125,7 +125,7 @@ control-contracts ───────► Control Server
 - World 使用共享契约和服务端 Control 适配器；
 - Control Server 只调用 World 的公开 HTTP 接口；
 - Agent 通过 HTTP 或 RMCP 调用 Control Server；
-- Console 通过 HTTP 调用 Control Server；实时 WebSocket 在迁移期间仍兼容直连 World；
+- Console 通过同源 `/control` 调用 Control Server，实时 WebSocket 直连 World 的 `/stream`；
 - Agent 不依赖 Console；
 - World 不依赖 Agent 策略或 React/Three.js。
 
@@ -145,9 +145,9 @@ control-contracts ───────► Control Server
 - World 单体服务、Supervisor 和 Worker 入口已迁入 `packages/world/server`；
 - World Server、Rapier 适配器和构建脚本已优先读取迁移后的 World 模块；
 - Control 契约和独立 Rust Control Server 骨架；
-- Axum HTTP 代理与 `/health`；
+- Axum HTTP 代理与 `/health`，以及 Console 同源 `/control` 入口；
 - RMCP Streamable HTTP `/mcp` 及 Agent 工具；
-- 规则 Agent 端到端链路；
+- Agent 默认走 Control HTTP，已覆盖真实 HTTP/MCP 集成验证；
 - LLM Policy 基础适配器；
 - Console 入口和三维展示层迁入 `packages/console`；
 - 根目录兼容入口和单文件构建保持可用。
@@ -158,8 +158,6 @@ control-contracts ───────► Control Server
 - World 的实验报告、回放视图和剩余纯领域工具；
 - 根目录 World 入口现在只是兼容启动包装，后续可在调用方完成迁移后移除；
 - Console 面板依赖、纯视图模块和 3D 资源；
-- Agent 和 Console 从直连 World 迁移到 Control Server；
-- Control Server 的 HTTP/MCP 集成测试与部署配置；
 - 前端对 World 内部模块的剩余兼容链接。
 
 ## 开发规则

@@ -13,13 +13,15 @@ const Replay=require('../src/replay');
 const Recording=require('../src/recording-context');
 const PublicExperimentAssets=require('./public-experiment-assets');
 const {requestOriginError}=require('./request-origin');
+const {createControlForwarder}=require('../../control/src/control-http-forward');
 const SceneDiagnostics=require('../src/scene-diagnostics');
 const Delta=require('../src/delta');
 const StreamProtobuf=require('../src/stream-protobuf');
 const Journal=require('./event-journal');
 const {WebSocketServer,WebSocket}=require('ws');
 const MAX_SESSIONS=32, MAX_BODY=16384, MAX_STEPS=1000, MAX_FRAMES=2000, MAX_HISTORY_BYTES=16*1024*1024, STEP_MS=50;
-function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTES,catalogPath=path.join(__dirname,'../../../.3dbox/experiment-catalog.sqlite3'),physicsBackend=process.env.BOX_PHYSICS_BACKEND||'wasm',taskBackend=process.env.BOX_TASK_BACKEND||'js',communicationBackend=process.env.BOX_COMM_BACKEND||'js',navigationBackend=process.env.BOX_NAV_BACKEND||'js',journalDir=process.env.BOX_EVENT_JOURNAL_DIR||null,replayJournal=process.env.BOX_REPLAY_JOURNAL==='1',journalApi=Journal}={}){
+function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTES,catalogPath=path.join(__dirname,'../../../.3dbox/experiment-catalog.sqlite3'),physicsBackend=process.env.BOX_PHYSICS_BACKEND||'wasm',taskBackend=process.env.BOX_TASK_BACKEND||'js',communicationBackend=process.env.BOX_COMM_BACKEND||'js',navigationBackend=process.env.BOX_NAV_BACKEND||'js',journalDir=process.env.BOX_EVENT_JOURNAL_DIR||null,replayJournal=process.env.BOX_REPLAY_JOURNAL==='1',journalApi=Journal,controlUrl}={}){
+ const forwardControl=createControlForwarder(controlUrl);
  if(!Number.isInteger(maxSessions)||maxSessions<1||maxSessions>MAX_SESSIONS)throw Error('invalid session limit');
  if(!['wasm','rust'].includes(physicsBackend))throw Error('invalid physics backend');
  if(!['js','rust'].includes(taskBackend))throw Error('invalid task backend');
@@ -121,6 +123,7 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
   let mutationSession=null;
   try{
    const originError=requestOriginError(req);if(originError)return json(res,403,{error:originError});
+   if(forwardControl(req,res))return;
    const url=new URL(req.url,'http://localhost'),parts=url.pathname.split('/').filter(Boolean);
    if(PublicExperimentAssets.serve(req,res,url))return;
    if(req.method==='GET'&&url.pathname==='/'){const html=fs.readFileSync(path.join(__dirname,'../../../index.html'));res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});return res.end(html)}

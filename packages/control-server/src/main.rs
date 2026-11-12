@@ -1,10 +1,10 @@
-use std::{env, sync::Arc};
+use std::{env, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use axum::{
-    body::{Body, Bytes},
+    body::{Body, HttpBody},
     extract::State,
-    http::{header, request::Parts, HeaderMap, Method, Request, StatusCode, Uri},
+    http::{header, request::Parts, HeaderMap, Method, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -14,6 +14,7 @@ use reqwest::Client;
 use rmcp::{
     handler::server::tool::Extension,
     handler::server::wrapper::Parameters,
+    model::{CallToolResult, ContentBlock},
     schemars, tool,
     transport::{
         streamable_http_server::{
@@ -94,8 +95,8 @@ impl ControlTools {
         &self,
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<AgentReference>,
-    ) -> String {
-        let token = bearer_token(&parts);
+    ) -> CallToolResult {
+        let token = bearer_token(&parts.headers);
         self.request(
             Method::GET,
             format!(
@@ -103,7 +104,7 @@ impl ControlTools {
                 encode_path(&input.session_id),
                 encode_path(&input.agent_id)
             ),
-            token.as_deref(),
+            token,
             None,
         )
         .await
@@ -114,8 +115,8 @@ impl ControlTools {
         &self,
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<ActionRequest>,
-    ) -> String {
-        let token = bearer_token(&parts);
+    ) -> CallToolResult {
+        let token = bearer_token(&parts.headers);
         self.request(
             Method::POST,
             format!(
@@ -123,7 +124,7 @@ impl ControlTools {
                 encode_path(&input.session_id),
                 encode_path(&input.agent_id)
             ),
-            token.as_deref(),
+            token,
             Some(json!(input.action)),
         )
         .await
@@ -134,8 +135,8 @@ impl ControlTools {
         &self,
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<CancelActionRequest>,
-    ) -> String {
-        let token = bearer_token(&parts);
+    ) -> CallToolResult {
+        let token = bearer_token(&parts.headers);
         self.request(
             Method::POST,
             format!(
@@ -143,7 +144,7 @@ impl ControlTools {
                 encode_path(&input.session_id),
                 encode_path(&input.agent_id)
             ),
-            token.as_deref(),
+            token,
             Some(json!({ "requestId": input.request_id })),
         )
         .await
@@ -154,8 +155,8 @@ impl ControlTools {
         &self,
         Extension(parts): Extension<Parts>,
         Parameters(input): Parameters<MessageRequest>,
-    ) -> String {
-        let token = bearer_token(&parts);
+    ) -> CallToolResult {
+        let token = bearer_token(&parts.headers);
         let mut payload = json!({ "to": input.to, "text": input.text });
         if let Some(via) = input.via {
             payload["via"] = json!(via);
@@ -170,7 +171,7 @@ impl ControlTools {
                 encode_path(&input.session_id),
                 encode_path(&input.agent_id)
             ),
-            token.as_deref(),
+            token,
             Some(payload),
         )
         .await
@@ -184,16 +185,9 @@ impl ControlTools {
         path: String,
         token: Option<&str>,
         payload: Option<Value>,
-    ) -> String {
-        let token = token
-            .map(str::to_owned)
-            .or_else(|| self.default_token.as_deref().map(str::to_owned));
-        let Some(token) = token else {
-            return error_json(
-                StatusCode::UNAUTHORIZED,
-                "missing_agent_token",
-                "pass token or configure CONTROL_AGENT_TOKEN",
-            );
+    ) -> CallToolResult {
+        let Some(token) = token.or(self.default_token.as_deref()) else {
+            return tool_error(StatusCode::UNAUTHORIZED, "missing_agent_token");
         };
 
         let mut request = self
@@ -204,39 +198,38 @@ impl ControlTools {
             request = request.json(&payload);
         }
         match request.send().await {
-            Ok(response) => response_json(response).await,
-            Err(error) => error_json(
-                StatusCode::BAD_GATEWAY,
-                "world_unreachable",
-                &error.to_string(),
-            ),
+            Ok(response) => tool_response(response).await,
+            Err(_) => tool_error(StatusCode::BAD_GATEWAY, "world_unreachable"),
         }
     }
 }
 
-async fn response_json(response: reqwest::Response) -> String {
+async fn tool_response(response: reqwest::Response) -> CallToolResult {
     let status = response.status();
-    let body = response.text().await.unwrap_or_else(|error| {
-        json!({ "error": "invalid_world_response", "message": error.to_string() }).to_string()
-    });
+    let Ok(body) = response.text().await else {
+        return tool_error(StatusCode::BAD_GATEWAY, "world_response_failed");
+    };
+    let Ok(Value::Object(mut payload)) = serde_json::from_str(&body) else {
+        return tool_error(StatusCode::BAD_GATEWAY, "invalid_world_response");
+    };
     if status.is_success() {
-        body
-    } else if serde_json::from_str::<Value>(&body).is_ok() {
-        body
+        CallToolResult::success(vec![ContentBlock::text(body)])
     } else {
-        json!({ "error": "world_request_failed", "status": status.as_u16(), "message": body })
-            .to_string()
+        payload.insert("status".into(), json!(status.as_u16()));
+        CallToolResult::error(vec![ContentBlock::text(Value::Object(payload).to_string())])
     }
 }
 
-fn error_json(status: StatusCode, error: &str, message: &str) -> String {
-    json!({ "error": error, "status": status.as_u16(), "message": message }).to_string()
+fn tool_error(status: StatusCode, error: &str) -> CallToolResult {
+    CallToolResult::error(vec![ContentBlock::text(
+        json!({ "error": error, "status": status.as_u16() }).to_string(),
+    )])
 }
 
-fn bearer_token(parts: &Parts) -> Option<String> {
-    let value = parts.headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let token = value.strip_prefix("Bearer ")?.trim();
-    (!token.is_empty()).then(|| token.to_owned())
+    (!token.is_empty()).then_some(token)
 }
 
 fn encode_path(value: &str) -> String {
@@ -251,69 +244,73 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     })
 }
 
-async fn require_mcp_auth(request: Request<Body>, next: Next) -> Result<Response, StatusCode> {
-    let has_bearer = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|token| !token.trim().is_empty());
-    let has_default_token = env::var("CONTROL_AGENT_TOKEN")
-        .ok()
-        .is_some_and(|token| !token.trim().is_empty());
-    if has_bearer || has_default_token {
-        Ok(next.run(request).await)
+async fn require_mcp_auth(
+    State(has_default_token): State<bool>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let headers = request.headers();
+    let has_bearer = bearer_token(headers).is_some();
+    let use_default = has_default_token && !headers.contains_key(header::AUTHORIZATION);
+    if has_bearer || use_default {
+        next.run(request).await
     } else {
-        Err(StatusCode::UNAUTHORIZED)
+        http_error(StatusCode::UNAUTHORIZED, "missing_agent_token")
     }
 }
 
-async fn proxy(
-    State(state): State<AppState>,
-    method: Method,
-    uri: Uri,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    let target = format!("{}{}", state.world_url, uri);
-    let mut request = state.client.request(method, target);
-    for name in [header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT] {
-        if let Some(value) = headers.get(&name) {
-            request = request.header(name, value);
+fn http_error(status: StatusCode, error: &str) -> Response {
+    (
+        status,
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({ "error": error })),
+    )
+        .into_response()
+}
+
+async fn proxy(State(state): State<AppState>, inbound: Request<Body>) -> Response {
+    let (parts, body) = inbound.into_parts();
+    let route = if parts.method == Method::GET && parts.uri.path() == "/world/health" {
+        "/health"
+    } else {
+        parts.uri.path_and_query().map_or("/", |path| path.as_str())
+    };
+    let target = format!("{}{}", state.world_url, route);
+    let mut request = state.client.request(parts.method, target);
+    for name in [
+        header::AUTHORIZATION,
+        header::CONTENT_TYPE,
+        header::CONTENT_LENGTH,
+        header::ACCEPT,
+        header::HOST,
+        header::ORIGIN,
+    ] {
+        if let Some(value) = parts.headers.get(&name) {
+            request = request.header(name, value.clone());
         }
     }
-    if !body.is_empty() {
-        request = request.body(body);
+    if !body.is_end_stream() {
+        request = request.body(reqwest::Body::wrap_stream(body.into_data_stream()));
     }
     let response = match request.send().await {
         Ok(response) => response,
-        Err(error) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": "world_unreachable", "message": error.to_string() })),
-            )
-                .into_response()
-        }
+        Err(_) => return http_error(StatusCode::BAD_GATEWAY, "world_unreachable"),
     };
-    let status = response.status();
-    let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
-    let bytes = match response.bytes().await {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": "world_response_failed", "message": error.to_string() })),
-            )
-                .into_response()
+    let mut builder = Response::builder().status(response.status());
+    for name in [
+        header::CONTENT_TYPE,
+        header::CONTENT_LENGTH,
+        header::CACHE_CONTROL,
+        header::CONTENT_DISPOSITION,
+        header::X_CONTENT_TYPE_OPTIONS,
+    ] {
+        if let Some(value) = response.headers().get(&name) {
+            builder = builder.header(name, value);
         }
-    };
-    let mut builder = Response::builder().status(status);
-    if let Some(content_type) = content_type {
-        builder = builder.header(header::CONTENT_TYPE, content_type);
     }
     builder
-        .body(Body::from(bytes))
-        .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
+        .body(Body::from_stream(response.bytes_stream()))
+        .unwrap_or_else(|_| http_error(StatusCode::BAD_GATEWAY, "world_response_failed"))
 }
 
 fn env_or(name: &str, fallback: &str) -> String {
@@ -329,12 +326,14 @@ async fn main() -> anyhow::Result<()> {
     let world_url = env_or("WORLD_URL", "http://127.0.0.1:8787")
         .trim_end_matches('/')
         .to_string();
-    let bind = env_or("CONTROL_BIND", "127.0.0.1:8788");
+    let bind = env_or("CONTROL_BIND", "127.0.0.1:8789");
     let default_token = env::var("CONTROL_AGENT_TOKEN")
         .ok()
         .filter(|token| !token.trim().is_empty())
         .map(Arc::<str>::from);
-    let mut client_builder = Client::builder();
+    let mut client_builder = Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none());
     if is_loopback_world(&world_url) {
         client_builder = client_builder.no_proxy();
     }
@@ -343,6 +342,7 @@ async fn main() -> anyhow::Result<()> {
         client: client.clone(),
         world_url: Arc::<str>::from(world_url.clone()),
     };
+    let has_default_token = default_token.is_some();
     let tools = ControlTools {
         client,
         world_url: Arc::<str>::from(world_url.clone()),
@@ -354,9 +354,13 @@ async fn main() -> anyhow::Result<()> {
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default(),
     );
-    let mcp_router = Router::new()
-        .nest_service("/mcp", mcp_service)
-        .layer(middleware::from_fn(require_mcp_auth));
+    let mcp_router =
+        Router::new()
+            .nest_service("/mcp", mcp_service)
+            .layer(middleware::from_fn_with_state(
+                has_default_token,
+                require_mcp_auth,
+            ));
     let app = Router::new()
         .route("/health", get(health))
         .merge(mcp_router)
@@ -366,7 +370,10 @@ async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind(&bind)
         .await
         .with_context(|| format!("bind Control server at {bind}"))?;
-    tracing::info!(%bind, %world_url, "Control server listening");
+    let address = listener
+        .local_addr()
+        .context("read Control listen address")?;
+    tracing::info!(%address, %world_url, "Control server listening");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await

@@ -1,9 +1,16 @@
+from io import BytesIO
 import unittest
 from unittest.mock import patch
 from box_agent import AgentClient, SandboxError
 
 
 class TransportTest(unittest.TestCase):
+    def test_agent_defaults_to_control(self):
+        client = AgentClient('session', 'agent', 'token')
+        with patch('box_agent.client.urlopen', return_value=BytesIO(b'{"tick":0}')) as request:
+            self.assertEqual(client.observe(), {'tick': 0})
+        self.assertEqual(request.call_args.args[0].full_url, 'http://127.0.0.1:8789/sessions/session/observations/agent')
+
     def test_socket_timeouts_and_connection_resets_are_reported_as_transport_errors(self):
         client = AgentClient('session', 'agent', 'token')
         for error in (TimeoutError('timed out'), ConnectionResetError('reset')):

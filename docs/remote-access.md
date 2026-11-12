@@ -20,7 +20,7 @@ ports:
 需要重新构建并部署包含此修改的镜像，旧镜像中的代码不会随源码拉取而更新。沿用此前的构建网络／代理参数构建镜像，再按原打包流程导入目标服务器，并在部署目录执行：
 
 ```bash
-docker compose -p 3dbox4agent up --no-build --pull never --wait world
+docker compose -p 3dbox4agent up --no-build --pull never --wait control
 ```
 
 ## HTTPS 反向代理
@@ -48,9 +48,9 @@ location / {
 浏览器访问域名后点击“连接世界服务”。可先用以下命令确认域名已连接到新版服务：
 
 ```bash
-curl -fsS https://3dbox.42tr.cn/health
+curl -fsS https://3dbox.42tr.cn/control/world/health
 ```
 
 健康接口应返回 `"ok": true`；页面连接后，开发者工具中的 `/stream` 应完成 WebSocket 握手。若页面可打开，但浏览器 API 或 WebSocket 报 Origin 错误，应核对反向代理是否保留了外部域名的 Host。
 
-会话、管理员、观察者、设备与协调者继续按各自凭据访问。此变更提供同源远程访问，不新增登录或多用户账户系统。容器内 Python 执行器仍通过本机地址访问世界服务，Python SDK 的远程地址支持不在此次变更内。
+会话、管理员、观察者、设备与协调者继续按各自凭据访问。此变更提供同源远程访问，不新增登录或多用户账户系统。容器内 Python Agent 默认通过本机 8789 端口访问 Control。

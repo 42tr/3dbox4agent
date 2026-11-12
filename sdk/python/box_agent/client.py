@@ -5,6 +5,9 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 
+CONTROL_HTTP_ORIGIN = 'http://127.0.0.1:8789'
+
+
 class SandboxError(Exception):
     def __init__(self, status, code):
         self.status = status
@@ -13,7 +16,7 @@ class SandboxError(Exception):
 
 
 class AgentClient:
-    def __init__(self, session_id, agent_id, token, base_url='http://127.0.0.1:8787', timeout=5):
+    def __init__(self, session_id, agent_id, token, base_url=CONTROL_HTTP_ORIGIN, timeout=5):
         parsed = urlsplit(base_url)
         if parsed.scheme != 'http' or parsed.hostname not in ('127.0.0.1', 'localhost') or parsed.username or parsed.password or parsed.path not in ('', '/') or parsed.query or parsed.fragment:
             raise ValueError('base_url must be an HTTP loopback origin')
@@ -135,7 +138,7 @@ class AgentClient:
 
 class CoordinatorClient:
     """Scoped dispatch observations and decisions, without global snapshots."""
-    def __init__(self, session_id, token, base_url='http://127.0.0.1:8787', timeout=5):
+    def __init__(self, session_id, token, base_url=CONTROL_HTTP_ORIGIN, timeout=5):
         self._client = AgentClient(session_id, '_coordinator', token, base_url, timeout)
 
     def observe(self):

@@ -7,6 +7,7 @@ import time
 import uuid
 
 from box_agent import CoordinatorClient, SandboxError
+from box_agent.client import CONTROL_HTTP_ORIGIN
 from box_agent.planner import plan
 
 
@@ -44,7 +45,7 @@ def main():
         from box_agent.grpc_client import GrpcCoordinatorClient
         client = GrpcCoordinatorClient(os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], args.grpc_target)
     else:
-        client = CoordinatorClient(os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], os.environ.get('BOX_URL', 'http://127.0.0.1:8787'))
+        client = CoordinatorClient(os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], os.environ.get('BOX_URL', CONTROL_HTTP_ORIGIN))
     prefix = 'planner-' + uuid.uuid4().hex
     sequence = 0
     with ExitStack() as stack:
@@ -55,7 +56,7 @@ def main():
             reader = stack.enter_context(GrpcObservationReader(client, os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], None, args.grpc_target, args.poll, role='coordinator'))
         elif args.observe_stream:
             from box_agent.observation_reader import ObservationReader
-            reader = stack.enter_context(ObservationReader(client, os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], None, os.environ.get('BOX_URL', 'http://127.0.0.1:8787'), args.poll, role='coordinator'))
+            reader = stack.enter_context(ObservationReader(client, os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], None, os.environ.get('BOX_WORLD_URL', os.environ.get('BOX_URL', 'http://127.0.0.1:8787')), args.poll, role='coordinator'))
         else:
             reader = client
         while True:

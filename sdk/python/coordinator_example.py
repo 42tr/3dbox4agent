@@ -2,8 +2,9 @@
 import os
 import time
 from box_agent import CoordinatorClient
+from box_agent.client import CONTROL_HTTP_ORIGIN
 
-client = CoordinatorClient(os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], os.environ.get('BOX_URL', 'http://127.0.0.1:8787'))
+client = CoordinatorClient(os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], os.environ.get('BOX_URL', CONTROL_HTTP_ORIGIN))
 sequence = 0
 while True:
     obs = client.observe()

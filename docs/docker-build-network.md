@@ -54,8 +54,8 @@ tar -xzf 实际包名.tar.gz
 cd 实际包名
 sha256sum -c SHA256SUMS
 docker image load -i image.tar.gz
-docker compose -p 3dbox4agent up --no-build --pull never --wait world
-curl -fsS http://127.0.0.1:8787/health
+docker compose -p 3dbox4agent up --no-build --pull never --wait control
+curl -fsS http://127.0.0.1:8787/control/world/health
 ```
 
 目标服务器的 CPU 架构须与镜像一致，只需要 Docker Engine 和 Compose。包内 `.env` 已写入实际镜像名和平台，默认映射 `0.0.0.0:8787`；绑定地址、端口与世界并发数可在解压后修改。Compose 配置没有源码路径或 `build` 依赖，重启策略为 `unless-stopped`，世界服务默认上限为 2 CPU、2 GiB 内存。更完整的操作说明随包提供。

@@ -23,7 +23,7 @@ def main():
     args = parser.parse_args()
     target = 'world-rust' if args.native else 'world'
     name = '3dbox-smoke-' + uuid.uuid4().hex[:12]
-    env = {**os.environ, 'BOX_HTTP_PORT': '0', 'BOX_IMAGE_TARGET': target,
+    env = {**os.environ, 'BOX_HTTP_PORT': '0', 'BOX_CONTROL_PORT': '0', 'BOX_IMAGE_TARGET': target,
            'BOX_IMAGE_NAME': name, 'BOX_REPLAY_JOURNAL': '1'}
     compose = ['docker', 'compose', '-p', name, '-f', str(ROOT / 'compose.yaml')]
 
@@ -42,6 +42,17 @@ def main():
         raw = command(compose + operation + ['-c', code],
                       capture=True, data=json.dumps(payload), timeout=timeout)
         return json.loads(raw)
+
+    def check_recording_context(session, runtime):
+        context = session['recordingContext']
+        assert context['sessionId'] == session['sessionId']
+        assert context['runtime']['instanceId'] != runtime['instanceId']
+        assert context == exec_python('''
+import json, sys
+from box_agent.recording import capture_recording_context
+payload = json.load(sys.stdin)
+print(json.dumps(capture_recording_context(payload['session'], payload['runtime'])))
+''', {'session': {'sessionId': session['sessionId'], 'recordingContext': context}, 'runtime': runtime})
 
     print(f'Building isolated {target} stack', flush=True)
     try:
@@ -69,6 +80,8 @@ def main():
             return json.loads(body)
 
         health = required('/health')
+        assert required('/control/health')['service'] == 'control'
+        assert required('/control/world/health')['runtime'] == health['runtime']
         assert health['features']['worldProcessIsolation'] == 1
         runtime = health['runtime']
         assert runtime['physicsBackend'] == ('rust' if args.native else 'wasm')
@@ -92,17 +105,23 @@ def main():
         assert request('/policy-acceptance-codex-not-allowed.json')[0] == 404
         assert request('/health', headers={'Host': '3dbox.42tr.cn'})[0] == 200
         assert request('/health', headers={'Host': '3dbox.42tr.cn', 'Origin': 'https://3dbox.42tr.cn'})[0] == 200
-        assert request('/health', headers={'Host': 'bad@host'})[0] == 403
+        assert exec_python('''
+import http.client, json
+connection = http.client.HTTPConnection('127.0.0.1', 8787, timeout=5)
+try:
+    connection.request('GET', '/health', headers={'Host': 'bad@host'})
+    print(json.dumps(connection.getresponse().status))
+finally:
+    connection.close()
+''') == 403
         assert request('/health', headers={'Origin': 'https://invalid.invalid'})[0] == 403
 
-        session = required('/sessions', 'POST', {'seed': 42, 'physicsMode': 'rapier',
+        session = required('/control/sessions', 'POST', {'seed': 42, 'physicsMode': 'rapier',
                            **({'sensorMode': 'rapier'} if args.native else {})})
         sid, token = session['sessionId'], session['adminToken']
         root = '/sessions/' + sid
         context = session['recordingContext']
-        assert context['sessionId'] == sid
-        assert context['runtime']['instanceId'] != runtime['instanceId']
-        assert {k: v for k, v in context['runtime'].items() if k != 'instanceId'} == {k: v for k, v in runtime.items() if k != 'instanceId'}
+        check_recording_context(session, runtime)
         assert token not in json.dumps(context)
         assert required(root + '/recording-context', token=token)['recordingContext'] == context
         assert request(root + '/recording-context')[0] == 401
@@ -192,6 +211,7 @@ finally: gateway.stop(0).wait()
         assert address.startswith('127.0.0.1:'), address
         base = 'http://' + address
         restarted_runtime = required('/health')['runtime']
+        assert required('/control/world/health')['runtime'] == restarted_runtime
         assert restarted_runtime['instanceId'] != runtime['instanceId']
         assert request(root, token=token)[0] == 404
         journal = required('/event-journals/' + sid, token=token)
@@ -199,9 +219,7 @@ finally: gateway.stop(0).wait()
         fork = required('/event-journals/' + sid + '/fork', 'POST', {'revision': 3}, token)
         assert fork['world']['tick'] == 3 and not fork['running']
         branch_context = fork['recordingContext']
-        assert branch_context['sessionId'] == fork['sessionId']
-        assert branch_context['runtime']['instanceId'] != restarted_runtime['instanceId']
-        assert {k: v for k, v in branch_context['runtime'].items() if k != 'instanceId'} == {k: v for k, v in restarted_runtime.items() if k != 'instanceId'}
+        check_recording_context(fork, restarted_runtime)
         assert branch_context['forkedFrom']['sessionId'] == sid
         assert branch_context['forkedFrom']['revision'] == 3
         fork_root = '/sessions/' + fork['sessionId']

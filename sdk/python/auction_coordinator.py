@@ -1,6 +1,7 @@
 """One coordinator solicits bids over a designated agent's simulated peer link."""
 import argparse, json, math, os, sys, time, uuid
 from box_agent import AgentClient, CoordinatorClient, SandboxError
+from box_agent.client import CONTROL_HTTP_ORIGIN
 from auction_bidder import bid
 
 
@@ -29,7 +30,7 @@ def valid_bid(message, current):
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--poll',type=float,default=.03);p.add_argument('--wait-ticks',type=int,default=20);args=p.parse_args()
     if not .01<=args.poll<=1 or not 6<=args.wait_ticks<=200:p.error('invalid polling or auction window')
-    url=os.environ.get('BOX_URL','http://127.0.0.1:8787');session=os.environ['BOX_SESSION'];agent_id=os.environ['BOX_AGENT']
+    url=os.environ.get('BOX_URL',CONTROL_HTTP_ORIGIN);session=os.environ['BOX_SESSION'];agent_id=os.environ['BOX_AGENT']
     agent=AgentClient(session,agent_id,os.environ['BOX_TOKEN'],url);coordinator=CoordinatorClient(session,os.environ['BOX_COORDINATOR_TOKEN'],url)
     prefix=uuid.uuid4().hex[:8];number=0;current=None;seen=set()
     while True:

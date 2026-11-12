@@ -4,6 +4,7 @@ import os
 import time
 
 from box_agent import CoordinatorClient, SandboxError
+from box_agent.client import CONTROL_HTTP_ORIGIN
 
 
 def main():
@@ -15,7 +16,7 @@ def main():
     if not 0.01 <= args.poll <= 60 or not 1 <= args.max_age <= 10000:
         parser.error('poll must be 0.01–60 seconds and max-age 1–10000 ticks')
     client = CoordinatorClient(os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'],
-                               os.environ.get('BOX_URL', 'http://127.0.0.1:8787'))
+                               os.environ.get('BOX_URL', CONTROL_HTTP_ORIGIN))
     while True:
         obs = client.observe()
         session_error = obs.get('sessionError') or obs.get('simulationError')

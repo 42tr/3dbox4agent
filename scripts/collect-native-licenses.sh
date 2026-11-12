@@ -2,7 +2,8 @@
 set -eu
 
 # Copy the downloaded crates' notices and metadata before discarding build tools.
-native_license_root=/build/native-licenses
+native_license_root=${1:-/build/native-licenses}
+native_lock_file=${2:-/build/rust/physics/Cargo.lock}
 mkdir -p "$native_license_root"
 for native_crate_dir in "${CARGO_HOME:?}/registry/src/"*/*; do
     test -d "$native_crate_dir" || continue
@@ -18,5 +19,4 @@ for native_crate_dir in "${CARGO_HOME:?}/registry/src/"*/*; do
         cp -R "$native_notice" "$native_crate_destination/"
     done
 done
-cp /build/rust/physics/Cargo.lock "$native_license_root/Cargo.lock"
-test -s "$native_license_root/rapier3d-0.22.0/LICENSE"
+cp "$native_lock_file" "$native_license_root/Cargo.lock"

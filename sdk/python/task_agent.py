@@ -6,6 +6,7 @@ import time
 import uuid
 
 from box_agent import AgentClient, SandboxError
+from box_agent.client import CONTROL_HTTP_ORIGIN
 
 
 def main():
@@ -36,7 +37,7 @@ def main():
         from box_agent.grpc_client import GrpcAgentClient
         client = GrpcAgentClient(os.environ['BOX_SESSION'], os.environ['BOX_AGENT'], os.environ['BOX_TOKEN'], args.grpc_target)
     else:
-        client = AgentClient(os.environ['BOX_SESSION'], os.environ['BOX_AGENT'], os.environ['BOX_TOKEN'], os.environ.get('BOX_URL','http://127.0.0.1:8787'))
+        client = AgentClient(os.environ['BOX_SESSION'], os.environ['BOX_AGENT'], os.environ['BOX_TOKEN'], os.environ.get('BOX_URL',CONTROL_HTTP_ORIGIN))
     from box_agent.rescue_policy import RescuePolicy
     rescue_policy = RescuePolicy(max(10,args.lead_ticks), search=args.rescue_search) if args.auto_rescue else None
     prefix = 'task-' + uuid.uuid4().hex
@@ -51,7 +52,7 @@ def main():
             reader = stack.enter_context(GrpcObservationReader(client, os.environ['BOX_SESSION'], os.environ['BOX_TOKEN'], os.environ['BOX_AGENT'], args.grpc_target, args.poll, role='agent'))
         elif args.observe_stream:
             from box_agent.observation_reader import ObservationReader
-            reader = stack.enter_context(ObservationReader(client, os.environ['BOX_SESSION'], os.environ['BOX_TOKEN'], os.environ['BOX_AGENT'], os.environ.get('BOX_URL', 'http://127.0.0.1:8787'), args.poll))
+            reader = stack.enter_context(ObservationReader(client, os.environ['BOX_SESSION'], os.environ['BOX_TOKEN'], os.environ['BOX_AGENT'], os.environ.get('BOX_WORLD_URL', os.environ.get('BOX_URL', 'http://127.0.0.1:8787')), args.poll))
         else:
             reader = client
         while True:

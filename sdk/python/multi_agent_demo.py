@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
 from box_agent import AgentClient, CoordinatorClient
+from box_agent.client import CONTROL_HTTP_ORIGIN
 from planner_demo import SCENES
 from scene_input import load_scene_file
 from box_agent.recording import capture_recording_context
@@ -19,7 +20,8 @@ from box_agent.recording import capture_recording_context
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--url', default='http://127.0.0.1:8787')
+    parser.add_argument('--url', help='World origin for orchestration and WebSocket; also used for scoped HTTP unless --control-url is set')
+    parser.add_argument('--control-url', help='Control origin for scoped Agent and Coordinator HTTP')
     scene_choice = parser.add_mutually_exclusive_group()
     scene_choice.add_argument('--scene', choices=SCENES, default=SCENES[1])
     scene_choice.add_argument('--scene-file', type=Path, help='local scene JSON or YAML, at most 60 KB')
@@ -149,8 +151,11 @@ def main():
         if (scene_input is None and args.scene not in ('lunar-sampling-v1', 'lunar-outpost-v1')) or (scene_input is not None and (not isinstance(scene_input.get('tasks'), list) or sum(t.get('behavior') == 'sample' for t in scene_input['tasks'] if isinstance(t, dict)) != 1)):
             parser.error('--sample-followup requires a scene with one sample task')
         args.auto_report_samples = True
-    AgentClient('_','_','_',args.url)
-    base = args.url.rstrip('/')
+    world_url = args.url or 'http://127.0.0.1:8787'
+    control_url = args.control_url or args.url or CONTROL_HTTP_ORIGIN
+    AgentClient('_','_','_',world_url)
+    AgentClient('_','_','_',control_url)
+    base = world_url.rstrip('/')
     def request(path, method='GET', data=None, token=None):
         headers = {'content-type':'application/json'}
         if token:
@@ -189,13 +194,13 @@ def main():
             coord_tokens = [('coordinator', request(root+'/coordinator/credentials','POST',{},admin)['coordinatorToken'])]
         else:
             coord_tokens = [(f'node-{i+1}', request(root+f'/coordinators/node-{i+1}/credentials','POST',{},admin)['coordinatorToken']) for i in range(args.coordinators)]
-        coordinator = CoordinatorClient(session['sessionId'],coord_tokens[0][1],args.url)
+        coordinator = CoordinatorClient(session['sessionId'],coord_tokens[0][1],control_url)
         # Never inherit another 3DBOX role's token into a worker.
-        base_env = {k:v for k,v in os.environ.items() if k not in ('BOX_SESSION','BOX_TOKEN','BOX_COORDINATOR_TOKEN','BOX_AGENT','BOX_URL')}
+        base_env = {k:v for k,v in os.environ.items() if k not in ('BOX_SESSION','BOX_TOKEN','BOX_COORDINATOR_TOKEN','BOX_AGENT','BOX_URL','BOX_WORLD_URL')}
         def launch(name, script, env, arguments):
             log = tempfile.TemporaryFile(mode='w+t',encoding='utf-8')
             proc = subprocess.Popen([sys.executable,str(directory/script),*arguments],
-                                    env={**base_env,**env},stdout=log,stderr=subprocess.STDOUT)
+                                    env={**base_env,'BOX_URL':control_url,'BOX_WORLD_URL':world_url,**env},stdout=log,stderr=subprocess.STDOUT)
             children.append((name,proc,log))
             live_workers.add(proc)
             return proc
@@ -206,28 +211,28 @@ def main():
             live_coordinators.clear()
             for index, (name, coord_token) in enumerate(tokens):
                 if args.auction:
-                    proc = launch(name,'auction_coordinator.py',{'BOX_URL':args.url,'BOX_SESSION':session['sessionId'],'BOX_COORDINATOR_TOKEN':coord_token,'BOX_AGENT':auctioneer,'BOX_TOKEN':agent_credentials[auctioneer]},['--poll','0.03','--wait-ticks',str(max(20,2*session['scene']['communication']['delay']+8))])
+                    proc = launch(name,'auction_coordinator.py',{'BOX_SESSION':session['sessionId'],'BOX_COORDINATOR_TOKEN':coord_token,'BOX_AGENT':auctioneer,'BOX_TOKEN':agent_credentials[auctioneer]},['--poll','0.03','--wait-ticks',str(max(20,2*session['scene']['communication']['delay']+8))])
                 elif policy:
-                    proc = launch(name,'policy_coordinator.py',{'BOX_URL':args.url,'BOX_SESSION':session['sessionId'],
+                    proc = launch(name,'policy_coordinator.py',{'BOX_SESSION':session['sessionId'],
                                                                  'BOX_COORDINATOR_TOKEN':coord_token},['--poll','0.03','--protocol',str(args.policy_protocol),'--policy',str(policy),'--timeout',str(args.policy_timeout),'--max-calls',str(args.max_policy_calls),'--max-errors',str(args.max_policy_errors)]+(['--trace'] if args.trace_decisions else [])+(['--trace-model-output'] if args.trace_model_output else [])+(['--observe-stream'] if args.observe_stream else [])+(['--grpc-observe-stream'] if args.grpc_observe_stream else [])+(['--grpc-target',args.coordinator_grpc_target] if args.coordinator_grpc_target else []))
                 elif args.sample_followup:
-                    proc = launch(name,'policy_coordinator.py',{'BOX_URL':args.url,'BOX_SESSION':session['sessionId'],
+                    proc = launch(name,'policy_coordinator.py',{'BOX_SESSION':session['sessionId'],
                                                                  'BOX_COORDINATOR_TOKEN':coord_token},['--poll','0.03','--protocol','2','--max-calls','1000','--policy',str(directory/'evidence_policy.py')]+(['--observe-stream'] if args.observe_stream else [])+(['--grpc-observe-stream'] if args.grpc_observe_stream else [])+(['--grpc-target',args.coordinator_grpc_target] if args.coordinator_grpc_target else []))
                 else:
-                    proc = launch(name,'planner_coordinator.py',{'BOX_URL':args.url,'BOX_SESSION':session['sessionId'],
+                    proc = launch(name,'planner_coordinator.py',{'BOX_SESSION':session['sessionId'],
                                                                   'BOX_COORDINATOR_TOKEN':coord_token},['--poll','0.03','--shard-count',str(len(tokens)),'--shard-index',str(index)]+(['--observe-stream'] if args.observe_stream else [])+(['--grpc-observe-stream'] if args.grpc_observe_stream else [])+(['--grpc-target',args.coordinator_grpc_target] if args.coordinator_grpc_target else []))
                 live_coordinators[name] = proc
                 coordinator_starts += 1
         start_coordinators(coord_tokens)
         for agent in session['world']['agents']:
             token = agent_credentials[agent['id']] if args.auction else request(root+'/agents/'+agent['id']+'/credentials','POST',{},admin)['agentToken']
-            launch(agent['id'],'task_agent.py',{'BOX_URL':args.url,'BOX_SESSION':session['sessionId'],
+            launch(agent['id'],'task_agent.py',{'BOX_SESSION':session['sessionId'],
                                                'BOX_AGENT':agent['id'],'BOX_TOKEN':token},['--poll','0.03','--lead-ticks',('10' if args.clock=='realtime' and args.sample_followup else '1')] + (['--auto-charge'] if args.auto_charge else []) + (['--preempt-for-charge'] if args.preempt_for_charge else []) + (['--auto-rescue'] if args.auto_rescue else []) + (['--rescue-search'] if args.rescue_search else []) + (['--auto-report-samples'] if args.auto_report_samples else []) + (['--observe-stream'] if args.observe_stream else [])+(['--grpc-observe-stream'] if args.grpc_observe_stream else []) + (['--grpc-target',args.agent_grpc_target] if args.agent_grpc_target else []))
 
         if args.auction:
             for agent in session['world']['agents']:
                 if agent['id'] != auctioneer:
-                    launch('bidder-'+agent['id'],'auction_bidder.py',{'BOX_URL':args.url,'BOX_SESSION':session['sessionId'],'BOX_AGENT':agent['id'],'BOX_TOKEN':agent_credentials[agent['id']]},['--auctioneer',auctioneer,'--poll','0.03'])
+                    launch('bidder-'+agent['id'],'auction_bidder.py',{'BOX_SESSION':session['sessionId'],'BOX_AGENT':agent['id'],'BOX_TOKEN':agent_credentials[agent['id']]},['--auctioneer',auctioneer,'--poll','0.03'])
 
         if args.clock == 'realtime':
             request(root+'/run','POST',{'speed':args.speed},admin)
@@ -302,7 +307,7 @@ def main():
                 if args.reconfigure_delay_ms:
                     time.sleep(args.reconfigure_delay_ms/1000)
                 coord_tokens = [(name, request(root+f'/coordinators/{name}/credentials','POST',{},admin)['coordinatorToken']) for name in survivors]
-                coordinator = CoordinatorClient(session['sessionId'],coord_tokens[0][1],args.url)
+                coordinator = CoordinatorClient(session['sessionId'],coord_tokens[0][1],control_url)
                 start_coordinators(coord_tokens)
                 observed = request(root,token=admin)
                 control_events.append({'kind':'coordinator_shards_reassigned','tick':observed['world']['tick'],'coordinatorIds':survivors,'elapsedMs':round((time.monotonic()-recovery_start)*1000,3),

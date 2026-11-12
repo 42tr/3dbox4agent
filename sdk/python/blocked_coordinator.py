@@ -5,6 +5,7 @@ import time
 import uuid
 
 from box_agent import CoordinatorClient, SandboxError
+from box_agent.client import CONTROL_HTTP_ORIGIN
 
 
 def blocked_assignment(observation, minimum):
@@ -28,7 +29,7 @@ def main():
     args=parser.parse_args()
     if not .01<=args.poll<=60 or not 0<=args.min_blocked_ticks<=10000:
         parser.error('invalid polling interval or blocked duration')
-    client=CoordinatorClient(os.environ['BOX_SESSION'],os.environ['BOX_COORDINATOR_TOKEN'],os.environ.get('BOX_URL','http://127.0.0.1:8787'))
+    client=CoordinatorClient(os.environ['BOX_SESSION'],os.environ['BOX_COORDINATOR_TOKEN'],os.environ.get('BOX_URL',CONTROL_HTTP_ORIGIN))
     prefix='blocked-'+uuid.uuid4().hex;sequence=0
     while True:
         observation=client.observe()

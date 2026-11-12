@@ -21,6 +21,8 @@ RUN --mount=type=cache,id=3dbox-npm-downloads,target=/root/.npm,sharing=locked \
     npm ci
 COPY build.py ./
 COPY src ./src
+COPY packages/console ./packages/console
+COPY packages/world ./packages/world
 COPY examples ./examples
 COPY assets/mission-control ./assets/mission-control
 RUN npm run build && npm prune --omit=dev
@@ -46,6 +48,17 @@ FROM python-dependencies AS python-build
 COPY sdk/python ./sdk/python
 RUN /opt/box-agent/bin/pip install --no-index --no-deps --no-build-isolation './sdk/python[grpc-stream]'
 
+FROM ${RUST_IMAGE} AS control-build
+WORKDIR /build
+ARG TARGETARCH
+COPY packages/control-server ./control-server
+COPY scripts/collect-native-licenses.sh ./collect-native-licenses.sh
+RUN --mount=type=cache,id=3dbox-control-cargo-registry,target=/var/cache/box-cargo,sharing=locked \
+    --mount=type=cache,id=3dbox-control-cargo-target-${TARGETARCH},target=/build/control-server/target,sharing=locked \
+    CARGO_HOME=/var/cache/box-cargo cargo build --release --locked --jobs 1 --manifest-path control-server/Cargo.toml \
+    && cp control-server/target/release/threebox-control-server /build/threebox-control-server \
+    && CARGO_HOME=/var/cache/box-cargo sh ./collect-native-licenses.sh /build/control-licenses /build/control-server/Cargo.lock
+
 FROM ${RUST_IMAGE} AS native-build
 WORKDIR /build
 ARG TARGETARCH
@@ -55,15 +68,22 @@ RUN --mount=type=cache,id=3dbox-cargo-registry,target=/var/cache/box-cargo,shari
     --mount=type=cache,id=3dbox-cargo-target-${TARGETARCH},target=/build/rust/physics/target,sharing=locked \
     CARGO_HOME=/var/cache/box-cargo cargo build --release --locked --jobs 1 --manifest-path rust/physics/Cargo.toml \
     && cp rust/physics/target/release/libbox_physics.so /build/box_physics.node \
-    && CARGO_HOME=/var/cache/box-cargo sh ./collect-native-licenses.sh
+    && CARGO_HOME=/var/cache/box-cargo sh ./collect-native-licenses.sh \
+    && test -s /build/native-licenses/rapier3d-0.22.0/LICENSE
 
 # Default Compose target. Compilers and local runtime data stay outside this image.
 FROM base AS world
 COPY --from=web-build /app/node_modules ./node_modules
 COPY --from=web-build /app/index.html ./index.html
 COPY --from=python-build /opt/box-agent /opt/box-agent
+COPY --from=control-build /build/threebox-control-server /usr/local/bin/threebox-control-server
+COPY --from=control-build /build/control-licenses ./third_party/control
 COPY package.json package-lock.json ./
 COPY src ./src
+COPY packages/agent ./packages/agent
+COPY packages/console ./packages/console
+COPY packages/control ./packages/control
+COPY packages/world ./packages/world
 COPY server ./server
 COPY scripts ./scripts
 COPY third_party ./third_party

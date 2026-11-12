@@ -7,6 +7,7 @@ services:
     init: true
     ports:
       - "127.0.0.1:${BOX_HTTP_PORT:-8787}:8787"
+      - "127.0.0.1:${BOX_CONTROL_PORT:-8789}:8789"
     environment:
       BOX_REPLAY_JOURNAL: ${BOX_REPLAY_JOURNAL:-1}
       BOX_WORLD_WORKERS: ${BOX_WORLD_WORKERS:-4}
@@ -21,12 +22,30 @@ services:
       - no-new-privileges:true
     pids_limit: 1024
     stop_grace_period: 10s
+  control:
+    image: ${BOX_IMAGE_NAME:-3dbox4agent-local}:${BOX_IMAGE_TARGET:-world}
+    pull_policy: never
+    network_mode: service:world
+    depends_on:
+      world:
+        condition: service_healthy
+    init: true
+    entrypoint: ["/usr/local/bin/threebox-control-server"]
+    environment:
+      CONTROL_BIND: 0.0.0.0:8789
+    read_only: true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8789/world/health',{signal:AbortSignal.timeout(3000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
   runner:
     image: ${BOX_IMAGE_NAME:-3dbox4agent-local}:${BOX_IMAGE_TARGET:-world}
     profiles:
       - experiments
     depends_on:
       world:
+        condition: service_healthy
+      control:
         condition: service_healthy
     # Keep the scoped SDK's loopback transport while separating process/filesystem state.
     network_mode: service:world

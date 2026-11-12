@@ -1,5 +1,9 @@
 # 3DBox Python SDK
 
+`AgentClient` and `CoordinatorClient` default to Control at `http://127.0.0.1:8789`.
+`ObservationStream` connects to World at `http://127.0.0.1:8787`.
+In `multi_agent_demo.py`, use `--url` to set the World origin and `--control-url` to set the scoped HTTP origin. When only `--url` is supplied, both use that origin.
+
 `box_agent` contains standard-library clients for a local 3DBox world service.
 
 ```python
