@@ -8,7 +8,12 @@
 
 ## 世界运行时层
 
-`packages/world/src/world-core.js` 保存无头世界规则；根目录 `src/world-core.js` 只保留兼容入口。`packages/world/src/world-runtime.js` 是它对上层暴露的运行时端口，根目录 `src/world-runtime.js` 只保留兼容入口。端口只负责创建世界、推进仿真、读取观察、提交语义操作和释放世界，不依赖 HTTP、React、Three.js 或 Agent 策略。`src/engine.js` 仅保留给旧调用方的兼容入口。
+`packages/world/src` 保存无头世界规则、主要领域组件和场景／流协议；根目录
+`src/world-core.js` 以及已迁移模块的同名文件只保留兼容入口。
+`packages/world/src/world-runtime.js` 是它对上层暴露的运行时端口，根目录
+`src/world-runtime.js` 只保留兼容入口。端口只负责创建世界、推进仿真、读取观察、
+提交语义操作和释放世界，不依赖 HTTP、React、Three.js 或 Agent 策略。
+`src/engine.js` 仅保留给旧调用方的兼容入口。
 
 JavaScript/WASM 与 Rust 原生后端都是该端口的实现细节。上层不应根据 `physicsBackend` 分支，后端差异应由服务端绑定阶段消化。
 

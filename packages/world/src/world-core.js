@@ -1,17 +1,17 @@
 /* Shared deterministic world model. One step is one simulation tick. */
 (function(root){
 'use strict';
-const Nav=typeof module!=='undefined'?require('../../../src/navigation'):root.SandboxNavigation;
-const Sensors=typeof module!=='undefined'?require('../../../src/sensors'):root.SandboxSensors;
-const Elevation=typeof module!=='undefined'?require('../../../src/elevation'):root.SandboxElevation;
-const Surface=typeof module!=='undefined'?require('../../../src/surface-domain'):root.SandboxSurfaceDomain;
-const Thermal=typeof module!=='undefined'?require('../../../src/thermal'):root.SandboxThermal;
-const Power=typeof module!=='undefined'?require('../../../src/operating-power'):root.SandboxOperatingPower;
-const Echelons=typeof module!=='undefined'?require('../../../src/echelons'):root.SandboxEchelons;
-const Materials=typeof module!=='undefined'?require('../../../src/materials'):root.SandboxMaterials;
-const Relay=typeof module!=='undefined'?require('../../../src/relay'):root.SandboxRelay;
-const Construction=typeof module!=='undefined'?require('../../../src/construction'):root.SandboxConstruction;
-const Rescue=typeof module!=='undefined'?require('../../../src/rescue'):root.SandboxRescue;
+const Nav=typeof module!=='undefined'?require('./navigation'):root.SandboxNavigation;
+const Sensors=typeof module!=='undefined'?require('./sensors'):root.SandboxSensors;
+const Elevation=typeof module!=='undefined'?require('./elevation'):root.SandboxElevation;
+const Surface=typeof module!=='undefined'?require('./surface-domain'):root.SandboxSurfaceDomain;
+const Thermal=typeof module!=='undefined'?require('./thermal'):root.SandboxThermal;
+const Power=typeof module!=='undefined'?require('./operating-power'):root.SandboxOperatingPower;
+const Echelons=typeof module!=='undefined'?require('./echelons'):root.SandboxEchelons;
+const Materials=typeof module!=='undefined'?require('./materials'):root.SandboxMaterials;
+const Relay=typeof module!=='undefined'?require('./relay'):root.SandboxRelay;
+const Construction=typeof module!=='undefined'?require('./construction'):root.SandboxConstruction;
+const Rescue=typeof module!=='undefined'?require('./rescue'):root.SandboxRescue;
 const thermalQueues=new WeakMap();
 const MEMORY_TTL=30;
 // Native query adapters are runtime-only: snapshots contain the model name, not handles.

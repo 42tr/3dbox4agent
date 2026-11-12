@@ -1,7 +1,3 @@
-/* Current peer-to-peer message hops, not a prediction of delivery. */
-(function(root){
 'use strict';
-const Sensors=typeof module!=='undefined'?require('./sensors'):root.SandboxSensors;
-function activeHops(s){const network=s.communication,agents=new Map(s.agents.map(a=>[a.id,a]));return (network.queue||[]).map(packet=>{const hop=packet.hop??0,route=[packet.from,...(packet.via||[]),packet.to],from=agents.get(route[hop]),to=agents.get(route[hop+1]);if(!from||!to)return null;const distance=Math.hypot(from.x-to.x,from.y-to.y),range=Math.min(from.communicationRange??network.config.range,to.communicationRange??network.config.range),outages=network.outages||[];let status='in_range';if(from.disabled||to.disabled)status='unavailable';else if(outages.some(o=>(o.agentId===from.id||o.agentId===to.id)&&s.tick<=o.untilTick))status='interrupted';else if(distance>range)status='out_of_range';else if(network.config.lineOfSight&&!Sensors.visible(Sensors.position(from,s.heightfield),Sensors.position(to,s.heightfield),Infinity,(s.roadblocks||[]).length?s.obstacles.concat(s.roadblocks):s.obstacles,s.heightfield))status='obstructed';return {id:packet.id,hop:hop+1,totalHops:route.length-1,from:from.id,to:to.id,fromName:from.name,toName:to.name,fromX:from.x,fromY:from.y,toX:to.x,toY:to.y,fromAir:(from.mobility??(from.role==='drone'?'air':'ground'))==='air',toAir:(to.mobility??(to.role==='drone'?'air':'ground'))==='air',distance,range,status,bytesPerTick:from.communicationBytesPerTick??network.config.bytesPerTick??null,txRemaining:packet.txRemaining??null,dueTick:packet.dueTick,expiresTick:packet.expiresTick}}).filter(Boolean)}
-const api={activeHops};if(typeof module!=='undefined')module.exports=api;else root.SandboxLinks=api;
-})(typeof globalThis!=='undefined'?globalThis:this);
+// Compatibility entry point. The World implementation lives in packages/world.
+module.exports = require('../packages/world/src/links');
