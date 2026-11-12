@@ -2,6 +2,7 @@
 node_modules/
 .3dbox/
 rust/physics/target/
+packages/control-server/target/
 
 # Python environments and caches
 __pycache__/

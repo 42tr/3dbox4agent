@@ -2,7 +2,9 @@
 
 当前设计的完整说明见 [`architecture.md`](architecture.md)；本文保留分层接口和迁移边界的快速参考。
 
-当前代码按三个稳定边界逐步整理，并在单一 Git 仓库内用 `packages/` 分目录。第一阶段只增加适配层，不改变世界规则、快照格式或后端行为。
+当前代码按 World、Control、Agent、Console 四个边界逐步整理，并在单一 Git
+仓库内用 packages/ 分目录。Control 已经是独立 Rust 应用，不改变世界规则、
+快照格式或后端行为。
 
 ## 世界运行时层
 
@@ -12,7 +14,9 @@ JavaScript/WASM 与 Rust 原生后端都是该端口的实现细节。上层不�
 
 ## 控制与能力层
 
-`packages/control/src/control-contracts.js` 定义 Action、Observation 的共享信封校验，`packages/world/src/control-api.js` 将运行时能力暴露成稳定的语义接口；根目录同名文件只保留兼容入口：
+packages/control/src/control-contracts.js 定义 Action、Observation 的共享信封校验；
+packages/control-server 使用 Axum 提供 HTTP、使用 RMCP 提供 MCP，转发到 World；
+packages/world/src/control-api.js 将运行时能力落到运行时；根目录同名文件只保留兼容入口：
 
 - 读取单体观察；
 - 提交移动、扫描、补能、任务、救援意图；
@@ -20,13 +24,17 @@ JavaScript/WASM 与 Rust 原生后端都是该端口的实现细节。上层不�
 - 发送设备消息；
 - 提交任务分配。
 
-该层校验请求信封，运行时继续执行权威校验。HTTP、WebSocket、Python SDK、gRPC 和 React 控件都应成为这层的适配器，不应直接修改世界对象。
+该层校验请求信封，运行时继续执行权威校验。任何语言直接使用 HTTP，Agent
+也可以使用 MCP；WebSocket 在迁移期间仍由 World 提供兼容入口。调用方不需要
+安装语言客户端 SDK，也不应直接修改世界对象。
 
 ## Agent 策略层
 
 `packages/agent/src/agent-runtime.js` 只定义观察到决策的循环。规则函数、规划器和 LLM 适配器都实现 `policy.decide(observation, context)`，返回一个或多个语义动作。策略不能取得世界对象、Three.js 场景或后端句柄。
 
-`packages/control/src/agent-control-client.js` 提供带设备凭据的 HTTP 适配器；`createClientAgentRuntime()` 将它接入同一策略循环。规则 Agent 和 LLM Agent 因此共享观察、动作校验、权限隔离和服务端回放路径。
+现有 packages/control/src/agent-control-client.js 只作为迁移期间的兼容适配器；
+新 Agent 通过 Control HTTP 或 MCP 接入同一策略循环。规则 Agent 和 LLM Agent
+因此共享观察、动作校验、权限隔离和服务端回放路径。
 
 `packages/agent/src/llm-policy.js` 只负责把外部模型调用转换为严格的 `{actions: [...]}` JSON。模型供应商由调用方注入 `complete()`；适配器负责 schema、输出大小、动作数量和超时，动作仍由控制 API 和世界运行时最终校验。
 
@@ -35,7 +43,7 @@ LLM 的请求、模型输出、超时和拒绝应由策略适配器记录；动�
 ## 数据流
 
 ```text
-Agent policy -> semantic action -> Control API -> World runtime
+Agent policy -> HTTP / MCP -> Control Server -> World runtime
        ^                                      |
        +--------- observation/event ----------+
                          |

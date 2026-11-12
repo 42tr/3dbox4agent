@@ -1,6 +1,8 @@
 # 3DBox 多智能体沙盒原型
 
-分层架构说明见 [`docs/layers.md`](docs/layers.md)：世界运行时、语义控制 API 与 Agent 策略通过稳定接口逐步拆分；仓库内的迁移目录见 [`packages/`](packages/README.md)。
+分层架构说明见 [`docs/layers.md`](docs/layers.md)：World、独立 Rust Control
+（Axum HTTP + RMCP MCP）、Agent 和 Console 通过稳定接口逐步拆分；仓库内的迁移目录见
+[`packages/`](packages/README.md)。
 
 
 ### 月球基地任务控制台（进度 292）

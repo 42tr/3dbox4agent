@@ -25,17 +25,23 @@ World 是唯一的世界真值来源，负责：
 
 ### Control
 
-位置：`packages/control`，以及 World 内的服务端控制适配器。
+位置：契约在 `packages/control`，独立服务在 `packages/control-server`。
 
-Control 定义跨层契约并提供访问方式：
+Control 是独立的边界应用，不持有世界真值。它定义并提供：
 
 - Action、Observation 和错误信封；
 - Agent、协调者、管理员的权限边界；
-- HTTP/WebSocket/gRPC 传输；
+- Axum HTTP 接口，供任何语言直接调用；
+- RMCP Streamable HTTP 接口，供 Agent 通过 MCP 调用；
 - 请求 ID、幂等、过期观察和重试语义；
-- JS/HTTP 客户端和 Python SDK。
+- 到 World 服务的认证头转发和统一错误响应。
 
-`packages/control/src/control-contracts.js` 不拥有世界状态。`packages/world/src/control-api.js` 将语义能力转给 World；两者不能让调用方绕过 World 的权威校验。
+`packages/control/src/control-contracts.js` 不拥有世界状态。`packages/control-server` 使用
+HTTP 代理把请求交给 World；`packages/world/src/control-api.js` 仍负责把语义能力
+落到 World 运行时。调用方不需要安装 JS、Python 或其他语言客户端 SDK。
+
+Control 的 MCP 工具从请求的 `Authorization: Bearer <agent-token>` 读取 Agent 凭据，
+并把它转发给 World。这样 HTTP 和 MCP 共享同一套会话权限与审计边界。
 
 ### Agent
 
@@ -73,9 +79,9 @@ Console 不直接调用 `world-core` 修改状态。它通过 Control 接口提�
 Rule / LLM Policy
         │ observation / action
         ▼
-Agent Runtime ── Control Client ── HTTP / WebSocket / gRPC
+Agent Runtime ── HTTP / MCP ──► Control Server
                                       │
-                                      ▼
+Console ───────── HTTP ──────►         ▼
                               World Service
                                       │
                                       ▼
@@ -89,22 +95,37 @@ Agent Runtime ── Control Client ── HTTP / WebSocket / gRPC
 
 World 只接受语义命令，不接受普通调用方直接改写位置、电量、任务状态或事件历史。一次动作是否完成由 World 在目标 tick 中决定。
 
+## 运行单元
+
+当前部署可以拆成四个运行单元：
+
+1. World Service：运行场景和仿真时钟，持有唯一世界状态，监听 World HTTP/WebSocket。
+2. Control Server：独立 Rust 进程，监听 Axum HTTP 和 RMCP MCP；它转发请求，不复制 World 状态。
+3. Agent Runtime：规则或 LLM 进程，通过 Control HTTP 或 MCP 读取观察并提交动作。
+4. Console：浏览器应用，通过 Control HTTP 提交人工命令；实时观察在迁移期间仍可使用 World WebSocket。
+
+本地开发时可以把 Agent 逻辑嵌在任意宿主进程里，但它仍只能通过 Control
+协议访问 World。生产部署时四个单元可以分别扩缩容，Control 和 Agent 不需要
+链接 Rust 或 JavaScript SDK。
+
 ## 依赖方向
 
 ```text
-control-contracts
-       ▲
-       │
-World service ◄── Control client ◄── Agent runtime / Python SDK
-       ▲                                  ▲
-       └──────────── Console client ──────┘
+control-contracts ───────► Control Server
+                                  │ HTTP
+                                  ▼
+                           World Service
+                                  ▲
+                                  │ HTTP / WS
+                              Console
 ```
 
 允许的关系：
 
 - World 使用共享契约和服务端 Control 适配器；
-- Agent 使用 Control Client；
-- Console 使用 Control Client 和只读快照；
+- Control Server 只调用 World 的公开 HTTP 接口；
+- Agent 通过 HTTP 或 RMCP 调用 Control Server；
+- Console 通过 HTTP 调用 Control Server；实时 WebSocket 在迁移期间仍兼容直连 World；
 - Agent 不依赖 Console；
 - World 不依赖 Agent 策略或 React/Three.js。
 
@@ -119,8 +140,9 @@ World service ◄── Control client ◄── Agent runtime / Python SDK
 已完成：
 
 - World Core 与运行时端口；
-- Control 契约和服务端控制适配；
-- HTTP Agent Client；
+- Control 契约和独立 Rust Control Server 骨架；
+- Axum HTTP 代理与 `/health`；
+- RMCP Streamable HTTP `/mcp` 及 Agent 工具；
 - 规则 Agent 端到端链路；
 - LLM Policy 基础适配器；
 - Console 入口和三维展示层迁入 `packages/console`；
@@ -130,7 +152,8 @@ World service ◄── Control client ◄── Agent runtime / Python SDK
 
 - World 的 Rust、server、场景和领域模块；
 - Console 面板依赖、纯视图模块和 3D 资源；
-- Python SDK 与 Control 包的独立发布配置；
+- Agent 和 Console 从直连 World 迁移到 Control Server；
+- Control Server 的 HTTP/MCP 集成测试与部署配置；
 - 前端对 World 内部模块的剩余兼容链接。
 
 ## 开发规则
@@ -144,6 +167,7 @@ npm run test:world-core
 npm run test:layers
 npm run test:agent-http
 npm run test:llm-policy
+npm run test:control-server
 npm run typecheck:ui
 npm run build
 ```

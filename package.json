@@ -19,6 +19,7 @@
     "test:world-core": "node tests/world-core-compat.test.js",
     "test:agent-http": "node tests/agent-runtime-http.test.js",
     "test:llm-policy": "node tests/llm-policy.test.js",
+    "test:control-server": "cargo check --manifest-path packages/control-server/Cargo.toml",
     "test:container": "python3 tests/container_smoke.py",
     "test:container-rust": "python3 tests/container_smoke.py --native",
     "typecheck:ui": "tsc -p tsconfig.mission-control.json",
