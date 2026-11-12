@@ -2,7 +2,7 @@ from pathlib import Path
 import json
 import subprocess
 html = Path('src/app.html').read_text()
-engine = Path('src/echelons.js').read_text()+'\n'+Path('src/engine.js').read_text().replace('/* SHORE_RESCUE_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-rescue.json').read_text()), ensure_ascii=True)).replace('/* SHORE_ECHELONS_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-echelons.json').read_text()), ensure_ascii=True)).replace('/* SHORE_SEA_STATE_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-sea-state.json').read_text()), ensure_ascii=True)).replace('/* SHORE_SURFACE_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-surface.json').read_text()), ensure_ascii=True))
+engine = Path('src/echelons.js').read_text()+'\n'+Path('src/world-core.js').read_text().replace('/* SHORE_RESCUE_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-rescue.json').read_text()), ensure_ascii=True)).replace('/* SHORE_ECHELONS_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-echelons.json').read_text()), ensure_ascii=True)).replace('/* SHORE_SEA_STATE_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-sea-state.json').read_text()), ensure_ascii=True)).replace('/* SHORE_SURFACE_SCENE */ null', json.dumps(json.loads(Path('examples/scenes/shore-surface.json').read_text()), ensure_ascii=True))
 thermal = Path('src/thermal.js').read_text()
 operating_power = Path('src/operating-power.js').read_text()
 materials = Path('src/materials.js').read_text()
