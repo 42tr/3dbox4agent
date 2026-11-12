@@ -1,19 +1,19 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import regolith from '../../../assets/mission-control/regolith-codex-20261102.png';
-import dome from '../../../assets/mission-control/kenney-space-kit/hangar-rounda.glb';
-import greenhouse from '../../../assets/mission-control/kenney-space-kit/hangar-roundglass.glb';
-import hangar from '../../../assets/mission-control/kenney-space-kit/hangar-largea.glb';
-import corridor from '../../../assets/mission-control/kenney-space-kit/corridor.glb';
-import generator from '../../../assets/mission-control/kenney-space-kit/machine-generatorlarge.glb';
-import dish from '../../../assets/mission-control/kenney-space-kit/satellitedish-detailed.glb';
-import scout from '../../../assets/mission-control/codex-outpost/scout-rover.glb';
-import cargo from '../../../assets/mission-control/codex-outpost/cargo-carrier.glb';
-import service from '../../../assets/mission-control/codex-outpost/service-robot.glb';
-import powerUnit from '../../../assets/mission-control/codex-outpost/power-unit.glb';
-import commsDish from '../../../assets/mission-control/codex-outpost/comms-dish.glb';
-import rock from '../../../assets/mission-control/kenney-space-kit/rock-largea.glb';
-import crater from '../../../assets/mission-control/kenney-space-kit/craterlarge.glb';
+import regolith from '../assets/mission-control/regolith-codex-20261102.png';
+import dome from '../assets/mission-control/kenney-space-kit/hangar-rounda.glb';
+import greenhouse from '../assets/mission-control/kenney-space-kit/hangar-roundglass.glb';
+import hangar from '../assets/mission-control/kenney-space-kit/hangar-largea.glb';
+import corridor from '../assets/mission-control/kenney-space-kit/corridor.glb';
+import generator from '../assets/mission-control/kenney-space-kit/machine-generatorlarge.glb';
+import dish from '../assets/mission-control/kenney-space-kit/satellitedish-detailed.glb';
+import scout from '../assets/mission-control/codex-outpost/scout-rover.glb';
+import cargo from '../assets/mission-control/codex-outpost/cargo-carrier.glb';
+import service from '../assets/mission-control/codex-outpost/service-robot.glb';
+import powerUnit from '../assets/mission-control/codex-outpost/power-unit.glb';
+import commsDish from '../assets/mission-control/codex-outpost/comms-dish.glb';
+import rock from '../assets/mission-control/kenney-space-kit/rock-largea.glb';
+import crater from '../assets/mission-control/kenney-space-kit/craterlarge.glb';
 // These meshes are a presentation layer. Collision and navigation use the snapshot's
 // documented simplified obstacles, never the decorative glTF mesh geometry.
 export function createLunarEnvironment(scene,renderer){

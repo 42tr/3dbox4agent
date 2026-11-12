@@ -1,10 +1,1 @@
-export type ConstructionProfile={id:string;name:string;obstacleId:string};
-export type ConstructionSite=ConstructionProfile&({status:'planned'}|{status:'built';taskId:string;agentId:string;assignmentId:number;builtTick:number});
-export type ConstructionState={sites:ConstructionSite[]};
-export function validateProfile(scene:any):true;
-export function normalize(sites:ConstructionProfile[]):ConstructionProfile[];
-export function initial(sites:ConstructionProfile[]):ConstructionState;
-export function validateState(value:any):true;
-export function finish(value:ConstructionState,task:any,actor:any,tick:number):ConstructionState;
-export function validateWorld(world:any,profile?:ConstructionProfile[]):true;
-export function visualPlan(value:any,focused?:boolean):{obstacleId:string;state:'planned'|'built'|'unknown'}[];
+../packages/world/src/construction.d.ts

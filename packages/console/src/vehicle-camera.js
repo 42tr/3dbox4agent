@@ -1,7 +1,7 @@
 /* Choose an observation camera without placing it behind a known facility. */
 (function(root){
 'use strict';
-const Sensors=typeof module!=='undefined'?require('./sensors'):root.SandboxSensors;
+const Sensors=typeof module!=='undefined'?require('@42tr/3dbox4agent-world/sensors'):root.SandboxSensors;
 function clear(from,to,obstacles,heightfield){return Sensors.visible(from,to,1000,obstacles,heightfield)}
 function offset(position,angle,obstacles,scale=1,heightfield){
  for(const [x,y,z] of [[5,3.1,6],[-5,3.1,6],[5,4,-6],[-5,4,-6],[0,12,0]]){

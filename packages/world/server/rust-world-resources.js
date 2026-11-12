@@ -1,5 +1,5 @@
 'use strict';
-const {WorldResources}=require('../../../rust/physics/target/release/box_physics.node');
+const {WorldResources}=require('../native/physics/target/release/box_physics.node');
 function freeze(v){if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v)}return v}
 function guarded(fn){try{return fn()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldResourcesFailure:true})}}
 function task(t){return {id:t.id,behavior:t.behavior,role:t.role,capability:t.capability,target:t.target,status:t.status,assignee:t.assignee,...(t.assignmentId!==undefined?{assignmentId:t.assignmentId}:{}),...(t.buildSite!==undefined?{buildSite:t.buildSite}:{}),...(t.materialCost!==undefined?{materialCost:t.materialCost}:{})}}

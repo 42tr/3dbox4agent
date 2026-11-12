@@ -1,6 +1,6 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
-const html=fs.readFileSync('src/app.html','utf8');
+const html=fs.readFileSync(process.argv[2]||'src/app.html','utf8');
 const start=html.lastIndexOf('\nreset();const catalogReplayHash=');
 assert(start>=0);
 const bootstrap=html.slice(start,html.indexOf('\n</script>',start));

@@ -323,21 +323,30 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(env_or("RUST_LOG", "threebox_control_server=info"))
         .init();
 
-    let world_url = env_or("WORLD_URL", "http://127.0.0.1:8787")
-        .trim_end_matches('/')
-        .to_string();
+    let world_origin = reqwest::Url::parse(&env_or("WORLD_URL", "http://127.0.0.1:8787"))
+        .context("parse WORLD_URL")?;
+    anyhow::ensure!(
+        matches!(world_origin.scheme(), "http" | "https")
+            && world_origin.host().is_some()
+            && world_origin.username().is_empty()
+            && world_origin.password().is_none()
+            && world_origin.path() == "/"
+            && world_origin.query().is_none()
+            && world_origin.fragment().is_none(),
+        "WORLD_URL must be an HTTP or HTTPS origin"
+    );
+    let world_url = world_origin.origin().ascii_serialization();
     let bind = env_or("CONTROL_BIND", "127.0.0.1:8789");
     let default_token = env::var("CONTROL_AGENT_TOKEN")
         .ok()
         .filter(|token| !token.trim().is_empty())
         .map(Arc::<str>::from);
-    let mut client_builder = Client::builder()
+    let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
-        .redirect(reqwest::redirect::Policy::none());
-    if is_loopback_world(&world_url) {
-        client_builder = client_builder.no_proxy();
-    }
-    let client = client_builder.build().context("create HTTP client")?;
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .context("create HTTP client")?;
     let state = AppState {
         client: client.clone(),
         world_url: Arc::<str>::from(world_url.clone()),
@@ -382,14 +391,17 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        if let Ok(mut terminate) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = terminate.recv() => {},
+            }
+            return;
+        }
+    }
     let _ = tokio::signal::ctrl_c().await;
-}
-
-fn is_loopback_world(world_url: &str) -> bool {
-    world_url.starts_with("http://127.0.0.1:")
-        || world_url.starts_with("https://127.0.0.1:")
-        || world_url.starts_with("http://localhost:")
-        || world_url.starts_with("https://localhost:")
-        || world_url.starts_with("http://[::1]:")
-        || world_url.starts_with("https://[::1]:")
 }

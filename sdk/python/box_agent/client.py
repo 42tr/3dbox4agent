@@ -8,6 +8,18 @@ from urllib.request import Request, urlopen
 CONTROL_HTTP_ORIGIN = 'http://127.0.0.1:8789'
 
 
+def _parse_http_origin(base_url):
+    if not isinstance(base_url, str) or any(c.isspace() or ord(c) < 32 for c in base_url) or '\\' in base_url:
+        raise ValueError('base_url must be an HTTP or HTTPS origin')
+    parsed = urlsplit(base_url)
+    if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None
+            or parsed.path not in ('', '/') or parsed.query or parsed.fragment
+            or parsed.port == 0):
+        raise ValueError('base_url must be an HTTP or HTTPS origin')
+    return parsed
+
+
 class SandboxError(Exception):
     def __init__(self, status, code):
         self.status = status
@@ -17,12 +29,10 @@ class SandboxError(Exception):
 
 class AgentClient:
     def __init__(self, session_id, agent_id, token, base_url=CONTROL_HTTP_ORIGIN, timeout=5):
-        parsed = urlsplit(base_url)
-        if parsed.scheme != 'http' or parsed.hostname not in ('127.0.0.1', 'localhost') or parsed.username or parsed.password or parsed.path not in ('', '/') or parsed.query or parsed.fragment:
-            raise ValueError('base_url must be an HTTP loopback origin')
+        parsed = _parse_http_origin(base_url)
         if not all(isinstance(x, str) and x for x in (session_id, agent_id, token)):
             raise ValueError('session_id, agent_id and token are required')
-        self._base = base_url.rstrip('/')
+        self._base = f'{parsed.scheme}://{parsed.netloc}'
         self._session = quote(session_id, safe='')
         self._agent = quote(agent_id, safe='')
         self._token = token
@@ -30,7 +40,8 @@ class AgentClient:
 
     def _request(self, path, payload=None):
         data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode('utf-8')
-        request = Request(self._base + path, data=data, headers={'Authorization': 'Bearer ' + self._token, 'Content-Type': 'application/json'})
+        request = Request(self._base + path, data=data, headers={'Content-Type': 'application/json'})
+        request.add_unredirected_header('Authorization', 'Bearer ' + self._token)
         try:
             with urlopen(request, timeout=self._timeout) as response:
                 return json.load(response)

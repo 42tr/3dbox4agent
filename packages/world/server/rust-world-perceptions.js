@@ -1,5 +1,5 @@
 'use strict';
-const {WorldPerceptions}=require('../../../rust/physics/target/release/box_physics.node');
+const {WorldPerceptions}=require('../native/physics/target/release/box_physics.node');
 function freeze(v){if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v)}return v}
 function guarded(fn){try{return fn()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldPerceptionsFailure:true})}}
 const target=t=>({id:t.id,target:t.target});

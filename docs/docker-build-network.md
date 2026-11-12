@@ -12,7 +12,7 @@
 bash scripts/build-image.sh
 ```
 
-脚本默认构建并加载 `linux/amd64` 的 `world-rust` 镜像，随后导出镜像、生成部署配置和校验文件，最后输出完整压缩包路径。代理使用终端已导出的大小写环境变量；Linux 默认采用宿主机网络，其他系统默认采用 `default` 网络。构建机器需要 Bash、Git、Docker、Buildx、tar、gzip，以及 sha256sum 或 shasum。源码更新由你在运行脚本前执行。
+脚本默认构建并加载 `linux/amd64` 的 World（Rust 后端）、Control、Console 和 Agent 镜像，随后统一导出镜像、生成部署配置和校验文件，最后输出完整压缩包路径。代理使用终端已导出的大小写环境变量；Linux 默认采用宿主机网络，其他系统默认采用 `default` 网络。构建机器需要 Bash、Git、Docker、Buildx、tar、gzip，以及 sha256sum 或 shasum。源码更新由你在运行脚本前执行。
 
 支持以下选项：
 
@@ -20,7 +20,7 @@ bash scripts/build-image.sh
 # ARM64 目标服务器
 bash scripts/build-image.sh --arch arm64
 
-# 指定镜像名称，包内配置会同步使用这个镜像
+# 指定 World 镜像名称，包内配置会同步使用这个镜像
 bash scripts/build-image.sh --image 3dbox4agent:world-rust
 
 # 使用默认构建网络
@@ -54,7 +54,7 @@ tar -xzf 实际包名.tar.gz
 cd 实际包名
 sha256sum -c SHA256SUMS
 docker image load -i image.tar.gz
-docker compose -p 3dbox4agent up --no-build --pull never --wait control
+docker compose -p 3dbox4agent up --no-build --pull never --wait console
 curl -fsS http://127.0.0.1:8787/control/world/health
 ```
 
@@ -95,6 +95,7 @@ release_platform="${release_platform:-linux/amd64}"
 docker buildx build \
   "${build_network_args[@]}" \
   --platform "$release_platform" \
+  --file packages/agent/Dockerfile \
   --target python-dependencies \
   --progress=plain \
   .
@@ -102,18 +103,7 @@ docker buildx build \
 
 如果环境变量中没有代理地址，但宿主机通过 TUN 等路由方式联网，此命令仍使用宿主机网络；能否访问下载站点以 Python 依赖阶段的结果为准。
 
-Python 依赖阶段成功后，沿用此前设置的 `release_image` 镜像标签构建完整服务：
-
-```bash
-docker buildx build \
-  "${build_network_args[@]}" \
-  --platform "$release_platform" \
-  --target world-rust \
-  --load \
-  --progress=plain \
-  -t "${release_image:?请先按打包步骤设置 release_image}" \
-  .
-```
+Python 依赖阶段成功后，执行 `bash scripts/build-image.sh --network host` 构建四个镜像并打包。
 
 ## 需要手动指定 HTTP 代理时
 

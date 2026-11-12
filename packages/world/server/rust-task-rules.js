@@ -1,6 +1,6 @@
 'use strict';
 // Legacy pure rules remain available; compatible owned stores commit assignment natively.
-const {assignmentPrecondition,assignmentTransition,revocationPrecondition,revocationTransition,taskWorkTick,actionActivationPrecondition,stationaryActionTick,worldTermination,timedTransitions,terrainSegment,motionBudget,motionAccounting,guardMovement}=require('../../../rust/physics/target/release/box_physics.node');
+const {assignmentPrecondition,assignmentTransition,revocationPrecondition,revocationTransition,taskWorkTick,actionActivationPrecondition,stationaryActionTick,worldTermination,timedTransitions,terrainSegment,motionBudget,motionAccounting,guardMovement}=require('../native/physics/target/release/box_physics.node');
 function check(world,taskId,agentId){
  const input={done:world.done,...(world.materials!==undefined?{materials:world.materials}:{}),tasks:world.tasks.map(({id,status,dependsOn,capability,behavior,materialCost})=>({id,status,dependsOn,capability,behavior,...(materialCost!==undefined?{materialCost}:{})})),agents:world.agents.map(({id,disabled,status,battery,capabilities,deployableRelay})=>({id,disabled,status,battery,capabilities,...(deployableRelay!==undefined?{deployableRelay}:{})})),part:{location:world.part.location,reservedBy:world.part.reservedBy??null},asset:{diagnosis:world.asset.diagnosis,condition:world.asset.condition},taskId:taskId??null,agentId:agentId??null};
  return assignmentPrecondition(JSON.stringify(input))||null;

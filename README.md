@@ -7,7 +7,7 @@
 
 ### 月球基地任务控制台（进度 292）
 
-页面现以 `640.png` 为界面方向，默认展示 `lunar-outpost-v1` 月面基地设施协作场景：深色窄导航、月面三维视图、下方执行轨迹和右侧双列设备卡片。React / TypeScript 负责控制台；现有世界、授权观察、任务和回放逻辑继续通过适配层工作。`npm run typecheck:ui` 检查控制台类型，`npm run build` 将界面、glTF 和月壤纹理打包为单个 `index.html`，在线查看无需额外下载模型资源。
+页面现以 `640.png` 为界面方向，默认展示 `lunar-outpost-v1` 月面基地设施协作场景：深色窄导航、月面三维视图、下方执行轨迹和右侧双列设备卡片。React / TypeScript 负责控制台；现有世界、授权观察、任务和回放逻辑继续通过适配层工作。`npm run typecheck:ui` 检查控制台类型，`npm run build` 将界面、glTF 和月壤纹理打包为单个 `packages/console/dist/index.html`，在线查看无需额外下载模型资源。
 
 新增布局把中央居住舱、左侧拱形机库与仓储舱、右侧温室及供能区放进同一场景配置，显示位置与导航／碰撞障碍共用快照。原 `lunar-sampling-v1` 保留原坐标与任务；历史回放未改写。圆顶分缝、机库肋条、双组太阳能面板与不同作业设备补充了实际三维细节；视图工具可从场景右上角展开。
 
@@ -218,7 +218,7 @@ agent.close()
 
 页面顶部“查找功能与实验”可按卡片标题、可见按钮或字段名称筛选并跳转；切换单体视角时仅列出当前视角可见的卡片。
 
-直接在浏览器打开 `index.html` 查看自包含预览。初次开发先运行 `npm ci`；修改 `packages/console/src/app.html`、`packages/console/src/mission-control.tsx`、`packages/console/src/scene3d.js`、`src/world-core.js` 或兼容入口后运行 `npm run build` 重新生成；根目录旧前端路径保留兼容链接。Three.js 与其 MIT 许可会打包进自包含 HTML，无需 CDN。3D 场景支持拖动旋转、滚轮缩放、点击设备筛选及重置相机，也可切换俯视图；不支持 WebGL 时自动回退俯视图。选择场景、种子和策略后点击“重新开始”；运行后可注入设备退出。拖动时间轴查看历史快照，点击“返回实时”恢复最新状态；导入回放后可逐快照或逐仿真步前后导航，并显示保留的世界版本。逐仿真步选择目标步最后一个快照，会跳过同一步的中间版本；逐快照可检查这些版本。导入回放时检查保留快照之间的事件日志是否只追加、未改写既有事件；这只验证结构一致性，不证明数据来源。回放的“按事件定位”列出最后快照中的事件并跳到首个包含事件的保留快照；如果最早保留帧已含该事件，不能确定事件在截断前还是恰好在该帧发生。单体视角隐藏全局事件索引。播放 1× 每 150 毫秒推进一个所选单位，不还原原始实时速度；导出文件包含配置、事件、指标和快照。点击“导入回放”可在浏览器中本地读取此前导出的 JSON、按时间轴播放，并通过“重新开始”退出回放；导入不会上传文件。导入的回放为只读；可从启用快照的本地事件日志创建独立分支。
+先运行 `npm ci` 和 `npm run build`，然后在浏览器打开 `packages/console/dist/index.html` 查看自包含预览。修改 `packages/console/src/app.html`、`packages/console/src/mission-control.tsx`、`packages/console/src/scene3d.js`、`src/world-core.js` 或兼容入口后运行 `npm run build` 重新生成；根目录旧前端路径保留兼容链接。Three.js 与其 MIT 许可会打包进自包含 HTML，无需 CDN。3D 场景支持拖动旋转、滚轮缩放、点击设备筛选及重置相机，也可切换俯视图；不支持 WebGL 时自动回退俯视图。选择场景、种子和策略后点击“重新开始”；运行后可注入设备退出。拖动时间轴查看历史快照，点击“返回实时”恢复最新状态；导入回放后可逐快照或逐仿真步前后导航，并显示保留的世界版本。逐仿真步选择目标步最后一个快照，会跳过同一步的中间版本；逐快照可检查这些版本。导入回放时检查保留快照之间的事件日志是否只追加、未改写既有事件；这只验证结构一致性，不证明数据来源。回放的“按事件定位”列出最后快照中的事件并跳到首个包含事件的保留快照；如果最早保留帧已含该事件，不能确定事件在截断前还是恰好在该帧发生。单体视角隐藏全局事件索引。播放 1× 每 150 毫秒推进一个所选单位，不还原原始实时速度；导出文件包含配置、事件、指标和快照。点击“导入回放”可在浏览器中本地读取此前导出的 JSON、按时间轴播放，并通过“重新开始”退出回放；导入不会上传文件。导入的回放为只读；可从启用快照的本地事件日志创建独立分支。
 
 先运行 `npm ci` 安装依赖，再启动本地 API（需要 Node.js 18 或更新版本）：
 
@@ -257,7 +257,7 @@ curl -X POST "http://127.0.0.1:8787/sessions/会话ID/step" -H 'Content-Type: ap
 
 ### 容器启动（单机开发）
 
-构建并打包 Rust 镜像可直接执行 `bash scripts/build-image.sh`。默认目标为 `linux/amd64`，自动传递终端代理、生成版本标签，并在 `.3dbox/releases/` 输出完整部署包和 SHA-256 校验文件；无需手动加载变量或导出镜像。ARM64 使用 `--arch arm64`。包内包含镜像、独立 Compose 配置及部署说明，默认映射 `0.0.0.0:8787`。自定义镜像名、构建网络及下载源见[构建脚本说明](docs/docker-build-network.md#使用构建脚本)。
+构建并打包四个服务镜像可直接执行 `bash scripts/build-image.sh`。默认目标为 `linux/amd64`，自动传递终端代理、生成版本标签，并在 `.3dbox/releases/` 输出完整部署包和 SHA-256 校验文件；无需手动加载变量或导出镜像。ARM64 使用 `--arch arm64`。包内包含镜像、独立 Compose 配置及部署说明，默认映射 `0.0.0.0:8787`。自定义镜像名、构建网络及下载源见[构建脚本说明](docs/docker-build-network.md#使用构建脚本)。
 
 已有 Docker Engine 和 Docker Compose 时，在项目目录运行：
 
@@ -266,23 +266,37 @@ docker compose up --build -d
 docker compose ps
 ```
 
-前端构建默认通过 `https://registry.npmmirror.com` 下载 npm 依赖，并统一锁文件中的下载源；依赖版本和完整性校验仍由 `package-lock.json` 固定。构建阶段的 npm 网络请求失败时最多重试 5 次，下载缓存由 BuildKit 保留，依赖安装和开发依赖裁剪均使用同一配置。如需其他源，可给 `docker buildx build` 增加 `--build-arg NPM_REGISTRY=https://registry.npmjs.org`。此配置仅用于前端构建阶段。
+前端构建默认通过 `https://registry.npmmirror.com` 下载 npm 依赖，并统一锁文件中的下载源；依赖版本和完整性校验仍由 `package-lock.json` 固定。构建阶段的 npm 网络请求失败时最多重试 5 次，下载缓存由 BuildKit 保留，World 和 Agent 镜像仅安装运行时 npm 依赖。如需其他源，可给 `docker buildx build` 增加 `--build-arg NPM_REGISTRY=https://registry.npmjs.org`。此配置用于各镜像的 npm 依赖安装阶段。
 
 Python 构建依赖默认从[清华 PyPI 镜像](https://mirrors.tuna.tsinghua.edu.cn/help/pypi/)下载，可通过 `--build-arg PIP_INDEX_URL=https://pypi.org/simple` 更换源。保留 pip 的 5 次连接重试、180 秒读写超时及 BuildKit 下载缓存；若文件传输中途失败，整次依赖安装最多尝试 3 次，间隔 5 秒，连续失败仍会中止构建。
 
 Linux 服务器通过代理联网时，需把代理传入 Docker 构建；代理监听宿主机 `127.0.0.1` 时还需处理构建网络。遇到 `Network is unreachable` 或下载超时，可按[构建网络与代理说明](docs/docker-build-network.md)先验证 Python 依赖阶段，再构建完整镜像。
 
-打开 `http://127.0.0.1:8787/`，点击“连接本地世界服务”。镜像会重新构建页面，Compose 启动 World 和 Control 两个服务。Agent HTTP 可从宿主机回环端口 8789 访问 Control，可用 `BOX_CONTROL_PORT` 调整宿主端口。镜像包含 Node 世界服务、Rapier WASM、Python SDK 及 WebSocket/gRPC 可选依赖；主机无需安装 Node、Python、Rust。默认使用 WASM 物理和 JavaScript 规则，可用 `BOX_WORLD_WORKERS` 配置进程数。首次构建需下载基础镜像和依赖；构建锁定 npm/Cargo 依赖，但基础镜像标签和 Python 可选依赖仍可变化，因此不保证镜像逐位复现。可通过 Dockerfile 的 `NODE_IMAGE`、`RUST_IMAGE` 构建参数指定镜像摘要。 镜像的 `third_party` 目录保存补充许可文本；原生镜像同时保留构建时下载的 Cargo 包许可、清单及锁文件。
+打开 `http://127.0.0.1:8787/`，点击“连接本地世界服务”。Compose 启动独立的 Console、Control 和 World 镜像。Console 提供静态页面，将 `/control` 转发给 Rust Control，并将 `/stream` 转发给 World。World 在 Compose 网络内监听，Control 的 8789 仍发布到宿主机回环地址，可用 `BOX_CONTROL_PORT` 调整。
 
-需要原生 Rust 物理、任务、通信与导航后端时使用 `BOX_IMAGE_TARGET=world-rust docker compose up --build -d`；每次重新创建该栈时沿用这个选择。原生模块在镜像内按目标架构编译，主机的 `.node` 和 `target` 不会进入构建上下文。World 的 8787 和 Control 的 8789 默认发布到主机回环地址。World 端口冲突时可用 `BOX_HTTP_PORT=8877 docker compose up --build -d`，再打开相应本机端口。直接使用 Node 时仍默认只监听 `127.0.0.1`；`WORLD_BIND=0.0.0.0` 用于显式监听所有网卡。HTTP/WebSocket 支持域名与 IP 访问，并校验浏览器请求同源；HTTPS 反向代理及端口映射配置见[远程访问说明](docs/remote-access.md)。
+使用 `BOX_IMAGE_TARGET=world-rust docker compose up --build -d` 启用原生 Rust 后端。默认 World 镜像使用 WASM 物理和 JavaScript 规则，可用 `BOX_WORLD_WORKERS` 配置进程数。原生模块按镜像目标架构编译。Console 端口冲突时可用 `BOX_HTTP_PORT=8877 docker compose up --build -d`。域名、HTTPS 反向代理和端口映射见[远程访问说明](docs/remote-access.md)。
 
-默认按需启动独立 `runner` 容器，设备与指挥进程在其中各自使用凭据。它共享世界容器的网络命名空间，因此 SDK 仍访问本机地址；两者的进程与文件系统分开，执行器不挂载世界数据卷。下列命令使用内置参数（15 台设备、无故障、Rapier、包含回放），报告由主机保存：
+按需启动独立 Agent 镜像的 `runner`。管理与 WebSocket 流量通过 `http://world:8787`，Agent 和协调器的 HTTP 流量通过 `http://control:8789`。以下命令使用内置参数运行 15 台设备并将报告保存到宿主机：
 
 ```sh
+docker compose build runner
 docker compose run --rm -T runner > container-run.json
 ```
 
-如需 gRPC，另一个终端运行 `docker compose exec world python3 sdk/python/grpc_gateway.py`，然后运行 `docker compose run --rm -T runner --fault none --physics rapier --archive --agent-grpc-target 127.0.0.1:8788 --coordinator-grpc-target 127.0.0.1:8788 --grpc-observe-stream > grpc-container-run.json`。传给 `runner` 的参数会替换其默认参数；Rust 栈的 `run` 与 `up` 同样需设置 `BOX_IMAGE_TARGET=world-rust`。网关只供容器内部进程使用，Compose 不发布其端口。容器中的实验命令仍应保持内置的本机 URL；浏览器使用主机映射端口。容器源码目录只读，需要在容器内写文件时使用 `/app/.3dbox` 或 `/tmp`；上述标准输出重定向会把报告写到主机。
+可选 gRPC 网关在 runner 容器内运行，监听该容器的回环端口并连接 World。需要 gRPC 观察流时：
+
+```sh
+docker compose run --rm -T --entrypoint sh runner -ec '
+  python3 packages/control-server/gateways/grpc/grpc_gateway.py --world-url "$BOX_WORLD_URL" >&2 &
+  gateway_pid=$!
+  trap "kill $gateway_pid" EXIT
+  python3 -c "import grpc; grpc.channel_ready_future(grpc.insecure_channel(\"127.0.0.1:8788\")).result(timeout=5)"
+  python3 packages/agent/python/multi_agent_demo.py --fault none --physics rapier --archive \
+    --agent-grpc-target 127.0.0.1:8788 --coordinator-grpc-target 127.0.0.1:8788 --grpc-observe-stream
+' > grpc-container-run.json
+```
+
+运行 Rust 栈时，后续 `docker compose run` 也使用相同的 `BOX_IMAGE_TARGET=world-rust`。
 
 事件与回放日志默认写入命名卷 `world-data`，实验目录 SQLite 也位于该卷。`docker compose down` 停止并移除容器而保留卷；`down --volumes` 会删除该栈的卷数据。容器重建后活动会话、凭据和私有记忆仍会丢失；原日志访问凭据可读取持久日志，并在同一源码和后端下从已保存版本创建独立分支。请提前下载所需凭据。快照日志仍有单文件 64 MiB 限制，逐步同步写盘影响实时速度；如只需事件，可设置 `BOX_REPLAY_JOURNAL=0`，但该次新日志无法恢复快照。此配置用于单机开发，未提供跨主机或多用户调度。
 

@@ -13,13 +13,14 @@ class AgentControlError extends Error {
 
 function createHttpAgentClient({baseUrl = 'http://127.0.0.1:8789', sessionId, agentId, token, fetchImpl = globalThis.fetch} = {}) {
   const origin = new URL(baseUrl);
-  if (origin.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(origin.hostname) || origin.username || origin.password || origin.pathname !== '/' && origin.pathname !== '' || origin.search || origin.hash) throw new TypeError('baseUrl must be an HTTP loopback origin');
+  if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new TypeError('baseUrl must be an HTTP or HTTPS origin');
   if (typeof fetchImpl !== 'function') throw new TypeError('Agent HTTP client requires fetch');
   if (![sessionId, agentId, token].every(value => typeof value === 'string' && value.length > 0)) throw new TypeError('sessionId, agentId and token are required');
   const root = origin.toString().replace(/\/$/, ''), session = encodeURIComponent(sessionId), agent = encodeURIComponent(agentId);
   async function request(method, path, payload) {
     const response = await fetchImpl(root + path, {
       method,
+      redirect: 'error',
       headers: {'authorization': `Bearer ${token}`, 'content-type': 'application/json'},
       ...(payload === undefined ? {} : {body: JSON.stringify(payload)}),
     });

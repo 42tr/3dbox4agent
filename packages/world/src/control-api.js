@@ -7,7 +7,7 @@
  * layer only validates the transport envelope and exposes semantic operations
  * for UI clients, SDKs and Agent runtimes.
  */
-const Contracts = require('../../control/src/control-contracts');
+const Contracts = require('@42tr/3dbox4agent-control/contracts');
 const {ACTION_TYPES, validRequestId, validateActionEnvelope} = Contracts;
 
 function createControlApi({runtime} = {}) {

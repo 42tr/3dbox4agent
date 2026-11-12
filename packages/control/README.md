@@ -1,6 +1,8 @@
 # 3DBox Control Contracts
 
-跨层共享的 Action/Observation 契约。它不拥有世界状态，也不包含 Agent 策略。
+跨层共享的 Action、Observation 和错误信封定义在 `schemas/*.v1.schema.json`。
+信封允许各类动作和观察携带额外字段，具体动作语义与权限由 World 校验。
+WebSocket 和可选 gRPC 的 Protobuf 定义位于 `proto/`。
 
 Control 的独立服务端位于 ../control-server，使用 Rust Axum 提供 HTTP 入口，
 并使用 RMCP 提供 MCP 入口。调用方直接使用 HTTP 或 MCP 协议，不需要安装本目录

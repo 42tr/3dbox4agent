@@ -1,5 +1,5 @@
 'use strict';
-const {WorldMotion}=require('../../../rust/physics/target/release/box_physics.node');
+const {WorldMotion}=require('../native/physics/target/release/box_physics.node');
 const fields=Object.freeze(['x','y','battery','initialBattery','distance']);
 function guarded(operation){try{return operation()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldMotionFailure:true})}}
 function create(world){

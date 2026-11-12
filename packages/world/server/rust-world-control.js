@@ -1,5 +1,5 @@
 'use strict';
-const {WorldControl}=require('../../../rust/physics/target/release/box_physics.node');
+const {WorldControl}=require('../native/physics/target/release/box_physics.node');
 const fields=['version','sceneId','seed','policy','physicsMode','executionMode','sensorModel','peerMessageMetricsVersion','boundaryMonitoringVersion','footprintMonitoringVersion','riskMonitoringVersion','recoveryEventsVersion','terrainRouteAssessmentsVersion','dispatchMode','faults','replans','collisionContacts','chargeRecovery'];
 function freeze(v){if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v)}return v}
 function guarded(fn){try{return fn()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldControlFailure:true})}}

@@ -1,5 +1,12 @@
 {
   "name": "@42tr/3dbox4agent-control",
   "private": true,
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "exports": {
+    "./contracts": "./src/control-contracts.js",
+    "./http-forward": "./src/control-http-forward.js",
+    "./agent-client": "./src/agent-control-client.js",
+    "./request-origin": "./src/request-origin.js",
+    "./schemas/*": "./schemas/*"
+  }
 }

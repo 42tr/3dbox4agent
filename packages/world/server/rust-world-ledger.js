@@ -1,5 +1,5 @@
 'use strict';
-const {WorldLedger}=require('../../../rust/physics/target/release/box_physics.node');
+const {WorldLedger}=require('../native/physics/target/release/box_physics.node');
 function freeze(value){if(value&&typeof value==='object'){for(const item of Object.values(value))freeze(item);Object.freeze(value)}return value}
 function guarded(operation){try{return operation()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldLedgerFailure:true})}}
 function create(world){

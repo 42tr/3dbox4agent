@@ -12,19 +12,18 @@ function selectHeaders(headers, names) {
   return Object.fromEntries(names.filter(name => headers[name] !== undefined).map(name => [name, headers[name]]));
 }
 
-function createControlForwarder(controlUrl = process.env.BOX_CONTROL_URL || CONTROL_HTTP_ORIGIN) {
+function createControlProxy(controlUrl = process.env.BOX_CONTROL_URL || CONTROL_HTTP_ORIGIN, {preserveOrigin = false} = {}) {
   const origin = new URL(controlUrl);
   if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) {
     throw Error('BOX_CONTROL_URL must be an HTTP or HTTPS origin');
   }
   const transport = origin.protocol === 'https:' ? https : http;
-  return function forwardControl(req, res) {
-    if (!req.url.startsWith(prefix + '/')) return false;
-    // The World listener has already checked the browser's Host and Origin.
+  const headers = preserveOrigin ? [...requestHeaders, 'host', 'origin'] : requestHeaders;
+  return function proxyControl(req, res, path) {
     const upstream = transport.request(origin, {
       method: req.method,
-      path: req.url.slice(prefix.length),
-      headers: selectHeaders(req.headers, requestHeaders)
+      path,
+      headers: selectHeaders(req.headers, headers)
     }, response => {
       upstream.setTimeout(0);
       res.writeHead(response.statusCode, selectHeaders(response.headers, responseHeaders));
@@ -41,8 +40,16 @@ function createControlForwarder(controlUrl = process.env.BOX_CONTROL_URL || CONT
     req.on('aborted', () => upstream.destroy());
     res.on('close', () => { if (!res.writableFinished) upstream.destroy(); });
     req.pipe(upstream);
+  };
+}
+
+function createControlForwarder(controlUrl) {
+  const proxy = createControlProxy(controlUrl);
+  return function forwardControl(req, res) {
+    if (!req.url.startsWith(prefix + '/')) return false;
+    proxy(req, res, req.url.slice(prefix.length));
     return true;
   };
 }
 
-module.exports = {createControlForwarder};
+module.exports = {createControlForwarder, createControlProxy};

@@ -4,17 +4,17 @@
 地表、热控、电力、梯队、耗材、中继、建设、救援、回放、记录、差量、
 任务图、场景诊断、场景格式和流协议模块都已迁入这里。
 
-根目录同名文件只是兼容入口，现有 Node 服务和测试仍可以继续使用旧路径。
-Rust/WASM 后端、World HTTP/WS 宿主和部分实验报告模块仍在 `server/`、`rust/`
-和根目录，后续按依赖继续迁移。
+单体服务、Supervisor、Worker、物理适配和事件日志位于 `server/`。
+场景资源位于 `scenes/`，原生 Rust/Rapier 源码位于 `native/physics/`，
+实验目录工具位于 `scripts/`。根目录保留同名入口供旧调用方使用。
 
-World 服务的物理适配、Rust 绑定、事件日志、事务、请求和报告组件已经迁入
-`packages/world/server`；根目录 `server/*.js` 只保留兼容入口。
-
-World 的单体服务、Supervisor 和 Worker 入口也位于 `packages/world/server`。
-根目录入口继续支持原有命令：
+在仓库根目录运行 `npm ci` 后，从本目录执行：
 
 ~~~sh
-node server/world-server.js
-node server/world-supervisor.js
+npm start              # Supervisor
+npm run start:single   # 单进程调试
+npm run build:native   # 构建可选原生模块
 ~~~
+
+本地控制台页面由 Console 构建。需要浏览器界面时，先在仓库根目录运行 `npm run build`。
+设置 `BOX_WORLD_API_ONLY=1` 可只启动 World API 和实时流，供独立的 Console 与 Control 访问。

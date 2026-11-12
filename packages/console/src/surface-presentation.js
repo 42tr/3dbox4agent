@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
-import boatUrl from '../../../assets/mission-control/kenney-pirate-kit/boat-row-large.glb';
-import domain from './surface-domain.js';
+import boatUrl from '../assets/mission-control/kenney-pirate-kit/boat-row-large.glb';
+import domain from '@42tr/3dbox4agent-world/surface-domain';
 
 // Snapshot geometry only. This layer adds no motion, buoyancy or physics state.
 export function createSurfacePresentation(scene){

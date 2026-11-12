@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:3dbox4agent:control:action:v1",
+  "type": "object",
+  "required": [
+    "requestId",
+    "type",
+    "targetTick",
+    "expiresTick"
+  ],
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    },
+    "type": {
+      "enum": [
+        "move",
+        "scan",
+        "charge",
+        "execute_task",
+        "work_task",
+        "rescue"
+      ]
+    },
+    "targetTick": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "expiresTick": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  }
+}

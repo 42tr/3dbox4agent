@@ -1,1 +1,1 @@
-declare module '*.css' { const css: string; export default css; }
+../packages/console/src/mission-assets.d.ts

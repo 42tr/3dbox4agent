@@ -1,2 +1,1 @@
-'use strict';
-globalThis.SandboxStreamProtobuf=require('./stream-protobuf');
+../packages/console/src/stream-protobuf-browser.js

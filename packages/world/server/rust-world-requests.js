@@ -1,5 +1,5 @@
 'use strict';
-const {WorldRequests}=require('../../../rust/physics/target/release/box_physics.node');
+const {WorldRequests}=require('../native/physics/target/release/box_physics.node');
 function freeze(v){if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v)}return v}
 function guarded(fn){try{return fn()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldRequestsFailure:true})}}
 const survey=t=>({id:t.id,behavior:t.behavior,name:t.name,role:t.role,capability:t.capability,target:t.target,duration:t.duration,dependsOn:t.dependsOn,...(t.priority!==undefined?{priority:t.priority}:{}),...(t.deadline!==undefined?{deadline:t.deadline}:{})});

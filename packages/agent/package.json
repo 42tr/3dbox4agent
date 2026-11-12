@@ -1,5 +1,16 @@
 {
   "name": "@42tr/3dbox4agent-agent",
   "private": true,
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "exports": {
+    ".": "./src/agent-runtime.js",
+    "./llm-policy": "./src/llm-policy.js"
+  },
+  "dependencies": {
+    "@42tr/3dbox4agent-control": "0.1.0"
+  },
+  "scripts": {
+    "start:python": "python3 python/multi_agent_demo.py",
+    "test": "node tests/llm-policy.test.js"
+  }
 }

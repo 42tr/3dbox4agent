@@ -5,9 +5,6 @@ services:
     pull_policy: never
     init: true
     restart: unless-stopped
-    ports:
-      - "${BOX_HTTP_BIND:-0.0.0.0}:${BOX_HTTP_PORT:-8787}:8787"
-      - "127.0.0.1:${BOX_CONTROL_PORT:-8789}:8789"
     environment:
       BOX_REPLAY_JOURNAL: "1"
       BOX_WORLD_WORKERS: ${BOX_WORLD_WORKERS:-2}
@@ -25,25 +22,44 @@ services:
     pids_limit: 1024
     stop_grace_period: 10s
   control:
-    image: ${BOX_IMAGE:?Set BOX_IMAGE to the loaded release image}
+    image: ${BOX_CONTROL_IMAGE:?Set BOX_CONTROL_IMAGE to the loaded Control image}
     platform: ${BOX_PLATFORM:-linux/amd64}
     pull_policy: never
-    network_mode: service:world
+    ports:
+      - "127.0.0.1:${BOX_CONTROL_PORT:-8789}:8789"
     depends_on:
       world:
         condition: service_healthy
     init: true
     restart: unless-stopped
-    entrypoint: ["/usr/local/bin/threebox-control-server"]
     environment:
-      CONTROL_BIND: 0.0.0.0:8789
+      WORLD_URL: http://world:8787
     read_only: true
     cap_drop:
       - ALL
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8789/world/health',{signal:AbortSignal.timeout(3000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+    security_opt:
+      - no-new-privileges:true
+  console:
+    image: ${BOX_CONSOLE_IMAGE:?Set BOX_CONSOLE_IMAGE to the loaded Console image}
+    platform: ${BOX_PLATFORM:-linux/amd64}
+    pull_policy: never
+    ports:
+      - "${BOX_HTTP_BIND:-0.0.0.0}:${BOX_HTTP_PORT:-8787}:8787"
+    depends_on:
+      control:
+        condition: service_healthy
+    environment:
+      BOX_CONTROL_URL: http://control:8789
+      BOX_WORLD_URL: http://world:8787
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
   runner:
-    image: ${BOX_IMAGE:?Set BOX_IMAGE to the loaded release image}
+    image: ${BOX_AGENT_IMAGE:?Set BOX_AGENT_IMAGE to the loaded Agent image}
     platform: ${BOX_PLATFORM:-linux/amd64}
     pull_policy: never
     profiles:
@@ -53,17 +69,12 @@ services:
         condition: service_healthy
       control:
         condition: service_healthy
-    network_mode: service:world
+    environment:
+      BOX_WORLD_URL: http://world:8787
+      BOX_CONTROL_URL: http://control:8789
+      NO_PROXY: world,control,console,localhost,127.0.0.1
+      no_proxy: world,control,console,localhost,127.0.0.1
     init: true
-    entrypoint:
-      - python3
-      - sdk/python/multi_agent_demo.py
-    command:
-      - --fault
-      - none
-      - --physics
-      - rapier
-      - --archive
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777

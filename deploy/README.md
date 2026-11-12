@@ -1,6 +1,6 @@
 # 3DBox 部署包
 
-服务器需要 Docker Engine 与 Docker Compose，CPU 架构须与 `RELEASE.txt` 中的平台一致。镜像已包含前端、世界服务、Rust 模块、Python SDK 和运行依赖。
+服务器需要 Docker Engine 与 Docker Compose，CPU 架构须与 `RELEASE.txt` 中的平台一致。`image.tar.gz` 包含 World、Control、Console 和 Agent 四个镜像及各自的运行依赖。
 
 ## 上传与解压
 
@@ -20,7 +20,7 @@ cd 实际包名
 sha256sum -c SHA256SUMS
 docker image load -i image.tar.gz
 docker compose -p 3dbox4agent config --quiet
-docker compose -p 3dbox4agent up --no-build --pull never --wait --wait-timeout 120 control
+docker compose -p 3dbox4agent up --no-build --pull never --wait --wait-timeout 120 console
 docker compose -p 3dbox4agent ps
 curl -fsS http://127.0.0.1:8787/control/world/health
 ```
@@ -28,14 +28,14 @@ curl -fsS http://127.0.0.1:8787/control/world/health
 容器应显示 `healthy`，健康接口应返回 `"ok": true`。启动失败时执行：
 
 ```bash
-docker compose -p 3dbox4agent logs --tail=100 world control
+docker compose -p 3dbox4agent logs --tail=100 world control console
 ```
 
 包内 `.env` 已记录实际镜像名和 CPU 平台，无需从构建终端加载变量。默认映射 `0.0.0.0:8787`、最多同时运行 2 个世界进程；世界容器上限为 2 CPU、2 GiB 内存。容器重启策略为 `unless-stopped`，运行配置不包含构建路径。
 
 ## 访问与配置
 
-浏览器打开 `http://服务器IP:8787/`，点击“连接世界服务”。也可以通过 HTTPS 反向代理访问；代理需保留原 Host 并转发 `/stream` 的 WebSocket Upgrade。
+浏览器打开 `http://服务器IP:8787/`，点击“连接世界服务”。也可以通过 HTTPS 反向代理访问；代理需保留原 Host 并转发 `/stream` 的 WebSocket Upgrade。8787 由 Console 提供，Control 的 8789 仅发布到服务器回环地址。按需运行 Agent 时执行 `docker compose -p 3dbox4agent run --rm -T runner`。
 
 端口、绑定地址和世界并发数可在包内 `.env` 修改：
 

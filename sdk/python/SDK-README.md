@@ -2,7 +2,7 @@
 
 `AgentClient` and `CoordinatorClient` default to Control at `http://127.0.0.1:8789`.
 `ObservationStream` connects to World at `http://127.0.0.1:8787`.
-In `multi_agent_demo.py`, use `--url` to set the World origin and `--control-url` to set the scoped HTTP origin. When only `--url` is supplied, both use that origin.
+In `multi_agent_demo.py`, use `--url` to set the World origin and `--control-url` to set the scoped HTTP origin. Compose sets `BOX_WORLD_URL` and `BOX_CONTROL_URL` to the respective service addresses. A standalone run with only `--url` uses that origin for both.
 
 `box_agent` contains standard-library clients for a local 3DBox world service.
 
@@ -15,8 +15,8 @@ print(observation["self"]["id"])
 ```
 
 A service administrator creates the session and issues scoped credentials. The
-service and clients currently support only a loopback HTTP origin; session state
-and tokens are lost when the service stops. `AgentClient` provides scoped
+SDK accepts a configured HTTP or HTTPS origin. Session state and tokens are lost
+when the service stops. `AgentClient` provides scoped
 observations, messages, actions, evidence and session memory.
 `AgentClient.lidar()` reads a local horizontal range scan when the session uses
 the experimental Rust/Rapier backend. It is instantaneous and excludes the
@@ -67,7 +67,7 @@ connection-closed exceptions propagate to the caller.
 ## Local gRPC adapter
 
 Install `python3 -m pip install './sdk/python[grpc]'`, start the Node world
-service and then `python3 sdk/python/grpc_gateway.py`. The adapter listens on
+service and then `python3 packages/control-server/gateways/grpc/grpc_gateway.py`. The adapter listens on
 loopback port 8788. It forwards requests to the authoritative world; it does
 not own or advance world state. It is a development adapter, without TLS or a
 multi-user security boundary. Do not expose it to a network.

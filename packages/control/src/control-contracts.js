@@ -1,8 +1,9 @@
 'use strict';
 
 /** Shared Layer 2/3 contracts. Keep these independent from the world engine. */
-const ACTION_TYPES = Object.freeze(['move', 'scan', 'charge', 'execute_task', 'work_task', 'rescue']);
-const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const actionSchema = require('../schemas/action.v1.schema.json');
+const ACTION_TYPES = Object.freeze([...actionSchema.properties.type.enum]);
+const REQUEST_ID = new RegExp(actionSchema.properties.requestId.pattern);
 
 function validRequestId(value) { return typeof value === 'string' && REQUEST_ID.test(value); }
 

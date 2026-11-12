@@ -1,17 +1,1 @@
-export type SurfaceRect={x:number;y:number;w:number;h:number};
-export type SurfaceProfile={water:(SurfaceRect&{id:string;name:string})[]};
-export type SurfaceMobility='ground'|'water'|'air';
-export type SurfacePoint=[number,number];
-export function regionKind(profile:SurfaceProfile|undefined,rect:SurfaceRect):'ground'|'water'|'mixed';
-export function validate(profile:unknown):true;
-export function normalize(profile:SurfaceProfile):SurfaceProfile;
-export function partition(profile:SurfaceProfile,water:boolean):SurfaceRect[];
-export function masks(profile:SurfaceProfile|undefined,mobility:SurfaceMobility):SurfaceRect[];
-export function clearSegment(profile:SurfaceProfile|undefined,mobility:SurfaceMobility,a:SurfacePoint,b:SurfacePoint,radius?:number):boolean;
-export function free(profile:SurfaceProfile|undefined,mobility:SurfaceMobility,at:SurfacePoint,radius?:number):boolean;
-export function bodyFree(profile:SurfaceProfile|undefined,mobility:SurfaceMobility,at:SurfacePoint,radius?:number):boolean;
-export function spawnArea(rect:SurfaceRect):SurfaceRect;
-export function approaches(goal:SurfacePoint,radius:number):SurfacePoint[];
-export function worldBounds():SurfaceRect[];
-declare const api:{regionKind:typeof regionKind;validate:typeof validate;normalize:typeof normalize;partition:typeof partition;masks:typeof masks;clearSegment:typeof clearSegment;free:typeof free;bodyFree:typeof bodyFree;spawnArea:typeof spawnArea;approaches:typeof approaches;worldBounds:typeof worldBounds};
-export default api;
+../packages/world/src/surface-domain.d.ts

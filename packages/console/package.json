@@ -1,5 +1,25 @@
 {
   "name": "@42tr/3dbox4agent-console",
   "private": true,
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "scripts": {
+    "build": "python3 build.py",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "node server/console-server.js",
+    "test": "node tests/graphics-state.test.js"
+  },
+  "dependencies": {
+    "@42tr/3dbox4agent-world": "0.1.0",
+    "@phosphor-icons/react": "2.1.10",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "three": "0.187.0",
+    "@42tr/3dbox4agent-control": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3"
+  }
 }

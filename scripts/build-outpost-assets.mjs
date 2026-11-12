@@ -14,7 +14,7 @@ global.FileReader = class {
   }
 };
 
-const output = new URL('../assets/mission-control/codex-outpost/', import.meta.url);
+const output = new URL('../packages/console/assets/mission-control/codex-outpost/', import.meta.url);
 await fs.mkdir(output, { recursive: true });
 const materials = Object.fromEntries(Object.entries({
   ivory: [0xd7d7c9, .19, .66],

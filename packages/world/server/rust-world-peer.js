@@ -1,5 +1,5 @@
 'use strict';
-const {WorldPeer}=require('../../../rust/physics/target/release/box_physics.node');
+const {WorldPeer}=require('../native/physics/target/release/box_physics.node');
 const fields=['config','nextId','queue','inboxes','sentTick','sentBy','outages','messageRequests'];
 function freeze(value){if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value)}return value}
 function guarded(operation){try{return operation()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldPeerFailure:true})}}

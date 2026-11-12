@@ -9,7 +9,7 @@ import quality from './render-quality.js';
 import graphics from './graphics-state.js';
 import {createLunarEnvironment} from './lunar-environment.js';
 import {createSurfacePresentation} from './surface-presentation.js';
-import surfaceDomain from './surface-domain.js';
+import surfaceDomain from '@42tr/3dbox4agent-world/surface-domain';
 
 // Visuals consume snapshots only; geometry is illustrative, not collision geometry.
 window.SandboxGraphics=graphics;

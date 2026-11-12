@@ -10,7 +10,7 @@
 
 ### World
 
-位置：`packages/world`，以及迁移中的根目录 `rust/`、`server/` 和领域模块。
+位置：`packages/world`。场景在 `scenes/`，Rust/Rapier 源码在 `native/physics/`。
 
 World 是唯一的世界真值来源，负责：
 
@@ -45,7 +45,7 @@ Control 的 MCP 工具从请求的 `Authorization: Bearer <agent-token>` 读取 
 
 ### Agent
 
-位置：`packages/agent`，以及 `sdk/python` 中的策略和示例。
+位置：`packages/agent`。Python 策略、协调器和 runner 位于 `packages/agent/python`，可安装的 Python 客户端位于 `sdk/python`。
 
 Agent 层负责从观察生成动作：
 
@@ -69,63 +69,49 @@ Console 负责展示和人工操作：
 - 回放、场景设置和人工控制；
 - WebGL 状态、画质和资源加载。
 
-入口和展示层已经迁入 `packages/console/src`：`app.html`、`mission-control.tsx`、`scene3d.js`、月面环境、水面展示、镜头、视觉运动和画质模块。根目录同名路径是兼容符号链接。面板依赖和部分世界领域模块仍通过兼容链接复用根目录代码。
+Console 的入口、React 面板和三维展示模块位于 `packages/console/src`，模型与纹理位于 `packages/console/assets`。Console 通过 npm 工作区依赖 World 的公开浏览器模块，构建产物位于 `packages/console/dist/index.html`。
 
-Console 不直接调用 `world-core` 修改状态。它通过 Control 接口提交人工动作，并从快照和事件更新画面。
+在线 Console 通过 Control 提交人工动作，并从 World 的快照和事件更新画面。离线预览在浏览器内运行 World 内核。
 
 ## 数据流
 
 ```text
-Rule / LLM Policy
-        │ observation / action
-        ▼
-Agent Runtime ── HTTP / MCP ──► Control Server
-                                      │
-Console ───────── HTTP ──────►         ▼
-                              World Service
-                                      │
-                                      ▼
-                 world-core + WASM/Rust/Rapier backend
-                                      │
-                             snapshot / events
-                              ┌───────┴────────┐
-                              ▼                ▼
-                         Agent observe      Console view
+Agent Runtime ─── HTTP / MCP ──► Control Server ── HTTP ──► World
+Console       ─── /control ────► Control Server
+Console       ◄── /stream ──────────────────────────────── World
 ```
 
 World 只接受语义命令，不接受普通调用方直接改写位置、电量、任务状态或事件历史。一次动作是否完成由 World 在目标 tick 中决定。
 
 ## 运行单元
 
-当前部署可以拆成四个运行单元：
+Compose 为四个运行单元分别构建镜像。World 和 Control 通过内部服务名互连，Console 对外提供页面。
 
 1. World Service：运行场景和仿真时钟，持有唯一世界状态，监听 World HTTP/WebSocket。
 2. Control Server：独立 Rust 进程，监听 Axum HTTP 和 RMCP MCP；它转发请求，不复制 World 状态。
 3. Agent Runtime：规则或 LLM 进程，通过 Control HTTP 或 MCP 读取观察并提交动作。
-4. Console：浏览器应用，通过 Control HTTP 提交人工命令；实时观察通过 World WebSocket。
+4. Console：提供构建后的页面，将同源 `/control` 转发到 Control，并将 `/stream` 转发到 World。
 
-本地开发时可以把 Agent 逻辑嵌在任意宿主进程里，但它仍只能通过 Control
-协议访问 World。生产部署时四个单元可以分别扩缩容，Control 和 Agent 不需要
-链接 Rust 或 JavaScript SDK。
+Agent 可以独立启动。Python 实验 runner 将会话管理和实时观察发到 World，将设备与协调器的 HTTP 请求发到 Control。
+需要兼容 gRPC 时，可以在 runner 所在的环境启动 Python 网关并为它配置 World 地址。
 
-## 依赖方向
+本地开发可在仓库根目录先运行 `npm ci` 和 `npm run build`，然后在不同终端启动各项目。
 
-```text
-control-contracts ───────► Control Server
-                                  │ HTTP
-                                  ▼
-                           World Service
-                                  ▲
-                                  │ HTTP / WS
-                              Console
+```sh
+BOX_WORLD_API_ONLY=1 npm start --workspace @42tr/3dbox4agent-world
+cargo run --locked --manifest-path packages/control-server/Cargo.toml
+npm start --workspace @42tr/3dbox4agent-console
+npm run start:python --workspace @42tr/3dbox4agent-agent -- --fault none --archive
 ```
 
-允许的关系：
+Console 默认监听 `127.0.0.1:8780`，Control 监听 `127.0.0.1:8789`，World 监听 `127.0.0.1:8787`。
+
+## 依赖方向
 
 - World 使用共享契约和服务端 Control 适配器；
 - Control Server 只调用 World 的公开 HTTP 接口；
 - Agent 通过 HTTP 或 RMCP 调用 Control Server；
-- Console 通过同源 `/control` 调用 Control Server，实时 WebSocket 直连 World 的 `/stream`；
+- Console 的 HTTP 入口将 `/control` 转发到 Control Server，将实时 WebSocket 转发到 World 的 `/stream`；
 - Agent 不依赖 Console；
 - World 不依赖 Agent 策略或 React/Three.js。
 
@@ -137,28 +123,17 @@ control-contracts ───────► Control Server
 
 ## 当前迁移状态
 
-已完成：
+- npm 工作区管理 World、Agent、Console 和共享协议包的依赖。
+- World 的服务、内置场景、Rust/Rapier 源码和实验目录工具归入 World 包。
+- Console 从自身目录构建和检查类型。根目录的 `index.html` 指向当次构建的产物。
+- Python Agent 与协调器脚本归入 Agent。旧脚本路径继续可用。
+- JSON 信封和 Protobuf 定义归入共享协议包。可选 Python gRPC 网关位于 `packages/control-server/gateways/grpc`，目前仍调用 World。
+- 实验报告解析、回放和定时计划校验位于 World。Console 从各工作区构建页面和资源。
+- Compose 通过服务名访问各服务。离线部署包保存四个镜像，跨项目 HTTP、MCP、WebSocket、发布和日志分支测试位于 `tests/integration`。
 
-- World Core 与运行时端口；
-- World Core 直接依赖的主要领域模块已迁入 `packages/world/src`；
-- World 服务的物理、Rust 绑定、日志和事务支持已迁入 `packages/world/server`；
-- World 单体服务、Supervisor 和 Worker 入口已迁入 `packages/world/server`；
-- World Server、Rapier 适配器和构建脚本已优先读取迁移后的 World 模块；
-- Control 契约和独立 Rust Control Server 骨架；
-- Axum HTTP 代理与 `/health`，以及 Console 同源 `/control` 入口；
-- RMCP Streamable HTTP `/mcp` 及 Agent 工具；
-- Agent 默认走 Control HTTP，已覆盖真实 HTTP/MCP 集成验证；
-- LLM Policy 基础适配器；
-- Console 入口和三维展示层迁入 `packages/console`；
-- 根目录兼容入口和单文件构建保持可用。
-
-仍在迁移：
-
-- World 的 Rust、server、场景和领域模块；
-- World 的实验报告、回放视图和剩余纯领域工具；
-- 根目录 World 入口现在只是兼容启动包装，后续可在调用方完成迁移后移除；
-- Console 面板依赖、纯视图模块和 3D 资源；
-- 前端对 World 内部模块的剩余兼容链接。
+事件日志分支会比对源会话的运行时指纹，源码路径和锁文件也是指纹的一部分。
+需要在升级后继续旧实验时，保留生成日志时的镜像或代码版本，并用对应的 World 运行时创建分支。
+新版仍可读取受支持格式的回放。
 
 ## 开发规则
 
@@ -173,7 +148,10 @@ npm run test:agent-http
 npm run test:llm-policy
 npm run test:control-server
 npm run typecheck:ui
+npm run test:console-artifact
+npm run test:container
+npm run test:container-rust
 npm run build
 ```
 
-`npm run build` 会生成根目录的单文件 `index.html`。该文件是构建产物，验证后不要把本机生成差异当成架构源码修改。
+`npm run build` 生成 `packages/console/dist/index.html`。可直接打开该文件运行离线预览。

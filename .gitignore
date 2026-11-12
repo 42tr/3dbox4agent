@@ -1,8 +1,9 @@
 # Dependencies, local runs, and native build output
 node_modules/
 .3dbox/
-rust/physics/target/
+packages/world/native/physics/target/
 packages/control-server/target/
+packages/console/dist/
 
 # Python environments and caches
 __pycache__/

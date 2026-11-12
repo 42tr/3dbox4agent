@@ -1,6 +1,7 @@
 'use strict';
 
 const {createPolicy, normalizeDecision} = require('./agent-runtime');
+const {ACTION_TYPES} = require('@42tr/3dbox4agent-control/contracts');
 
 const ACTION_SCHEMA = Object.freeze({
   type: 'object',
@@ -15,7 +16,7 @@ const ACTION_SCHEMA = Object.freeze({
         required: ['requestId', 'type', 'targetTick', 'expiresTick'],
         properties: {
           requestId: {type: 'string'},
-          type: {type: 'string', enum: ['move', 'scan', 'charge', 'execute_task', 'work_task', 'rescue']},
+          type: {type: 'string', enum: ACTION_TYPES},
           targetTick: {type: 'integer'},
           expiresTick: {type: 'integer'},
           target: {type: 'object'},

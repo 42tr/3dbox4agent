@@ -1,1 +1,1 @@
-export function describe(report:unknown,tick:number,revision?:number|null):string|null;
+../packages/world/src/reports/control-events.d.ts

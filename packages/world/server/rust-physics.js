@@ -1,6 +1,6 @@
 'use strict';
 // Native Rust/Rapier backend. A session owns a separate collider set.
-const {PhysicsWorld,initializeWorldRay}=require('../../../rust/physics/target/release/box_physics.node');
+const {PhysicsWorld,initializeWorldRay}=require('../native/physics/target/release/box_physics.node');
 async function initialize(){}
 function createPhysics(state){
  let physics=new PhysicsWorld(JSON.stringify(state));

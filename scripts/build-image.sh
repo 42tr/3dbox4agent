@@ -5,10 +5,10 @@ usage() {
   cat <<'HELP'
 用法：bash scripts/build-image.sh [选项]
 
-构建、加载 world-rust 镜像并导出可部署的压缩包，自动传递终端代理变量。
+构建 World、Control、Console 和 Agent 镜像并导出部署包，自动传递终端代理变量。
 
   --arch amd64|arm64   目标 CPU 架构，默认 amd64
-  --image NAME:TAG     自定义镜像名，默认使用 Git 短号和时间生成
+  --image NAME:TAG     自定义 World 镜像名，默认使用 Git 短号和时间生成
   --network MODE      host、default 或 none；Linux 默认 host，其他系统默认 default
   -h, --help          显示帮助
 
@@ -75,6 +75,9 @@ release_dir="$build_root/.3dbox/releases/$release_name"
 release_archive="${release_dir}.tar.gz"
 release_checksum="${release_archive}.sha256"
 if [[ -z "$release_image" ]]; then release_image="${release_name}:world-rust"; fi
+release_control_image="${release_name}:control"
+release_console_image="${release_name}:console"
+release_agent_image="${release_name}:agent"
 for package_source in "$build_root/deploy/compose.runtime.yaml" "$build_root/deploy/README.md"; do
   if [[ ! -f "$package_source" ]]; then
     printf '缺少部署模板：%s\n' "$package_source" >&2
@@ -91,13 +94,11 @@ done
 build_args=(
   buildx build
   --platform "$release_platform"
-  --target world-rust
   --load
   --progress=plain
   --network "$build_network"
   --build-arg "PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.org/simple}"
   --build-arg "NPM_REGISTRY=${NPM_REGISTRY:-https://registry.npmjs.org}"
-  -t "$release_image"
 )
 if [[ "$build_network" == host ]]; then build_args+=(--allow=network.host); fi
 for build_proxy_key in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy; do
@@ -106,15 +107,32 @@ for build_proxy_key in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy http
   fi
 done
 
-printf '构建镜像：%s\n目标平台：%s\n构建网络：%s\n' "$release_image" "$release_platform" "$build_network"
-docker "${build_args[@]}" .
+build_release_image() {
+  local image="$1" dockerfile="$2"
+  shift 2
+  printf '构建镜像：%s\n' "$image"
+  docker "${build_args[@]}" --file "$dockerfile" -t "$image" "$@" .
+}
 
-release_image_id="$(docker image inspect --format '{{.Id}}' "$release_image")"
-image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$release_image")"
-if [[ "$image_platform" != "$release_platform" ]]; then
-  printf '镜像平台不匹配：期望 %s，实际 %s\n' "$release_platform" "$image_platform" >&2
-  exit 1
-fi
+release_image_id_for() {
+  local image="$1" actual_platform
+  actual_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")"
+  if [[ "$actual_platform" != "$release_platform" ]]; then
+    printf '镜像 %s 平台不匹配：期望 %s，实际 %s\n' "$image" "$release_platform" "$actual_platform" >&2
+    return 1
+  fi
+  docker image inspect --format '{{.Id}}' "$image"
+}
+
+printf '目标平台：%s\n构建网络：%s\n' "$release_platform" "$build_network"
+build_release_image "$release_image" packages/world/Dockerfile --target world-rust
+release_image_id="$(release_image_id_for "$release_image")"
+build_release_image "$release_control_image" packages/control-server/Dockerfile
+release_control_id="$(release_image_id_for "$release_control_image")"
+build_release_image "$release_console_image" packages/console/Dockerfile
+release_console_id="$(release_image_id_for "$release_console_image")"
+build_release_image "$release_agent_image" packages/agent/Dockerfile
+release_agent_id="$(release_image_id_for "$release_agent_image")"
 
 build_stage=''
 build_env_tmp=''
@@ -132,16 +150,29 @@ cp "$build_root/deploy/compose.runtime.yaml" "$package_dir/compose.yaml"
 cp "$build_root/deploy/README.md" "$package_dir/README.md"
 cat > "$package_dir/.env" <<ENV
 BOX_IMAGE=$release_image
+BOX_CONTROL_IMAGE=$release_control_image
+BOX_CONSOLE_IMAGE=$release_console_image
+BOX_AGENT_IMAGE=$release_agent_image
 BOX_PLATFORM=$release_platform
 BOX_HTTP_BIND=0.0.0.0
 BOX_HTTP_PORT=8787
 BOX_WORLD_WORKERS=2
 ENV
-printf 'source_commit=%s\nplatform=%s\nimage=%s\nimage_id=%s\n' \
-  "$source_commit" "$release_platform" "$release_image" "$release_image_id" > "$package_dir/RELEASE.txt"
+cat > "$package_dir/RELEASE.txt" <<RELEASE
+source_commit=$source_commit
+platform=$release_platform
+image=$release_image
+image_id=$release_image_id
+control_image=$release_control_image
+control_image_id=$release_control_id
+console_image=$release_console_image
+console_image_id=$release_console_id
+agent_image=$release_agent_image
+agent_image_id=$release_agent_id
+RELEASE
 
 printf '\n正在导出镜像并生成部署压缩包……\n'
-docker image save "$release_image" | gzip -1 > "$package_dir/image.tar.gz"
+docker image save "$release_image" "$release_control_image" "$release_console_image" "$release_agent_image" | gzip -1 > "$package_dir/image.tar.gz"
 (
   cd "$package_dir"
   release_sha image.tar.gz compose.yaml .env README.md RELEASE.txt > SHA256SUMS
@@ -166,6 +197,9 @@ build_env_tmp="$(mktemp "$build_result_dir/.last-build.env.XXXXXX")"
   printf 'release_platform=%q\n' "$release_platform"
   printf 'release_name=%q\n' "$release_name"
   printf 'release_image=%q\n' "$release_image"
+  printf 'release_control_image=%q\n' "$release_control_image"
+  printf 'release_console_image=%q\n' "$release_console_image"
+  printf 'release_agent_image=%q\n' "$release_agent_image"
   printf 'release_dir=%q\n' "$release_dir"
   printf 'release_archive=%q\n' "$release_archive"
   printf 'release_checksum=%q\n' "$release_checksum"

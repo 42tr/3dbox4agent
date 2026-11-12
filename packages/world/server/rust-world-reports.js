@@ -1,5 +1,5 @@
 'use strict';
-const {WorldReports}=require('../../../rust/physics/target/release/box_physics.node');
+const {WorldReports}=require('../native/physics/target/release/box_physics.node');
 const fields=['reporting','fixedSensors','fixedSensorState','evidenceReports','sampleReports'];
 function freeze(value){if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value)}return value}
 function guarded(fn){try{return fn()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldReportsFailure:true})}}

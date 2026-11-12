@@ -1,6 +1,7 @@
 from io import BytesIO
 import unittest
 from unittest.mock import patch
+from urllib.request import HTTPRedirectHandler
 from box_agent import AgentClient, SandboxError
 
 
@@ -18,6 +19,16 @@ class TransportTest(unittest.TestCase):
                 with self.assertRaises(SandboxError) as result:
                     client.send_message('other', 'hello', request_id='retry-1')
                 self.assertEqual((result.exception.status, result.exception.code), (0, 'connection_error'))
+
+    def test_configured_origins_and_bearer_on_redirect(self):
+        for origin in ('http://control:8789', 'https://control.example'):
+            with self.subTest(origin=origin), patch('box_agent.client.urlopen', return_value=BytesIO(b'{}')) as opener:
+                AgentClient('session', 'agent', 'token', origin).observe()
+                request = opener.call_args.args[0]
+                self.assertEqual(request.full_url, origin + '/sessions/session/observations/agent')
+                self.assertEqual(request.get_header('Authorization'), 'Bearer token')
+                redirect = HTTPRedirectHandler().redirect_request(request, None, 302, 'Found', {}, 'https://other.example/')
+                self.assertIsNone(redirect.get_header('Authorization'))
 
 
 if __name__ == '__main__':

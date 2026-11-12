@@ -52,6 +52,17 @@ RMCP 工具从 MCP 请求的 HTTP Authorization 头读取 Agent token，并把�
 转发给 World。显式配置 CONTROL_AGENT_TOKEN 后，可以省略请求头并使用进程级默认凭据。
 工具失败时返回 MCP `isError: true`，JSON 内容包含 World 的错误码及 HTTP 状态。
 
+## 可选 gRPC 网关
+
+旧 gRPC 调用方可以单独启动 Python 网关：
+
+~~~sh
+python3 -m pip install './sdk/python[grpc-stream]'
+python3 packages/control-server/gateways/grpc/grpc_gateway.py --world-url http://127.0.0.1:8787
+~~~
+
+网关使用 Python SDK，默认监听 8788，HTTP 和实时观察目前由 World 提供。
+
 ## 验证
 
 ~~~sh

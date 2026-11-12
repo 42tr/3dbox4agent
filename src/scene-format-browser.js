@@ -1,2 +1,1 @@
-'use strict';
-globalThis.SandboxSceneFormat=require('./scene-format');
+../packages/console/src/scene-format-browser.js

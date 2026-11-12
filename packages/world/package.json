@@ -1,5 +1,40 @@
 {
   "name": "@42tr/3dbox4agent-world",
   "private": true,
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "scripts": {
+    "start": "node server/world-supervisor.js",
+    "start:single": "node server/world-server.js",
+    "build:native": "node scripts/build-rust-physics.js",
+    "test": "node tests/replay.test.js"
+  },
+  "exports": {
+    ".": "./src/world-runtime.js",
+    "./construction": "./src/construction.js",
+    "./echelons": "./src/echelons.js",
+    "./scene-format": "./src/scene-format.js",
+    "./sensors": "./src/sensors.js",
+    "./stream-protobuf": "./src/stream-protobuf.js",
+    "./surface-domain": "./src/surface-domain.js",
+    "./task-graph": "./src/task-graph.js",
+    "./control-events": "./src/reports/control-events.js",
+    "./scheduled-plan": "./src/scheduled-plan.js"
+  },
+  "dependencies": {
+    "@42tr/3dbox4agent-control": "0.1.0",
+    "@dimforge/rapier3d-compat": "0.19.3",
+    "protobufjs": "^7.6.6",
+    "ws": "8.22.1",
+    "yaml": "^2.9.1"
+  },
+  "files": [
+    "src",
+    "server",
+    "scenes",
+    "scripts",
+    "native/physics/Cargo.toml",
+    "native/physics/Cargo.lock",
+    "native/physics/build.rs",
+    "native/physics/src"
+  ]
 }

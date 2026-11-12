@@ -1,5 +1,5 @@
 'use strict';
-const {WorldActions}=require('../../../rust/physics/target/release/box_physics.node');
+const {WorldActions}=require('../native/physics/target/release/box_physics.node');
 const runtimeFields=new Set(['status','updatedTick','reason','resumeTaskId','progress','phase','energyAdded','result']);
 function freeze(value){if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value)}return value}
 function guarded(operation){try{return operation()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldActionsFailure:true})}}

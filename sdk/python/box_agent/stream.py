@@ -116,7 +116,8 @@ class ObservationStream:
         if self._socket is not None:
             raise RuntimeError('stream already open')
         origin = urlsplit(self._base)
-        self._socket = connect('ws://' + origin.netloc + '/stream', open_timeout=self.timeout,
+        scheme = 'wss' if origin.scheme == 'https' else 'ws'
+        self._socket = connect(f'{scheme}://{origin.netloc}/stream', open_timeout=self.timeout,
                                close_timeout=2, max_size=_MAX_MESSAGE, compression=None, proxy=None)
         try:
             self._socket.send(json.dumps({'type':'subscribe', 'sessionId':self._session, 'token':self._token,

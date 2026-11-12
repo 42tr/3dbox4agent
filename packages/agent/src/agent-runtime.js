@@ -1,6 +1,6 @@
 'use strict';
 
-const {validateActionEnvelope, validateObservation} = require('../../control/src/control-contracts');
+const {validateActionEnvelope, validateObservation} = require('@42tr/3dbox4agent-control/contracts');
 
 /**
  * Layer 3: policy execution. A policy sees an observation and returns a

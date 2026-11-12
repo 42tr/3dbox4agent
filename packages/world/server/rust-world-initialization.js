@@ -1,5 +1,5 @@
 'use strict';
-const {initializeWorld}=require('../../../rust/physics/target/release/box_physics.node');
+const {initializeWorld}=require('../native/physics/target/release/box_physics.node');
 // The private seed request is retained only for the initial actual-physics ray
 // query. Neither operation accepts a host-generated agent/task/runtime frame.
 const requests=new WeakMap();

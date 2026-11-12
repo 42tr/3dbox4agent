@@ -1,5 +1,5 @@
 'use strict';
-const {WorldDispatch}=require('../../../rust/physics/target/release/box_physics.node');
+const {WorldDispatch}=require('../native/physics/target/release/box_physics.node');
 const fields=['dispatchQueue','dispatchAvoid','nextDispatchId'],runtime=new Set(['status','appliedTick','reason']);
 function freeze(v){if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v)}return v}
 function guarded(fn){try{return fn()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldDispatchFailure:true})}}
