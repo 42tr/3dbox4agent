@@ -1,54 +1,59 @@
-# 3DBox 部署包
+# 构建与部署
 
-服务器需要 Docker Engine 与 Docker Compose，CPU 架构须与 `RELEASE.txt` 中的平台一致。`image.tar.gz` 包含 World、Control、Console 和 Agent 四个镜像及各自的运行依赖。
+## 从源码生成离线包
 
-## 上传与解压
+在源码仓库根目录运行，构建机需要 Docker Engine、Buildx 和 Git：
 
-将生成的 `.tar.gz` 和同名 `.tar.gz.sha256` 文件上传到服务器。以下用 `实际包名` 代替文件名中 `.tar.gz` 前的部分：
-
-```bash
-sha256sum -c 实际包名.tar.gz.sha256
-tar -xzf 实际包名.tar.gz
-cd 实际包名
+```sh
+bash scripts/build-image.sh --arch amd64
 ```
 
-## 导入并启动
+ARM64 服务器使用 `--arch arm64`。脚本在 `.3dbox/releases/` 生成部署压缩包和同名 `.sha256`，内含 World（Rust 后端）、Control、Console 和 Agent 四个镜像。用 `--help` 查看自定义 World 镜像名和构建网络选项。
 
-先检查包内文件，再导入镜像、启动服务：
+脚本会传递终端已导出的 HTTP(S) 代理变量。Linux 默认使用 `host` 构建网络，以便访问宿主机的回环代理。构建器使用自己的网络或拒绝 `network.host` 时，可指定 `--network default` 并使用构建环境可达的代理。可用 `NPM_REGISTRY` 和 `PIP_INDEX_URL` 覆盖下载源。
 
-```bash
+## 校验、导入和启动
+
+在目标服务器上，用实际压缩包文件名替换示例中的 `release.tar.gz`：
+
+```sh
+sha256sum -c release.tar.gz.sha256
+tar -xzf release.tar.gz
+```
+
+进入解压目录，核对 `RELEASE.txt` 中的平台与服务器架构一致，然后执行：
+
+```sh
 sha256sum -c SHA256SUMS
 docker image load -i image.tar.gz
 docker compose -p 3dbox4agent config --quiet
 docker compose -p 3dbox4agent up --no-build --pull never --wait --wait-timeout 120 console
-docker compose -p 3dbox4agent ps
 curl -fsS http://127.0.0.1:8787/control/world/health
 ```
 
-容器应显示 `healthy`，健康接口应返回 `"ok": true`。启动失败时执行：
+打开 `http://服务器IP:8787/`，点击 **连接世界服务**。启动失败时可用 `docker compose -p 3dbox4agent logs --tail=100 world control console` 查看日志。
 
-```bash
-docker compose -p 3dbox4agent logs --tail=100 world control console
+按需启动 Agent 实验，将报告写到宿主机：
+
+```sh
+docker compose -p 3dbox4agent run --rm -T runner > agent-run.json
 ```
 
-包内 `.env` 已记录实际镜像名和 CPU 平台，无需从构建终端加载变量。默认映射 `0.0.0.0:8787`、最多同时运行 2 个世界进程；世界容器上限为 2 CPU、2 GiB 内存。容器重启策略为 `unless-stopped`，运行配置不包含构建路径。
+## 端口与 HTTPS
 
-## 访问与配置
-
-浏览器打开 `http://服务器IP:8787/`，点击“连接世界服务”。也可以通过 HTTPS 反向代理访问；代理需保留原 Host 并转发 `/stream` 的 WebSocket Upgrade。8787 由 Console 提供，Control 的 8789 仅发布到服务器回环地址。按需运行 Agent 时执行 `docker compose -p 3dbox4agent run --rm -T runner`。
-
-端口、绑定地址和世界并发数可在包内 `.env` 修改：
+部署包的 `.env` 已记录镜像和平台，可调整以下设置：
 
 ```dotenv
 BOX_HTTP_BIND=0.0.0.0
 BOX_HTTP_PORT=8787
+BOX_CONTROL_PORT=8789
 BOX_WORLD_WORKERS=2
 ```
 
-若只供同机反向代理访问，可将 `BOX_HTTP_BIND` 改为 `127.0.0.1`。配置修改后再次执行上述启动命令；若端口已修改，健康检查命令同步使用新端口。
+Console 使用 `BOX_HTTP_BIND` 和 `BOX_HTTP_PORT`。Control 的宿主机端口仅绑定回环地址，World 留在 Compose 内部网络。使用同机 HTTPS 反向代理时，可把 `BOX_HTTP_BIND` 设为 `127.0.0.1`。代理需保留外部 Host，并把 `/stream` 的 WebSocket Upgrade 转发给 Console。
 
 ## 更新与数据
 
-新版本使用同一 Compose 项目名 `3dbox4agent`，导入新镜像后执行同一启动命令，即可复用原数据卷中的日志和实验目录。服务重建会结束原内存会话。
+用同一 Compose 项目名导入并启动新部署包，继续使用原来的 `world-data` 卷。卷保存事件日志和实验目录，容器重建会结束内存会话。部署包只包含镜像和配置，迁移到另一台主机时需另行迁移数据卷。
 
-部署包包含应用镜像与配置，历史数据卷和正在运行的会话不随包迁移。`RELEASE.txt` 记录源码提交、镜像标签、镜像 ID 和平台；校验包内文件后再修改部署配置。
+`docker compose -p 3dbox4agent down` 保留卷，附加 `--volumes` 会删除卷。从旧日志恢复仿真时，保留生成该日志的 World 镜像和原日志访问凭据。
