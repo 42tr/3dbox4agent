@@ -37,7 +37,7 @@ def main():
         from box_agent.grpc_client import GrpcAgentClient
         client = GrpcAgentClient(os.environ['BOX_SESSION'], os.environ['BOX_AGENT'], os.environ['BOX_TOKEN'], args.grpc_target)
     else:
-        client = AgentClient(os.environ['BOX_SESSION'], os.environ['BOX_AGENT'], os.environ['BOX_TOKEN'], os.environ.get('BOX_URL',CONTROL_HTTP_ORIGIN))
+        client = AgentClient(os.environ['BOX_SESSION'], os.environ['BOX_AGENT'], os.environ['BOX_TOKEN'], os.environ.get('BOX_URL',CONTROL_HTTP_ORIGIN), run_id=os.environ.get('BOX_CONTROL_RUN_ID'))
     from box_agent.rescue_policy import RescuePolicy
     rescue_policy = RescuePolicy(max(10,args.lead_ticks), search=args.rescue_search) if args.auto_rescue else None
     prefix = 'task-' + uuid.uuid4().hex

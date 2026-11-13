@@ -64,6 +64,7 @@ exec "$BUILD_TEST_REAL_GZIP" "$@"
  function digest(file){return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}
  function checkPackage(saved){
   assert.equal(saved[6],saved[5]+'.tar.gz');assert.equal(saved[7],saved[6]+'.sha256');
+  assert.equal(fs.statSync(saved[6]).mode & 0o777, 0o600);
   const checksum=fs.readFileSync(saved[7],'utf8').trim().match(/^([a-f0-9]{64})\s+(.+)$/);assert(checksum);
   assert.equal(checksum[1],digest(saved[6]));assert.equal(checksum[2],path.basename(saved[6]));
   const extracted=fs.mkdtempSync(path.join(scratch,'extracted-'));
@@ -76,6 +77,7 @@ exec "$BUILD_TEST_REAL_GZIP" "$@"
   assert.equal(zlib.gunzipSync(fs.readFileSync(path.join(bundle,'image.tar.gz'))).toString(),'fake Docker image stream\n');
   const settings=Object.fromEntries(fs.readFileSync(path.join(bundle,'.env'),'utf8').trim().split('\n').map(line=>line.split('=')));
   assert.equal(settings.BOX_IMAGE,saved[4]);assert.equal(settings.BOX_PLATFORM,saved[2]);assert.equal(settings.BOX_HTTP_BIND,'0.0.0.0');
+  assert.match(settings.BOX_RUNNER_OPERATOR_TOKEN, /^[0-9a-f]{64}$/);
   const compose=YAML.parse(fs.readFileSync(path.join(bundle,'compose.yaml'),'utf8'));
   const services=['world','control','console','runner'];
   const imageKeys=['BOX_IMAGE','BOX_CONTROL_IMAGE','BOX_CONSOLE_IMAGE','BOX_AGENT_IMAGE'];
@@ -89,8 +91,18 @@ exec "$BUILD_TEST_REAL_GZIP" "$@"
   assert(compose.services.world.image.includes('BOX_IMAGE'));assert.equal(compose.services.world.pull_policy,'never');
   assert.equal(compose.services.world.ports,undefined);
   assert(compose.services.console.ports[0].includes('BOX_HTTP_BIND'));assert.equal(compose.services.world.restart,'unless-stopped');
+  assert.deepEqual(Object.keys(compose.services.runner.depends_on), ['control']);
+  assert.equal(compose.services.runner.environment.BOX_CONTROL_URL, 'http://control:8789');
+  assert.equal(compose.services.runner.environment.BOX_WORLD_URL, undefined);
+  assert.equal(compose.services.runner.profiles, undefined);
+  assert.equal(compose.services.runner.restart, 'unless-stopped');
+  assert.deepEqual(compose.services.runner.volumes, ['runner-auth:/var/lib/3dbox-runner-auth:ro']);
+  assert.equal(compose.services.control.environment.BOX_RUNNER_DATA_DIR, '/var/lib/3dbox-control');
+  assert(compose.services.control.volumes.includes('control-data:/var/lib/3dbox-control'));
+  assert.equal(compose.services.control.environment.BOX_RUNNER_BOOTSTRAP_FILE, compose.services.runner.environment.BOX_RUNNER_TOKEN_FILE);
   const release=fs.readFileSync(path.join(bundle,'RELEASE.txt'),'utf8');
   assert(release.includes('source_commit='+commit));
+  assert(release.includes('source_dirty=true\n'));
   for(const image of images)assert(release.includes('='+image+'\n'));
   assert.deepEqual(fs.readFileSync(saveLog,'utf8').trim().split('\n'),images);
   assert(!fs.readFileSync(path.join(bundle,'.env'),'utf8').includes('user:test'));

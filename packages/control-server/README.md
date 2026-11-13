@@ -24,6 +24,10 @@ curl -fsS -H "Authorization: Bearer ${BOX_TOKEN}" \
 
 经 Console 同源访问时，HTTP 路径加上 `/control`。WebSocket 使用 Console 的 `/stream`，由 Console 转发到 World。
 
+## Runner
+
+Compose 部署启用版本化的 Runner 接口。Console 通过同源 `/control/runners/v1/*` 管理运行，Runner 通过 `/runners/v1/*` 注册和领取任务。配置、租约和接入示例见 [Runner 协议](../../docs/runner-protocol.md)。
+
 ## MCP
 
 连接 `http://127.0.0.1:8789/mcp`，并携带 `Authorization: Bearer <agent-token>`。工具共有四个：

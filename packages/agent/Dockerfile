@@ -64,5 +64,8 @@ ENV PATH="/opt/box-agent/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 USER node
-ENTRYPOINT ["python3", "packages/agent/python/multi_agent_demo.py"]
-CMD ["--fault", "none", "--physics", "rapier", "--archive"]
+ENV BOX_RUNNER_BIND=0.0.0.0 BOX_RUNNER_PORT=8790
+EXPOSE 8790
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8790/health', timeout=2).close()"]
+CMD ["python3", "packages/agent/python/runner_web.py"]

@@ -27,6 +27,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 
+mod runner;
+
 #[derive(Clone)]
 struct AppState {
     client: Client,
@@ -321,6 +323,7 @@ fn env_or(name: &str, fallback: &str) -> String {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(env_or("RUST_LOG", "threebox_control_server=info"))
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()) && env::var_os("NO_COLOR").is_none())
         .init();
 
     let world_origin = reqwest::Url::parse(&env_or("WORLD_URL", "http://127.0.0.1:8787"))
@@ -373,6 +376,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .merge(mcp_router)
+        .merge(runner::router::<AppState>(state.client.clone(), state.world_url.clone())?)
         .fallback(proxy)
         .with_state(state);
 

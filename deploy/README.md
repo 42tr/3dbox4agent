@@ -27,16 +27,19 @@ tar -xzf release.tar.gz
 sha256sum -c SHA256SUMS
 docker image load -i image.tar.gz
 docker compose -p 3dbox4agent config --quiet
-docker compose -p 3dbox4agent up --no-build --pull never --wait --wait-timeout 120 console
+docker compose -p 3dbox4agent up --no-build --pull never --wait --wait-timeout 120
 curl -fsS http://127.0.0.1:8787/control/world/health
 ```
 
-打开 `http://服务器IP:8787/`，点击 **连接世界服务**。启动失败时可用 `docker compose -p 3dbox4agent logs --tail=100 world control console` 查看日志。
+打开 `http://服务器IP:8787/`，点击 **连接世界服务**。启动失败时可用 `docker compose -p 3dbox4agent logs --tail=100 world control console runner` 查看日志。
 
-按需启动 Agent 实验，将报告写到宿主机：
+部署默认启动 World、Control、Console 和 Runner。进入 Console 的 **Runner 实验 → 管理令牌与外部 Runner**，应用部署包 `.env` 中的 `BOX_RUNNER_OPERATOR_TOKEN`，然后选择内置 Runner，配置并启动实验。运行结束后可以直接打开或下载回放。
+
+原有的单次命令行实验也可以运行：
 
 ```sh
-docker compose -p 3dbox4agent run --rm -T runner > agent-run.json
+docker compose -p 3dbox4agent run --rm -T runner \
+  python3 packages/agent/python/multi_agent_demo.py --fault none --physics rapier --archive > agent-run.json
 ```
 
 ## 端口与 HTTPS
@@ -52,8 +55,14 @@ BOX_WORLD_WORKERS=2
 
 Console 使用 `BOX_HTTP_BIND` 和 `BOX_HTTP_PORT`。Control 的宿主机端口仅绑定回环地址，World 留在 Compose 内部网络。使用同机 HTTPS 反向代理时，可把 `BOX_HTTP_BIND` 设为 `127.0.0.1`。代理需保留外部 Host，并把 `/stream` 的 WebSocket Upgrade 转发给 Console。
 
+## 接入外部 Runner
+
+部署包自动生成 `BOX_RUNNER_OPERATOR_TOKEN`。在 Console 应用令牌后，即可在 **管理令牌与外部 Runner** 签发凭据。升级时可将上一个部署的令牌复制到新包的 `.env`，以继续使用同一个管理令牌。
+
+远程 Runner 需要能通过 HTTPS 访问 Control 的 `/runners/v1/*`。可在 HTTPS 反向代理上将 Runner 协议路径转发到服务器回环地址上的 Control 端口。协议及示例见源码仓库的 `docs/runner-protocol.md`。
+
 ## 更新与数据
 
-用同一 Compose 项目名导入并启动新部署包，继续使用原来的 `world-data` 卷。卷保存事件日志和实验目录，容器重建会结束内存会话。部署包只包含镜像和配置，迁移到另一台主机时需另行迁移数据卷。
+用同一 Compose 项目名导入并启动新部署包，继续使用原来的 `world-data` 卷。`world-data` 保存事件日志和实验目录，`control-data` 保存 Runner 注册、运行记录和回放，`runner-auth` 保存内置 Runner 凭据。World 容器重建会结束内存会话。迁移到另一台主机时，另行迁移这些数据卷。
 
 `docker compose -p 3dbox4agent down` 保留卷，附加 `--volumes` 会删除卷。从旧日志恢复仿真时，保留生成该日志的 World 镜像和原日志访问凭据。

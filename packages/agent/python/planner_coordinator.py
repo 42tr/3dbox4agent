@@ -45,7 +45,7 @@ def main():
         from box_agent.grpc_client import GrpcCoordinatorClient
         client = GrpcCoordinatorClient(os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], args.grpc_target)
     else:
-        client = CoordinatorClient(os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], os.environ.get('BOX_URL', CONTROL_HTTP_ORIGIN))
+        client = CoordinatorClient(os.environ['BOX_SESSION'], os.environ['BOX_COORDINATOR_TOKEN'], os.environ.get('BOX_URL', CONTROL_HTTP_ORIGIN), run_id=os.environ.get('BOX_CONTROL_RUN_ID'))
     prefix = 'planner-' + uuid.uuid4().hex
     sequence = 0
     with ExitStack() as stack:

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import time
 import uuid
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
@@ -27,7 +28,7 @@ def main():
     target = 'world-rust' if args.native else 'world'
     name = '3dbox-smoke-' + uuid.uuid4().hex[:12]
     env = {**os.environ, 'BOX_HTTP_PORT': '0', 'BOX_CONTROL_PORT': '0', 'BOX_IMAGE_TARGET': target,
-           'BOX_IMAGE_NAME': name, 'BOX_REPLAY_JOURNAL': '1'}
+           'BOX_IMAGE_NAME': name, 'BOX_REPLAY_JOURNAL': '1', 'BOX_RUNNER_OPERATOR_TOKEN': uuid.uuid4().hex}
     compose = ['docker', 'compose', '-p', name, '-f', str(ROOT / 'compose.yaml')]
 
     def command(arguments, *, capture=False, data=None, timeout=120):
@@ -59,10 +60,12 @@ print(json.dumps(capture_recording_context(payload['session'], payload['runtime'
     images = [f'{name}:{tag}' for tag in (target, 'control', 'console', 'agent')]
     print(f'Building independent images for the isolated {target} stack', flush=True)
     try:
-        command(compose + ['--profile', 'experiments', 'build', 'world', 'control', 'console', 'runner'], timeout=1200)
+        command(compose + ['build', 'world', 'control', 'console', 'runner'], timeout=1200)
         image_ids = command(['docker', 'image', 'inspect', '--format', '{{.Id}}', *images], capture=True)
         assert len(set(image_ids.splitlines())) == 4
         command(compose + ['up', '-d', '--wait', '--wait-timeout', '90'], timeout=120)
+        services = command(compose + ['ps', '--services', '--status', 'running'], capture=True)
+        assert set(services.splitlines()) == {'world', 'control', 'console', 'runner'}
         address = command(compose + ['port', 'console', '8787'], capture=True).strip()
         assert address.startswith('127.0.0.1:'), address
         base = 'http://' + address
@@ -140,14 +143,13 @@ sys.path.insert(0, 'sdk/python')
 from grpc_gateway import create_server
 p=json.load(sys.stdin)
 assert os.getuid()!=0
-world_url=os.environ['BOX_WORLD_URL']
 control_url=os.environ['BOX_CONTROL_URL']
 agent=AgentClient(p['sid'], 'vehicle-1', p['token'], control_url)
 assert agent.observe()['self']['id']=='vehicle-1'
 with ObservationStream(p['sid'],p['token'],'agent','vehicle-1','http://console:8787') as stream:
     assert stream.ready['encoding']=='protobuf-v2'
     assert stream.receive(timeout=5)['observation']['self']['id']=='vehicle-1'
-gateway=create_server(world_url)
+gateway=create_server('http://world:8787')
 port=gateway.add_insecure_port('127.0.0.1:0'); assert port
 gateway.start()
 client=GrpcAgentClient(p['sid'],'vehicle-1',p['token'],f'127.0.0.1:{port}')
@@ -171,11 +173,11 @@ print(json.dumps({'http':True,'protobufStream':True,'grpc':True,'nonRoot':True})
 
         print('Checking separate algorithm container over gRPC, with replay validation', flush=True)
         multi = exec_python('''
-import json, os, subprocess, sys
+import json, subprocess, sys
 sys.path.insert(0,'sdk/python')
 from grpc_gateway import create_server
 p=json.load(sys.stdin)
-gateway=create_server(os.environ['BOX_WORLD_URL'])
+gateway=create_server('http://world:8787')
 port=gateway.add_insecure_port('127.0.0.1:0'); assert port
 gateway.start()
 try:
@@ -197,8 +199,30 @@ try:
 finally: gateway.stop(0).wait()
 ''', {'native': args.native}, timeout=115)
 
-        print('Checking the documented default runner command', flush=True)
-        raw = command(compose + ['run', '--rm', '-T', 'runner'], capture=True, timeout=115)
+        print('Checking the default Runner Web service through Console', flush=True)
+        prefix = '/control/runners/v1'
+        operator = env['BOX_RUNNER_OPERATOR_TOKEN']
+        registry = required(prefix + '/runners', token=operator)
+        assert any(r['runnerId'] == 'builtin' and r['online'] for r in registry['runners'])
+        run = required(prefix + '/runs', 'POST', {
+            'requestId': str(uuid.uuid4()), 'runnerId': 'builtin',
+            'config': {'sceneId': 'industrial-park-parallel-v1', 'seed': 42, 'physics': 'rapier',
+                       'coordinators': 1, 'fault': 'none', 'maxTicks': 1000, 'timeoutSeconds': 45,
+                       'strategy': 'planner'},
+        }, token=operator)
+        run_url = prefix + '/runs/' + run['runId']
+        deadline = time.monotonic() + 70
+        while run['status'] in ('queued', 'starting', 'running', 'stopping') and time.monotonic() < deadline:
+            time.sleep(0.25)
+            run = required(run_url, token=operator)
+        assert run['status'] == 'completed' and run['hasReplay'], run
+        assert required(run_url + '/report', token=operator)['frames'][-1]['done']
+
+        print('Checking the single-run CLI', flush=True)
+        raw = command(compose + ['run', '--rm', '-T', 'runner', 'python3',
+                                  'packages/agent/python/multi_agent_demo.py',
+                                  '--fault', 'none', '--physics', 'rapier', '--archive'],
+                      capture=True, timeout=115)
         default_report = json.loads(raw)
         assert default_report['status'] == 'completed' and default_report['agentProcesses'] == 15
         assert default_report['coordinatorProcesses'] == 1
@@ -211,6 +235,7 @@ finally: gateway.stop(0).wait()
         address = command(compose + ['port', 'console', '8787'], capture=True).strip()
         assert address.startswith('127.0.0.1:'), address
         base = 'http://' + address
+        assert required(run_url, token=operator)['status'] == 'completed' and required(run_url + '/report', token=operator)['frames'][-1]['done']
         restarted_runtime = required('/health')['runtime']
         assert required('/control/world/health')['runtime'] == restarted_runtime
         assert restarted_runtime['instanceId'] != runtime['instanceId']

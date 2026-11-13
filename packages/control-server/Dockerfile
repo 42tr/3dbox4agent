@@ -19,8 +19,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=control-build /build/threebox-control-server /usr/local/bin/threebox-control-server
 COPY --from=control-build /build/control-licenses /usr/share/doc/threebox-control-server/crates
+RUN install -d -o 1000 -g 1000 -m 0700 /var/lib/3dbox-control \
+    && install -d -o 1000 -g 1000 -m 0700 /var/lib/3dbox-runner-auth \
+    && touch /var/lib/3dbox-control/.volume /var/lib/3dbox-runner-auth/.volume
 ENV CONTROL_BIND=0.0.0.0:8789
-USER 65534:65534
+USER 1000:1000
 EXPOSE 8789
 HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
     CMD ["curl", "-fsS", "--max-time", "3", "http://127.0.0.1:8789/world/health"]

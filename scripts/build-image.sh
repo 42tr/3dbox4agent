@@ -49,7 +49,7 @@ case "$build_network" in
   *) printf '不支持的网络模式：%s\n' "$build_network" >&2; exit 2 ;;
 esac
 
-for build_command in docker git tar gzip mktemp; do
+for build_command in docker git tar gzip mktemp od tr; do
   if ! command -v "$build_command" >/dev/null 2>&1; then
     printf '缺少命令：%s\n' "$build_command" >&2
     exit 1
@@ -68,6 +68,8 @@ docker buildx version >/dev/null
 build_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$build_root"
 source_commit="$(git rev-parse HEAD)"
+source_dirty=false
+if [[ -n "$(git status --porcelain)" ]]; then source_dirty=true; fi
 release_id="$(git rev-parse --short=12 HEAD)-$(date +%Y%m%d-%H%M%S)-$$"
 release_platform="linux/${release_arch}"
 release_name="3dbox4agent-${release_id}-linux-${release_arch}"
@@ -148,6 +150,8 @@ package_dir="$build_stage/$release_name"
 mkdir "$package_dir"
 cp "$build_root/deploy/compose.runtime.yaml" "$package_dir/compose.yaml"
 cp "$build_root/deploy/README.md" "$package_dir/README.md"
+chmod 700 "$package_dir"
+runner_operator_token="$(od -An -v -N32 -tx1 /dev/urandom | tr -d '[:space:]')"
 cat > "$package_dir/.env" <<ENV
 BOX_IMAGE=$release_image
 BOX_CONTROL_IMAGE=$release_control_image
@@ -157,9 +161,12 @@ BOX_PLATFORM=$release_platform
 BOX_HTTP_BIND=0.0.0.0
 BOX_HTTP_PORT=8787
 BOX_WORLD_WORKERS=2
+BOX_RUNNER_OPERATOR_TOKEN=$runner_operator_token
 ENV
+chmod 600 "$package_dir/.env"
 cat > "$package_dir/RELEASE.txt" <<RELEASE
 source_commit=$source_commit
+source_dirty=$source_dirty
 platform=$release_platform
 image=$release_image
 image_id=$release_image_id
@@ -178,6 +185,7 @@ docker image save "$release_image" "$release_control_image" "$release_console_im
   release_sha image.tar.gz compose.yaml .env README.md RELEASE.txt > SHA256SUMS
 )
 tar -cf - -C "$build_stage" "$release_name" | gzip -1 > "$build_stage/$release_name.tar.gz"
+chmod 600 "$build_stage/$release_name.tar.gz"
 (
   cd "$build_stage"
   release_sha "$release_name.tar.gz" > "$release_name.tar.gz.sha256"
@@ -192,6 +200,7 @@ mkdir -p "$build_result_dir"
 build_env_tmp="$(mktemp "$build_result_dir/.last-build.env.XXXXXX")"
 {
   printf 'source_commit=%q\n' "$source_commit"
+  printf 'source_dirty=%q\n' "$source_dirty"
   printf 'release_id=%q\n' "$release_id"
   printf 'release_arch=%q\n' "$release_arch"
   printf 'release_platform=%q\n' "$release_platform"

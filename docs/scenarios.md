@@ -22,19 +22,21 @@ node scripts/run-scene.js packages/world/scenes/shore-surface.json 42 1000 none 
 
 ## 多进程与定时实验
 
-启动 World 与 Control 后，可用独立设备和协调器进程运行场景。两个地址分别用于世界管理及实时观察、授权 HTTP 请求：
+启动 World 与 Control 后，可用独立设备和协调器进程运行场景。会话管理、观察和动作的 HTTP 请求都通过 Control：
 
 ```sh
 python3 packages/agent/python/multi_agent_demo.py \
-  --url http://127.0.0.1:8787 --control-url http://127.0.0.1:8789 \
+  --control-url http://127.0.0.1:8789 \
   --scene industrial-park-parallel-v1 --fault none --archive > agent-run.json
 ```
 
-如果使用源码 Compose 启动服务，可直接用 Agent 镜像运行实验：
+启用 `--observe-stream` 时，可用 `--url` 或 `BOX_WORLD_URL` 指定 WebSocket 观察流的服务地址。
+
+使用 Compose 时，打开 Console 左侧的 **Runner 实验** 选择 Runner 和实验参数，启动后可查看进度、停止或打开回放。也可以在命令行运行一次实验：
 
 ```sh
-docker compose --profile experiments build runner
-docker compose run --rm -T runner > agent-run.json
+docker compose run --rm -T runner \
+  python3 packages/agent/python/multi_agent_demo.py --fault none --physics rapier --archive > agent-run.json
 ```
 
 - 使用 `--scene-file` 运行文件场景。使用 `--schedule-plan` 时，由计划提供场景、种子、物理模式、步数上限和扰动，并使用固定步推进。可从[园区扰动计划](../examples/experiments/park-disturbances.json)或[海岸恢复计划](../examples/experiments/shore-sea-recovery.json)开始。

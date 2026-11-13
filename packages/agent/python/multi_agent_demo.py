@@ -20,8 +20,8 @@ from box_agent.recording import capture_recording_context
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--url', help='World origin for orchestration and WebSocket; also used for scoped HTTP unless --control-url is set')
-    parser.add_argument('--control-url', help='Control origin for scoped Agent and Coordinator HTTP')
+    parser.add_argument('--url', help='World origin for optional WebSocket observations or explicit standalone World runs')
+    parser.add_argument('--control-url', help='Control origin for orchestration and scoped Agent and Coordinator HTTP')
     scene_choice = parser.add_mutually_exclusive_group()
     scene_choice.add_argument('--scene', choices=SCENES, default=SCENES[1])
     scene_choice.add_argument('--scene-file', type=Path, help='local scene JSON or YAML, at most 60 KB')
@@ -151,11 +151,16 @@ def main():
         if (scene_input is None and args.scene not in ('lunar-sampling-v1', 'lunar-outpost-v1')) or (scene_input is not None and (not isinstance(scene_input.get('tasks'), list) or sum(t.get('behavior') == 'sample' for t in scene_input['tasks'] if isinstance(t, dict)) != 1)):
             parser.error('--sample-followup requires a scene with one sample task')
         args.auto_report_samples = True
-    world_url = args.url or os.environ.get('BOX_WORLD_URL') or 'http://127.0.0.1:8787'
-    control_url = args.control_url or os.environ.get('BOX_CONTROL_URL') or args.url or CONTROL_HTTP_ORIGIN
-    AgentClient('_','_','_',world_url)
+    configured_control_url = args.control_url or os.environ.get('BOX_CONTROL_URL')
+    control_url = configured_control_url or args.url or CONTROL_HTTP_ORIGIN
+    world_health_path = '/health' if args.url and not configured_control_url else '/world/health'
     AgentClient('_','_','_',control_url)
-    base = world_url.rstrip('/')
+    stream_env = {}
+    if args.observe_stream:
+        stream_url = args.url or os.environ.get('BOX_WORLD_URL') or 'http://127.0.0.1:8787'
+        AgentClient('_','_','_',stream_url)
+        stream_env['BOX_WORLD_URL'] = stream_url
+    base = control_url.rstrip('/')
     def request(path, method='GET', data=None, token=None):
         payload = None if data is None else json.dumps(data,ensure_ascii=False,separators=(',',':')).encode('utf-8')
         req = Request(base+path,data=payload,method=method,headers={'content-type':'application/json'})
@@ -164,13 +169,36 @@ def main():
         with urlopen(req,timeout=10) as response:
             return json.load(response)
 
-    runtime = request('/health')['runtime']
-    session = request('/sessions','POST',{'seed':args.seed,**({'scene':scene_input} if scene_input is not None else {'sceneId':args.scene}),'physicsMode':args.physics,'sensorMode':args.sensor_mode,
+    return execute(args, schedule_plan, schedule_source, schedule_hash, policy, policy_hash,
+                   scene_input, scene_file_hash, control_url, stream_env, request, world_health_path)
+
+
+def run_managed(config, client):
+    """Reuse the fixed-step experiment with a Control-owned session and replay."""
+    args = argparse.Namespace(
+        scene=config['sceneId'], seed=config['seed'], physics=config['physics'],
+        sensor_mode='geometry', dispatch='external', link_profile='default', fault=config['fault'],
+        coordinators=config['coordinators'], max_ticks=config['maxTicks'], timeout=config['timeoutSeconds'],
+        clock='step', speed=1, coordinator_fault_tick=None, outage='none', archive=False,
+        auction=False, sample_followup=False, auto_charge=False, preempt_for_charge=False,
+        auto_rescue=False, rescue_search=False, auto_report_samples=False, observe_stream=False,
+        grpc_observe_stream=False, agent_grpc_target=None, coordinator_grpc_target=None,
+        reconfigure_delay_ms=0, trace_decisions=False, trace_model_output=False,
+    )
+    return execute(args, None, None, None, None, None, None, None,
+                   client.base, {}, client.world_request, '/world/health', managed=client)
+
+
+def execute(args, schedule_plan, schedule_source, schedule_hash, policy, policy_hash,
+            scene_input, scene_file_hash, control_url, stream_env, request, world_health_path,
+            managed=None):
+    runtime = None if managed else request(world_health_path)['runtime']
+    session = managed.open_session() if managed else request('/sessions','POST',{'seed':args.seed,**({'scene':scene_input} if scene_input is not None else {'sceneId':args.scene}),'physicsMode':args.physics,'sensorMode':args.sensor_mode,
                                           'dispatchMode':args.dispatch,'executionMode':'primitive','linkProfile':args.link_profile, 'policy':schedule_plan['policy'] if schedule_plan else 'nearest'})
     args.scene = session['scene']['id']
     started = time.monotonic()
     root = '/sessions/'+session['sessionId']
-    admin = session['adminToken']
+    admin = managed.lease_token if managed else session['adminToken']
     directory = Path(__file__).resolve().parent
     children = []
     live_workers = set()
@@ -194,13 +222,19 @@ def main():
             coord_tokens = [('coordinator', request(root+'/coordinator/credentials','POST',{},admin)['coordinatorToken'])]
         else:
             coord_tokens = [(f'node-{i+1}', request(root+f'/coordinators/node-{i+1}/credentials','POST',{},admin)['coordinatorToken']) for i in range(args.coordinators)]
-        coordinator = CoordinatorClient(session['sessionId'],coord_tokens[0][1],control_url)
+        coordinator = CoordinatorClient(session['sessionId'],coord_tokens[0][1],control_url,
+                                        run_id=managed.run_id if managed else None)
         # Never inherit another 3DBOX role's token into a worker.
-        base_env = {k:v for k,v in os.environ.items() if k not in ('BOX_SESSION','BOX_TOKEN','BOX_COORDINATOR_TOKEN','BOX_AGENT','BOX_URL','BOX_WORLD_URL')}
+        base_env = {k:v for k,v in os.environ.items() if k not in (
+            'BOX_SESSION','BOX_TOKEN','BOX_COORDINATOR_TOKEN','BOX_AGENT','BOX_URL','BOX_WORLD_URL',
+            'BOX_RUNNER_TOKEN','BOX_RUNNER_TOKEN_FILE','BOX_RUNNER_BOOTSTRAP_TOKEN','BOX_RUNNER_OPERATOR_TOKEN',
+            'BOX_CONTROL_RUN_ID')}
+        if managed:
+            base_env['BOX_CONTROL_RUN_ID'] = managed.run_id
         def launch(name, script, env, arguments):
             log = tempfile.TemporaryFile(mode='w+t',encoding='utf-8')
             proc = subprocess.Popen([sys.executable,str(directory/script),*arguments],
-                                    env={**base_env,'BOX_URL':control_url,'BOX_WORLD_URL':world_url,**env},stdout=log,stderr=subprocess.STDOUT)
+                                    env={**base_env,'BOX_URL':control_url,**stream_env,**env},stdout=log,stderr=subprocess.STDOUT)
             children.append((name,proc,log))
             live_workers.add(proc)
             return proc
@@ -448,11 +482,19 @@ def main():
                 reason = 'sample_report_not_delivered'
             elif not any(any(t['id'] == p['task']['id'] and t['status'] == 'done' for t in state['world']['tasks']) for p in linked):
                 reason = 'sample_followup_not_completed'
+        if managed:
+            return (
+                'failed' if state['world']['failed'] or (reason and reason.startswith('worker_exited:')) else
+                'completed' if state['world']['done'] and (args.fault == 'none' or faulted) else
+                'failed' if state['world']['done'] else 'timeout',
+                'worker_exited' if reason and reason.startswith('worker_exited:') else
+                'fault_not_injected' if reason and reason.endswith('fault_not_injected') else reason,
+            )
         if args.archive:
             history = request(root+'/history?after=-1',token=admin)
         world = state['world']
         observation_transport_metrics = request(root+'/observation-transport',token=admin)
-        if request('/health')['runtime']['instanceId'] != runtime['instanceId']:
+        if request(world_health_path)['runtime']['instanceId'] != runtime['instanceId']:
             raise RuntimeError('world server instance changed during experiment')
         workspace = directory.parents[2]
         files = (('src/scheduled-plan.js','scripts/validate-scheduled-plan-stdin.js') if schedule_plan else ()) + ('src/scene-format.js','scripts/parse-scene-stdin.js','sdk/python/scene_input.py','package-lock.json','examples/scenes/shore-surface.json','examples/scenes/shore-sea-state.json','examples/scenes/shore-echelons.json','examples/scenes/shore-rescue.json','src/echelons.js','src/engine.js','src/surface-domain.js','src/navigation.js','src/sensors.js','server/world-server.js','sdk/python/multi_agent_demo.py','sdk/python/planner_coordinator.py','sdk/python/task_agent.py','sdk/python/policy_coordinator.py','sdk/python/evidence_policy.py','sdk/python/box_agent/client.py','sdk/python/box_agent/recording.py','sdk/python/box_agent/planner.py','sdk/python/box_agent/stream.py','sdk/python/box_agent/stream.desc','sdk/python/box_agent/observation_reader.py')
@@ -526,49 +568,58 @@ def main():
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-        logs = []
-        for name,proc,log in children:
-            log.seek(0)
-            text = log.read(2*1024*1024+1 if (policy or args.auction) and name == 'coordinator' else 16385)
-            if policy and name == 'coordinator':
-                lines = text.splitlines()
-                if len(text) > 2*1024*1024 and lines: lines.pop()
-                if args.trace_decisions and result is not None:
-                    trace, malformed = [], False
-                    for line in lines:
-                        if line.startswith('TRACE '):
-                            try: trace.append(json.loads(line[6:]))
-                            except ValueError: malformed = True
-                    result['policyTrace'] = [entry for entry in trace if entry.get('kind') != 'truncated']
-                    result['policyTraceTruncated'] = malformed or len(text) > 2*1024*1024 or any(entry.get('kind') == 'truncated' for entry in trace)
-                    starts = {entry['call'] for entry in trace if entry.get('kind') == 'start'}
-                    ends = {entry['call'] for entry in trace if entry.get('kind') == 'result'}
-                    result['policyTraceIncompleteCalls'] = sorted(starts-ends)
-                text = '\n'.join(line for line in lines if not line.startswith('TRACE '))
-            if args.auction and name == 'coordinator':
-                lines = text.splitlines()
-                if len(text) > 2*1024*1024 and lines: lines.pop()
-                trace, malformed = [], False
-                for line in lines:
-                    if line.startswith('AUCTION_TRACE '):
-                        try:
-                            event=json.loads(line[14:])
-                            if not isinstance(event,dict): raise ValueError('invalid trace')
-                            trace.append(event)
-                        except ValueError: malformed=True
-                if result is not None:
-                    result['auctionTrace'] = [e for e in trace if e.get('kind')!='truncated']
-                    result['auctionTraceTruncated'] = malformed or len(text)>2*1024*1024 or any(e.get('kind')=='truncated' for e in trace)
-                    started={e.get('auctionId') for e in trace if e.get('kind')=='open' and isinstance(e.get('auctionId'),str)}
-                    ended={e.get('auctionId') for e in trace if e.get('kind')=='close' and isinstance(e.get('auctionId'),str)}
-                    result['auctionTraceIncomplete'] = sorted(started-ended)
-                text='\n'.join(line for line in lines if not line.startswith('AUCTION_TRACE '))
-            logs.append({'role':name,'exitCode':proc.returncode,'output':text[:16384],'truncated':len(text)>16384})
-            log.close()
-        request(root,'DELETE',token=admin)
+        if managed:
+            for _, _, log in children:
+                log.close()
+        else:
+            logs = collect_logs(children, policy, args, result)
+            request(root,'DELETE',token=admin)
     result['processLogs'] = logs
     print(json.dumps(result,ensure_ascii=False,indent=None if args.archive else 2,separators=(',',':') if args.archive else None))
     return 0 if result['status']=='completed' and (args.fault=='none' or faulted) and (args.outage=='none' or outage_injected) and (args.coordinator_fault_tick is None or coordinator_fault_injected) else 1
+
+
+def collect_logs(children, policy, args, result):
+    logs = []
+    for name,proc,log in children:
+        log.seek(0)
+        text = log.read(2*1024*1024+1 if (policy or args.auction) and name == 'coordinator' else 16385)
+        if policy and name == 'coordinator':
+            lines = text.splitlines()
+            if len(text) > 2*1024*1024 and lines: lines.pop()
+            if args.trace_decisions and result is not None:
+                trace, malformed = [], False
+                for line in lines:
+                    if line.startswith('TRACE '):
+                        try: trace.append(json.loads(line[6:]))
+                        except ValueError: malformed = True
+                result['policyTrace'] = [entry for entry in trace if entry.get('kind') != 'truncated']
+                result['policyTraceTruncated'] = malformed or len(text) > 2*1024*1024 or any(entry.get('kind') == 'truncated' for entry in trace)
+                starts = {entry['call'] for entry in trace if entry.get('kind') == 'start'}
+                ends = {entry['call'] for entry in trace if entry.get('kind') == 'result'}
+                result['policyTraceIncompleteCalls'] = sorted(starts-ends)
+            text = '\n'.join(line for line in lines if not line.startswith('TRACE '))
+        if args.auction and name == 'coordinator':
+            lines = text.splitlines()
+            if len(text) > 2*1024*1024 and lines: lines.pop()
+            trace, malformed = [], False
+            for line in lines:
+                if line.startswith('AUCTION_TRACE '):
+                    try:
+                        event=json.loads(line[14:])
+                        if not isinstance(event,dict): raise ValueError('invalid trace')
+                        trace.append(event)
+                    except ValueError: malformed=True
+            if result is not None:
+                result['auctionTrace'] = [e for e in trace if e.get('kind')!='truncated']
+                result['auctionTraceTruncated'] = malformed or len(text)>2*1024*1024 or any(e.get('kind')=='truncated' for e in trace)
+                started={e.get('auctionId') for e in trace if e.get('kind')=='open' and isinstance(e.get('auctionId'),str)}
+                ended={e.get('auctionId') for e in trace if e.get('kind')=='close' and isinstance(e.get('auctionId'),str)}
+                result['auctionTraceIncomplete'] = sorted(started-ended)
+            text='\n'.join(line for line in lines if not line.startswith('AUCTION_TRACE '))
+        logs.append({'role':name,'exitCode':proc.returncode,'output':text[:16384],'truncated':len(text)>16384})
+        log.close()
+    return logs
 
 
 if __name__ == '__main__':

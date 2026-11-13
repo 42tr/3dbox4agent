@@ -1,12 +1,13 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const {spawn} = require('node:child_process');
+const {execFile, spawn} = require('node:child_process');
 const {once} = require('node:events');
 const {mkdtempSync, readFileSync, rmSync} = require('node:fs');
 const {tmpdir} = require('node:os');
 const path = require('node:path');
 const {createInterface} = require('node:readline');
+const {promisify} = require('node:util');
 const {WebSocket} = require('ws');
 const {createSupervisor} = require('../../packages/world/server/world-supervisor');
 const {createConsoleServer} = require('../../packages/console/server/console-server');
@@ -204,13 +205,26 @@ function mcpClient(base, token) {
     assert.deepEqual(await http(base, observation, {token, status: 404}), {error: 'session_not_found'});
     assert.deepEqual(await mcp.call('observe_agent', target), {isError: true, value: {error: 'session_not_found', status: 404}});
 
+    const {stdout} = await promisify(execFile)('python3', [
+      'packages/agent/python/multi_agent_demo.py', '--fault', 'none', '--physics', 'rapier', '--archive'
+    ], {
+      env: {...process.env, BOX_CONTROL_URL: base, BOX_WORLD_URL: 'http://127.0.0.1:1'},
+      timeout: 60000,
+      maxBuffer: 32 * 1024 * 1024
+    });
+    const report = JSON.parse(stdout);
+    assert.equal(report.status, 'completed');
+    assert.equal(report.agentProcesses, 15);
+    assert(report.archive.frames.at(-1).done);
+    assert.deepEqual(await http(base, '/sessions/' + report.sourceSessionId, {status: 404}), {error: 'session_not_found'});
+
     await new Promise(resolve => world.close(resolve));
     assert.deepEqual(await http(base, '/world/health', {status: 502}), {error: 'world_unreachable'});
     assert.deepEqual(await mcp.call('observe_agent', target), {isError: true, value: {error: 'world_unreachable', status: 502}});
     await control.close();
     control = null;
     assert.deepEqual(await http(consoleUrl, '/control/world/health', {status: 502}), {error: 'control_unreachable'});
-    console.log('Console, Control and API-only World: HTTP, MCP, WebSocket, scoped access and unavailable upstream passed');
+    console.log('Console, Control and API-only World: HTTP, MCP, WebSocket, runner, scoped access and unavailable upstream passed');
   } finally {
     if (consoleHost?.listening) await new Promise(resolve => consoleHost.close(resolve));
     await control?.close();

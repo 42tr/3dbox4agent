@@ -1,5 +1,6 @@
 """Observe and send messages without access to the global world API."""
 import json
+from uuid import UUID
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
@@ -28,11 +29,13 @@ class SandboxError(Exception):
 
 
 class AgentClient:
-    def __init__(self, session_id, agent_id, token, base_url=CONTROL_HTTP_ORIGIN, timeout=5):
+    def __init__(self, session_id, agent_id, token, base_url=CONTROL_HTTP_ORIGIN, timeout=5, *, run_id=None):
         parsed = _parse_http_origin(base_url)
         if not all(isinstance(x, str) and x for x in (session_id, agent_id, token)):
             raise ValueError('session_id, agent_id and token are required')
         self._base = f'{parsed.scheme}://{parsed.netloc}'
+        if run_id is not None:
+            self._base += f'/runners/v1/runs/{UUID(run_id)}/world'
         self._session = quote(session_id, safe='')
         self._agent = quote(agent_id, safe='')
         self._token = token
@@ -149,8 +152,8 @@ class AgentClient:
 
 class CoordinatorClient:
     """Scoped dispatch observations and decisions, without global snapshots."""
-    def __init__(self, session_id, token, base_url=CONTROL_HTTP_ORIGIN, timeout=5):
-        self._client = AgentClient(session_id, '_coordinator', token, base_url, timeout)
+    def __init__(self, session_id, token, base_url=CONTROL_HTTP_ORIGIN, timeout=5, *, run_id=None):
+        self._client = AgentClient(session_id, '_coordinator', token, base_url, timeout, run_id=run_id)
 
     def observe(self):
         return self._client._request(f'/sessions/{self._client._session}/coordinator/observation')

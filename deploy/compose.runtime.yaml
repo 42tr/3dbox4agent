@@ -34,6 +34,12 @@ services:
     restart: unless-stopped
     environment:
       WORLD_URL: http://world:8787
+      BOX_RUNNER_DATA_DIR: /var/lib/3dbox-control
+      BOX_RUNNER_BOOTSTRAP_FILE: /var/lib/3dbox-runner-auth/builtin.token
+      BOX_RUNNER_OPERATOR_TOKEN: ${BOX_RUNNER_OPERATOR_TOKEN:?Set the Runner operator token in .env}
+    volumes:
+      - control-data:/var/lib/3dbox-control
+      - runner-auth:/var/lib/3dbox-runner-auth
     read_only: true
     cap_drop:
       - ALL
@@ -62,19 +68,16 @@ services:
     image: ${BOX_AGENT_IMAGE:?Set BOX_AGENT_IMAGE to the loaded Agent image}
     platform: ${BOX_PLATFORM:-linux/amd64}
     pull_policy: never
-    profiles:
-      - experiments
     depends_on:
-      world:
-        condition: service_healthy
       control:
         condition: service_healthy
     environment:
-      BOX_WORLD_URL: http://world:8787
       BOX_CONTROL_URL: http://control:8789
-      NO_PROXY: world,control,console,localhost,127.0.0.1
-      no_proxy: world,control,console,localhost,127.0.0.1
+      BOX_RUNNER_TOKEN_FILE: /var/lib/3dbox-runner-auth/builtin.token
+    volumes:
+      - runner-auth:/var/lib/3dbox-runner-auth:ro
     init: true
+    restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -88,3 +91,5 @@ services:
     stop_grace_period: 10s
 volumes:
   world-data:
+  control-data:
+  runner-auth:

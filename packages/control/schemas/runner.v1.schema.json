@@ -1,0 +1,416 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "3DBox Runner protocol v1",
+  "description": "Validate each request or response against its named $defs entry.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/registerRequest"
+    },
+    {
+      "$ref": "#/$defs/createRunnerRequest"
+    },
+    {
+      "$ref": "#/$defs/createRunRequest"
+    },
+    {
+      "$ref": "#/$defs/finishRequest"
+    },
+    {
+      "$ref": "#/$defs/claimResponse"
+    },
+    {
+      "$ref": "#/$defs/run"
+    },
+    {
+      "$ref": "#/$defs/error"
+    }
+  ],
+  "$defs": {
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sceneId",
+        "seed",
+        "physics",
+        "coordinators",
+        "fault",
+        "maxTicks",
+        "timeoutSeconds",
+        "strategy"
+      ],
+      "properties": {
+        "sceneId": {
+          "enum": [
+            "industrial-park-v1",
+            "industrial-park-parallel-v1",
+            "lunar-base-v1",
+            "lunar-terrain-v1",
+            "lunar-sampling-v1",
+            "lunar-outpost-v1",
+            "shore-coordination-v1",
+            "shore-surface-v1",
+            "shore-sea-state-v1",
+            "shore-echelons-v1",
+            "shore-rescue-v1",
+            "industrial-park-fixed-sensor-v1"
+          ]
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "physics": {
+          "enum": [
+            "kinematic",
+            "rapier"
+          ]
+        },
+        "coordinators": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "fault": {
+          "enum": [
+            "none",
+            "transport",
+            "recoverable",
+            "resident"
+          ]
+        },
+        "maxTicks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 300
+        },
+        "strategy": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,48}$"
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenes",
+        "physics",
+        "faults",
+        "strategies",
+        "maxCoordinators",
+        "concurrency"
+      ],
+      "properties": {
+        "scenes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "enum": [
+              "industrial-park-v1",
+              "industrial-park-parallel-v1",
+              "lunar-base-v1",
+              "lunar-terrain-v1",
+              "lunar-sampling-v1",
+              "lunar-outpost-v1",
+              "shore-coordination-v1",
+              "shore-surface-v1",
+              "shore-sea-state-v1",
+              "shore-echelons-v1",
+              "shore-rescue-v1",
+              "industrial-park-fixed-sensor-v1"
+            ]
+          }
+        },
+        "physics": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": {
+            "enum": [
+              "kinematic",
+              "rapier"
+            ]
+          }
+        },
+        "faults": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "enum": [
+              "none",
+              "transport",
+              "recoverable",
+              "resident"
+            ]
+          },
+          "contains": {
+            "const": "none"
+          }
+        },
+        "strategies": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,48}$"
+          }
+        },
+        "maxCoordinators": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "queued",
+        "starting",
+        "running",
+        "stopping",
+        "completed",
+        "cancelled",
+        "failed",
+        "timeout"
+      ]
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,48}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "error"
+      ],
+      "properties": {
+        "error": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,48}$"
+        }
+      }
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tick",
+        "completedTasks",
+        "totalTasks"
+      ],
+      "properties": {
+        "tick": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "completedTasks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalTasks": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "registerRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "capabilities"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "capabilities": {
+          "$ref": "#/$defs/capabilities"
+        }
+      }
+    },
+    "createRunnerRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        }
+      }
+    },
+    "createRunRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "runnerId",
+        "config"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "runnerId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,48}$"
+        },
+        "config": {
+          "$ref": "#/$defs/config"
+        }
+      }
+    },
+    "finishRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "completed",
+            "failed",
+            "timeout"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        }
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "leaseToken",
+        "leaseSeconds",
+        "config"
+      ],
+      "properties": {
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "leaseToken": {
+          "type": "string",
+          "minLength": 32
+        },
+        "leaseSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "config": {
+          "$ref": "#/$defs/config"
+        }
+      }
+    },
+    "claimResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job"
+      ],
+      "properties": {
+        "job": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/job"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "runnerId",
+        "config",
+        "status",
+        "reason",
+        "createdAt",
+        "progress",
+        "canObserve",
+        "hasReplay",
+        "replayError"
+      ],
+      "properties": {
+        "runId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "runnerId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,48}$"
+        },
+        "config": {
+          "$ref": "#/$defs/config"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/progress"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "canObserve": {
+          "type": "boolean"
+        },
+        "hasReplay": {
+          "type": "boolean"
+        },
+        "replayError": {
+          "$ref": "#/$defs/reason"
+        }
+      }
+    }
+  }
+}

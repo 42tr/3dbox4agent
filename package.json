@@ -19,7 +19,7 @@
     "test:world-core": "node tests/world-core-compat.test.js",
     "test:agent-http": "node tests/agent-runtime-http.test.js",
     "test:llm-policy": "node tests/llm-policy.test.js",
-    "test:control-server": "npm run build && cargo build --locked --manifest-path packages/control-server/Cargo.toml && node tests/integration/control-server.test.js",
+    "test:control-server": "npm run build && cargo build --locked --manifest-path packages/control-server/Cargo.toml && node tests/integration/control-server.test.js && node tests/integration/runner.test.js",
     "test:container": "python3 tests/integration/container_smoke.py",
     "test:container-rust": "python3 tests/integration/container_smoke.py --native",
     "typecheck:ui": "npm run typecheck --workspace @42tr/3dbox4agent-console",

@@ -10,7 +10,7 @@
 docker compose up --build --wait
 ```
 
-打开 `http://127.0.0.1:8787/`，点击 **连接世界服务**。Control 的 HTTP 和 MCP 入口在 `127.0.0.1:8789`。用 `BOX_HTTP_PORT` 或 `BOX_CONTROL_PORT` 调整宿主机端口。
+打开 `http://127.0.0.1:8787/`，点击 **连接世界服务**。在左侧打开 **Runner 实验** 可以配置、启动、停止实验和打开回放。Control 的 HTTP 和 MCP 入口在 `127.0.0.1:8789`。用 `BOX_HTTP_PORT` 或 `BOX_CONTROL_PORT` 调整宿主机端口。
 
 默认 World 使用 JavaScript 规则，选择 Rapier 物理时使用 WASM。需要原生 Rust 后端时运行 `BOX_IMAGE_TARGET=world-rust docker compose up --build --wait`。
 
@@ -43,7 +43,7 @@ npm run start:python --workspace @42tr/3dbox4agent-agent -- --fault none --archi
 
 ```sh
 npm run test:ui               # Console 与类型检查
-npm run test:control-server   # Console、Rust Control 和 World 联调
+npm run test:control-server   # Console、Rust Control、Runner 和 World 联调
 npm run test:container        # Docker 集成验收
 npm run test:container-rust   # Docker 原生后端验收
 ```
@@ -54,6 +54,7 @@ npm run test:container-rust   # Docker 原生后端验收
 
 - [项目结构、服务边界与数据持久化](docs/architecture.md)
 - [场景、实验与回放](docs/scenarios.md)
+- [Runner 接入协议](docs/runner-protocol.md)
 - [Control HTTP、MCP 和 gRPC 网关](packages/control-server/README.md)
 - [Python SDK](sdk/python/SDK-README.md)
 - [构建部署包、远程访问和代理配置](deploy/README.md)
