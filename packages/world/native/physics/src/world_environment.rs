@@ -19,9 +19,9 @@ fn decode<T: for<'a> Deserialize<'a>>(s: &str) -> Result<T> {
 fn encode<T: Serialize>(v: &T) -> Result<String> {serde_json::to_string(v).map_err(|_|invalid())}
 fn token(s: &str) -> bool {!s.is_empty() && s.len()<=64 && s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')}
 fn name(s: &str) -> bool {!s.is_empty() && s.encode_utf16().count()<=100}
-fn point(x: f64,y: f64) -> bool {[x,y].iter().all(|n|n.is_finite()&&(0.0..=100.0).contains(n))}
-fn rect(x: f64,y: f64,w: f64,h: f64,min: f64) -> bool {
-    point(x,y) && [w,h].iter().all(|n|n.is_finite()&&*n>0.0&&*n>=min) && x+w<=100.0 && y+h<=100.0
+fn point(x: f64,y: f64,size:f64) -> bool {[x,y].iter().all(|n|n.is_finite()&&(0.0..=size).contains(n))}
+fn rect(x: f64,y: f64,w: f64,h: f64,min: f64,size:f64) -> bool {
+    point(x,y,size) && [w,h].iter().all(|n|n.is_finite()&&*n>0.0&&*n>=min) && x+w<=size && y+h<=size
 }
 fn factors(speed: f64,energy: f64) -> bool {speed.is_finite()&&energy.is_finite()&&(0.2..=1.0).contains(&speed)&&(1.0..=5.0).contains(&energy)}
 fn sequence(id: &str) -> Option<u64> {
@@ -52,6 +52,7 @@ enum RiskNavigation {Monitor,Avoid}
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 struct State {
+    #[serde(default,skip_serializing_if="Option::is_none")]world_size:Option<f64>,
     #[serde(default,deserialize_with="crate::surface_domain::present",skip_serializing_if="Option::is_none")]surface_domain:Option<crate::surface_domain::Profile>,
     obstacles:Vec<Obstacle>,risk_zones:Vec<Zone>,sensor_range:f64,charging_station:[f64;2],
     #[serde(skip_serializing_if="Option::is_none")]terrain:Option<Vec<Terrain>>,
@@ -145,7 +146,7 @@ impl WorldEnvironment {
         if roadblocks{for b in self.blocks(){obstacles.push(serde_json::json!({"x":b.x,"y":b.y,"w":b.w,"h":b.h}))}}
         if matches!(self.state.risk_navigation,Some(RiskNavigation::Avoid)){for z in &self.state.risk_zones{obstacles.push(serde_json::json!({"x":z.x,"y":z.y,"w":z.w,"h":z.h}))}}
         let zones:serde_json::Value=if baseline{serde_json::to_value(self.state.terrain.clone().unwrap_or_default()).map_err(|_|invalid())?}else{decode(&self.effective_terrain()?)?};
-        let metric=self.state.navigation.unwrap_or(Navigation::Distance);let input=serde_json::json!({"start":start,"target":target,"obstacles":obstacles,"zones":zones,"heightfield":self.state.heightfield,"metric":metric});decode(&crate::navigation::plan_ground_route(encode(&input)?)?)
+        let metric=self.state.navigation.unwrap_or(Navigation::Distance);let input=serde_json::json!({"worldSize":self.world_size(),"start":start,"target":target,"obstacles":obstacles,"zones":zones,"heightfield":self.state.heightfield,"metric":metric});decode(&crate::navigation::plan_ground_route(encode(&input)?)?)
     }
     pub(crate) fn collision_route(&self,actor:&str,start:[f64;2],goal:[f64;2],reach:bool,radius:f64,actors:&[(usize,crate::world_motion::Motion,crate::world_execution::Execution)],rapier:bool)->Result<Option<Vec<[f64;2]>>>{
         self.check()?;let spec=self.agents.iter().find(|a|a.id==actor).ok_or_else(invalid)?;let air=spec.air;
@@ -154,7 +155,7 @@ impl WorldEnvironment {
         if !air&&matches!(self.state.risk_navigation,Some(RiskNavigation::Avoid)){for z in &self.state.risk_zones{obstacles.push(serde_json::json!({"x":z.x,"y":z.y,"w":z.w,"h":z.h}))}}
         if let Some(p)=&self.state.surface_domain{obstacles.extend(p.masks(if air{"air"}else if spec.water{"water"}else{"ground"})?.iter().map(|r|serde_json::json!({"x":r.x,"y":r.y,"w":r.w,"h":r.h})));}
         let zones:serde_json::Value=if air{serde_json::json!([])}else{decode(&self.effective_terrain()?)?};
-        let input=serde_json::json!({"start":start,"target":goal,"obstacles":obstacles,"zones":zones,"heightfield":if air{None}else{self.state.heightfield.as_ref()},"metric":if air{Navigation::Distance}else{self.state.navigation.unwrap_or(Navigation::Distance)}});
+        let input=serde_json::json!({"worldSize":self.world_size(),"start":start,"target":goal,"obstacles":obstacles,"zones":zones,"heightfield":if air{None}else{self.state.heightfield.as_ref()},"metric":if air{Navigation::Distance}else{self.state.navigation.unwrap_or(Navigation::Distance)}});
         let others:Vec<_>=self.agents.iter().zip(actors).filter(|(spec,(_,a,_))|spec.air==air&&a.id!=actor).map(|(_,(_,a,_))|[a.x,a.y]).collect();
         crate::navigation::collision_route(encode(&input)?,reach,radius,&others,if air||self.state.surface_domain.is_some(){Some(0.8)}else{None},rapier,|p|if air{self.air_task_approach_clear(p,goal)}else{self.activation_reachable(p,goal,false)})
     }
@@ -183,7 +184,7 @@ impl WorldEnvironment {
         let blocks:Vec<_>=self.state.obstacles.iter().map(|b|[b.x,b.y,b.w,b.h]).chain(self.blocks().filter(|_|roadblocks).map(|b|[b.x,b.y,b.w,b.h])).collect();
         // The work-action reach test uses the physical rectangles at radius0,
         // including closed edges, rather than sight rays or planning padding.
-        for p in [from,goal]{if p.iter().any(|n|!(0.0..=100.0).contains(n))||blocks.iter().any(|b|p[0]>=b[0]&&p[0]<=b[0]+b[2]&&p[1]>=b[1]&&p[1]<=b[1]+b[3]){return Ok(false)}}
+        for p in [from,goal]{if p.iter().any(|n|!(0.0..=self.world_size()).contains(n))||blocks.iter().any(|b|p[0]>=b[0]&&p[0]<=b[0]+b[2]&&p[1]>=b[1]&&p[1]<=b[1]+b[3]){return Ok(false)}}
         for b in blocks{let(mut lo,mut hi)=(0.0_f64,1.0_f64);for(start,delta,min,max)in[(from[0],goal[0]-from[0],b[0],b[0]+b[2]),(from[1],goal[1]-from[1],b[1],b[1]+b[3])]{if delta.abs()<1e-10{if start<min||start>max{lo=2.0;break}}else{let(a,c)=((min-start)/delta,(max-start)/delta);lo=lo.max(a.min(c));hi=hi.min(a.max(c));if lo>hi{break}}}if lo<=hi&&hi>=0.0&&lo<=1.0{return Ok(false)}}Ok(true)
     }
     pub(crate) fn stationary_identity(&self,index:usize,id:&str,tick:u64)->Result<u64>{
@@ -205,6 +206,7 @@ impl WorldEnvironment {
     pub(crate) fn stationary_near_charger(&self,position:[f64;2])->Result<bool>{
         self.check()?;Ok(crate::world_perceptions::sensor_distance(position[0]-self.state.charging_station[0],position[1]-self.state.charging_station[1])<=3.0+1e-5)
     }
+    pub(crate) fn world_size(&self)->f64{self.state.world_size.unwrap_or(100.0)}
     pub(crate) fn route_map(&self,index:usize,id:&str,tick:u64)->Result<crate::world_route::Map>{
         self.time(tick as f64)?;if tick!=self.tick{return Err(invalid())}
         if self.agents.get(index).is_none_or(|a|a.id!=id){return Err(invalid())}
@@ -212,7 +214,7 @@ impl WorldEnvironment {
             let effect=self.effects().find(|e|e.zone_id==z.id);
             crate::world_route::Terrain{id:z.id.clone(),rect:[z.x,z.y,z.w,z.h],speed:z.speed_factor*effect.map_or(1.0,|e|e.speed_factor),energy:z.energy_factor*effect.map_or(1.0,|e|e.energy_factor),started:effect.map(|e|e.started_tick)}
         }).collect();
-        Ok(crate::world_route::Map{identity:self.checkpoint_id,surface_domain:self.state.surface_domain.clone(),heightfield:self.state.heightfield.clone(),terrain,risks:self.state.risk_zones.iter().map(|z|(z.id.clone(),[z.x,z.y,z.w,z.h])).collect()})
+        Ok(crate::world_route::Map{world_size:self.world_size(),identity:self.checkpoint_id,surface_domain:self.state.surface_domain.clone(),heightfield:self.state.heightfield.clone(),terrain,risks:self.state.risk_zones.iter().map(|z|(z.id.clone(),[z.x,z.y,z.w,z.h])).collect()})
     }
     fn time(&self,n:f64) -> Result<u64> {
         if self.closed {return Err(Error::from_reason("world environment is closed"));}
@@ -230,21 +232,21 @@ impl WorldEnvironment {
 impl WorldEnvironment {
     #[napi(constructor)]
     pub fn new(input:String) -> Result<Self> {
-        let i:Initial=decode(&input)?;let s=&i.state;if let Some(h)=&s.heightfield{h.validate()?}if let Some(p)=&s.surface_domain{p.validate()?;if s.heightfield.is_some(){return Err(invalid())}}
+        let i:Initial=decode(&input)?;let s=&i.state;let size=s.world_size.unwrap_or(100.0);if let Some(h)=&s.heightfield{h.validate()?}if let Some(p)=&s.surface_domain{p.validate()?;if s.heightfield.is_some(){return Err(invalid())}}
         if i.tick>MAX_TICK || i.last_roadblock_event>MAX_ID || i.agents.is_empty() || i.agents.len()>50 || s.obstacles.len()>64 || s.risk_zones.len()>32
             || s.terrain.as_ref().is_some_and(|t|t.len()>32) || s.roadblocks.as_ref().is_some_and(|b|b.len()>8) || s.terrain_effects.as_ref().is_some_and(|e|e.len()>32)
-            || !s.sensor_range.is_finite() || s.sensor_range<=0.0 || s.sensor_range>10000.0 || !point(s.charging_station[0],s.charging_station[1]) {return Err(invalid());}
+            || !s.sensor_range.is_finite() || s.sensor_range<=0.0 || s.sensor_range>10000.0 || !crate::valid_world_size(size)||(size!=100.0&&(s.heightfield.is_some()||s.surface_domain.is_some()))||!point(s.charging_station[0],s.charging_station[1],size) {return Err(invalid());}
         let mut ids=HashSet::new();
         for a in &i.agents {if !token(&a.id)||!ids.insert(&a.id)||a.water&&(a.air||s.surface_domain.is_none()) {return Err(invalid());}}
-        ids.clear();for b in &s.obstacles {if !token(&b.id)||!ids.insert(&b.id)||!rect(b.x,b.y,b.w,b.h,0.0)||!b.height.is_finite()||b.height<=0.0||b.height>1000.0 {return Err(invalid());}}
-        ids.clear();for z in &s.risk_zones {if !token(&z.id)||!ids.insert(&z.id)||!name(&z.name)||!rect(z.x,z.y,z.w,z.h,0.0) {return Err(invalid());}}
-        ids.clear();for z in s.terrain.iter().flatten() {if !token(&z.id)||!ids.insert(&z.id)||!name(&z.name)||!rect(z.x,z.y,z.w,z.h,0.0)||!factors(z.speed_factor,z.energy_factor) {return Err(invalid());}}
+        ids.clear();for b in &s.obstacles {if !token(&b.id)||!ids.insert(&b.id)||!rect(b.x,b.y,b.w,b.h,0.0,size)||!b.height.is_finite()||b.height<=0.0||b.height>1000.0 {return Err(invalid());}}
+        ids.clear();for z in &s.risk_zones {if !token(&z.id)||!ids.insert(&z.id)||!name(&z.name)||!rect(z.x,z.y,z.w,z.h,0.0,size) {return Err(invalid());}}
+        ids.clear();for z in s.terrain.iter().flatten() {if !token(&z.id)||!ids.insert(&z.id)||!name(&z.name)||!rect(z.x,z.y,z.w,z.h,0.0,size)||!factors(z.speed_factor,z.energy_factor) {return Err(invalid());}}
         let mut seen=HashSet::new();for e in s.terrain_effects.iter().flatten() {
             if !ids.contains(&e.zone_id)||!seen.insert(&e.zone_id)||!factors(e.speed_factor,e.energy_factor)||!Self::valid_dates(e.started_tick,e.until_tick,i.tick) {return Err(invalid());}
         }
         ids.clear();for b in s.roadblocks.iter().flatten() {
             let seq=sequence(&b.id).ok_or_else(invalid)?;
-            if seq>i.last_roadblock_event || !ids.insert(&b.id)||!rect(b.x,b.y,b.w,b.h,2.0)||b.height!=4.0||!Self::valid_dates(b.started_tick,b.until_tick,i.tick) {return Err(invalid());}
+            if seq>i.last_roadblock_event || !ids.insert(&b.id)||!rect(b.x,b.y,b.w,b.h,2.0,size)||b.height!=4.0||!Self::valid_dates(b.started_tick,b.until_tick,i.tick) {return Err(invalid());}
         }
         Ok(Self{ checkpoint_id: crate::world_checkpoint::identity(),state:i.state,agents:i.agents,tick:i.tick,last_roadblock_event:i.last_roadblock_event,planning_binding:None,closed:false})
     }
@@ -261,10 +263,10 @@ impl WorldEnvironment {
     #[napi]
     pub fn roadblock(&mut self,input:String,tick:f64) -> Result<String> {
         let tick=self.time(tick)?;let p:AddRoadblock=decode(&input)?;let r=p.rect;
-        if !rect(r.x,r.y,r.w,r.h,2.0)||!(1..=1000).contains(&p.duration)||self.blocks().count()>=8
+        if !rect(r.x,r.y,r.w,r.h,2.0,self.world_size())||!(1..=1000).contains(&p.duration)||self.blocks().count()>=8
             || p.event_id<=self.last_roadblock_event || p.event_id>MAX_ID || p.agents.len()!=self.agents.len() {return Err(invalid());}
         for (a,spec) in p.agents.iter().zip(&self.agents) {
-            if a.id!=spec.id||!point(a.x,a.y)||!spec.air&&(a.x<2.0||a.x>98.0||a.y<2.0||a.y>98.0||a.x>=r.x-2.0&&a.x<=r.x+r.w+2.0&&a.y>=r.y-2.0&&a.y<=r.y+r.h+2.0) {return Err(invalid());}
+            if a.id!=spec.id||!point(a.x,a.y,self.world_size())||!spec.air&&(a.x<2.0||a.x>self.world_size()-2.0||a.y<2.0||a.y>self.world_size()-2.0||a.x>=r.x-2.0&&a.x<=r.x+r.w+2.0&&a.y>=r.y-2.0&&a.y<=r.y+r.h+2.0) {return Err(invalid());}
         }
         let b=Roadblock{id:format!("roadblock-{}",p.event_id),x:r.x,y:r.y,w:r.w,h:r.h,height:4.0,started_tick:tick,until_tick:tick+p.duration};
         let result=encode(&b)?;self.state.roadblocks.get_or_insert_with(Vec::new).push(b);self.last_roadblock_event=p.event_id;self.tick=tick;Ok(result)

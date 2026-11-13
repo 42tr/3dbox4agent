@@ -3,7 +3,8 @@ const {WorldMotion}=require('../native/physics/target/release/box_physics.node')
 const fields=Object.freeze(['x','y','battery','initialBattery','distance']);
 function guarded(operation){try{return operation()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldMotionFailure:true})}}
 function create(world){
- const native=new WorldMotion(JSON.stringify(world.agents.map(a=>Object.fromEntries(['id',...fields].map(key=>[key,a[key]])))));
+ const agents=world.agents.map(a=>Object.fromEntries(['id',...fields].map(key=>[key,a[key]])));
+ const native=new WorldMotion(JSON.stringify(world.worldSize===undefined?agents:{worldSize:world.worldSize,agents}));
  return Object.freeze({
   checkpoint(){return guarded(()=>native.checkpoint())},
   rollback(point){guarded(()=>{native.rollback(point);})},

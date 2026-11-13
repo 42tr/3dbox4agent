@@ -4,7 +4,7 @@ const runtimeFields=new Set(['status','updatedTick','reason','resumeTaskId','pro
 function freeze(value){if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value)}return value}
 function guarded(operation){try{return operation()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldActionsFailure:true})}}
 function create(world){
- const native=new WorldActions(JSON.stringify({tick:world.tick,agents:world.agents.map(a=>a.id),actions:world.actions}));
+ const native=new WorldActions(JSON.stringify({tick:world.tick,worldSize:world.worldSize,agents:world.agents.map(a=>a.id),actions:world.actions}));
  let cache=JSON.parse(native.snapshot()).map(freeze),closed=false;
  function view(index){const projection=Object.fromEntries(Object.entries(cache[index]).filter(([key])=>!runtimeFields.has(key)));for(const key of runtimeFields)Object.defineProperty(projection,key,{enumerable:true,get:()=>guarded(()=>{if(closed)throw Error('world actions is closed');return cache[index][key]})});return Object.freeze(projection)}
  let views=Object.freeze(cache.map((_,index)=>view(index)));

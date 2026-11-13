@@ -5,7 +5,6 @@ use serde::Deserialize;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-const SIDE: usize = 51;
 const GRID: f64 = 2.0;
 const RADIUS: f64 = 2.0;
 type Point = [f64; 2];
@@ -19,20 +18,21 @@ struct Zone { x: f64, y: f64, w: f64, h: f64, speed_factor: f64, energy_factor: 
 #[serde(rename_all="lowercase")]
 enum Metric { Distance, Time, Energy }
 #[derive(Deserialize)]
-struct Input { start: Point, target: Point, obstacles: Vec<Obstacle>, zones: Vec<Zone>, metric: Metric, #[serde(default)] heightfield:Option<crate::heightfield::Heightfield> }
-fn prepare_input(mut v:Input)->Result<Input>{if let Some(h)=&v.heightfield{h.validate()?;for r in h.blocked_cells(){if !v.obstacles.iter().any(|o|o.x==r.x&&o.y==r.y&&o.w==r.w&&o.h==r.h&&o.padding.unwrap_or(RADIUS)==RADIUS){v.obstacles.push(Obstacle{x:r.x,y:r.y,w:r.w,h:r.h,padding:None})}}}Ok(v)}
+#[serde(rename_all="camelCase")]
+struct Input { #[serde(default="crate::default_world_size")] world_size:f64, start: Point, target: Point, obstacles: Vec<Obstacle>, zones: Vec<Zone>, metric: Metric, #[serde(default)] heightfield:Option<crate::heightfield::Heightfield> }
+fn prepare_input(mut v:Input)->Result<Input>{if !crate::valid_world_size(v.world_size)||(v.heightfield.is_some()&&v.world_size!=100.0){return Err(Error::from_reason("invalid world size"))}if let Some(h)=&v.heightfield{h.validate()?;for r in h.blocked_cells(){if !v.obstacles.iter().any(|o|o.x==r.x&&o.y==r.y&&o.w==r.w&&o.h==r.h&&o.padding.unwrap_or(RADIUS)==RADIUS){v.obstacles.push(Obstacle{x:r.x,y:r.y,w:r.w,h:r.h,padding:None})}}}Ok(v)}
 
 fn finite(v: f64) -> bool { v.is_finite() && v.abs() < 1.0e6 }
 fn distance(a: Point, b: Point) -> f64 { (b[0]-a[0]).hypot(b[1]-a[1]) }
-fn position(id: usize) -> Point { [(id%SIDE) as f64*GRID, (id/SIDE) as f64*GRID] }
-fn free(p: Point, obstacles: &[Obstacle]) -> bool {
-    p.iter().all(|v| *v>=RADIUS && *v<=100.0-RADIUS) && !obstacles.iter().any(|o| {
+fn position(id: usize, side:usize) -> Point { [(id%side) as f64*GRID, (id/side) as f64*GRID] }
+fn free(p: Point, obstacles: &[Obstacle], size:f64) -> bool {
+    p.iter().all(|v| *v>=RADIUS && *v<=size-RADIUS) && !obstacles.iter().any(|o| {
         let pad=o.padding.unwrap_or(RADIUS);
         p[0]>=o.x-pad && p[0]<=o.x+o.w+pad && p[1]>=o.y-pad && p[1]<=o.y+o.h+pad
     })
 }
-fn clear(a: Point, b: Point, obstacles: &[Obstacle]) -> bool {
-    if !free(a,obstacles) || !free(b,obstacles) { return false }
+fn clear(a: Point, b: Point, obstacles: &[Obstacle],size:f64) -> bool {
+    if !free(a,obstacles,size) || !free(b,obstacles,size) { return false }
     for o in obstacles {
         let pad=o.padding.unwrap_or(RADIUS);
         let (mut lo,mut hi)=(0.0_f64,1.0_f64);
@@ -92,9 +92,9 @@ pub(crate) fn environment_route_cost(start:Point,path:&[Point],zones:serde_json:
     let metric:Metric=serde_json::from_value(metric).map_err(|_|Error::from_reason("invalid environment metric"))?;
     let(mut previous,mut total)=(start,0.0);for p in path{total+=segment_cost_length(previous,*p,&zones,&metric,crate::world_perceptions::sensor_distance(p[0]-previous[0],p[1]-previous[1]),heightfield);previous=*p;}Ok(total)
 }
-pub(crate) fn environment_route_blocked(start:Point,path:&[Point],rect:serde_json::Value)->Result<bool>{
+pub(crate) fn environment_route_blocked(start:Point,path:&[Point],rect:serde_json::Value,size:f64)->Result<bool>{
     let obstacle:Obstacle=serde_json::from_value(rect).map_err(|_|Error::from_reason("invalid environment roadblock"))?;
-    let mut previous=start;for p in path{if !clear(previous,*p,std::slice::from_ref(&obstacle)){return Ok(true)}previous=*p;}Ok(false)
+    let mut previous=start;for p in path{if !clear(previous,*p,std::slice::from_ref(&obstacle),size){return Ok(true)}previous=*p;}Ok(false)
 }
 
 #[derive(Clone)]
@@ -108,31 +108,33 @@ impl Ord for Entry {
     }
 }
 fn anchors(point: Point, v: &Input) -> Vec<(usize,f64)> {
+    let side=(v.world_size/GRID).floor() as usize+1;
     // Nonnegative world coordinates make round() agree with Math.round().
     let (cx,cy)=((point[0]/GRID).round() as i32,(point[1]/GRID).round() as i32);
     let mut out=Vec::new();
     for dx in -2..=2 { for dy in -2..=2 {
         let (x,y)=(cx+dx,cy+dy);
-        if x<0 || y<0 || x>=SIDE as i32 || y>=SIDE as i32 { continue }
-        let id=y as usize*SIDE+x as usize;let p=position(id);
-        if clear(point,p,&v.obstacles) { out.push((id,segment_cost(point,p,&v.zones,&v.metric,v.heightfield.as_ref()))) }
+        if x<0 || y<0 || x>=side as i32 || y>=side as i32 { continue }
+        let id=y as usize*side+x as usize;let p=position(id,side);
+        if clear(point,p,&v.obstacles,v.world_size) { out.push((id,segment_cost(point,p,&v.zones,&v.metric,v.heightfield.as_ref()))) }
     }}
     out
 }
 fn plan(v: &Input) -> Option<Vec<Point>> {
-    if !free(v.start,&v.obstacles) || !free(v.target,&v.obstacles) { return None }
+    let side=(v.world_size/GRID).floor() as usize+1;
+    if !free(v.start,&v.obstacles,v.world_size) || !free(v.target,&v.obstacles,v.world_size) { return None }
     let weighted=!matches!(v.metric,Metric::Distance) && (!v.zones.is_empty()||v.heightfield.as_ref().is_some_and(|h|h.has_costs()));
-    let direct=if clear(v.start,v.target,&v.obstacles) {segment_cost(v.start,v.target,&v.zones,&v.metric,v.heightfield.as_ref())} else {f64::INFINITY};
+    let direct=if clear(v.start,v.target,&v.obstacles,v.world_size) {segment_cost(v.start,v.target,&v.zones,&v.metric,v.heightfield.as_ref())} else {f64::INFINITY};
     if !weighted && direct.is_finite() { return Some(vec![v.target]) }
     let starts=anchors(v.start,v);let ends=anchors(v.target,v);
     if starts.is_empty() || ends.is_empty() { return direct.is_finite().then_some(vec![v.target]) }
-    let mut costs=vec![f64::INFINITY;SIDE*SIDE];
-    let mut parents=vec![None;SIDE*SIDE];
-    let mut goal_costs=vec![None;SIDE*SIDE];
+    let mut costs=vec![f64::INFINITY;side*side];
+    let mut parents=vec![None;side*side];
+    let mut goal_costs=vec![None;side*side];
     for (id,cost) in ends { goal_costs[id]=Some(cost) }
     let mut open=BinaryHeap::new();
     for (id,cost) in starts { if cost<costs[id] {
-        let h=distance(position(id),v.target);costs[id]=cost;
+        let h=distance(position(id,side),v.target);costs[id]=cost;
         open.push(Entry {id,g:cost,h,f:cost+h});
     }}
     let (mut best_goal,mut best_cost)=(None,direct);
@@ -147,12 +149,12 @@ fn plan(v: &Input) -> Option<Vec<Point>> {
             };
             if total<best_cost-1e-9 || tie { best_cost=total;best_goal=Some(cur.id) }
         }
-        let (x,y)=((cur.id%SIDE) as i32,(cur.id/SIDE) as i32);
+        let (x,y)=((cur.id%side) as i32,(cur.id/side) as i32);
         for (dx,dy) in dirs {
             let (nx,ny)=(x+dx,y+dy);
-            if nx<0 || ny<0 || nx>=SIDE as i32 || ny>=SIDE as i32 { continue }
-            let id=ny as usize*SIDE+nx as usize;let (p,q)=(position(cur.id),position(id));
-            if !clear(p,q,&v.obstacles) { continue }
+            if nx<0 || ny<0 || nx>=side as i32 || ny>=side as i32 { continue }
+            let id=ny as usize*side+nx as usize;let (p,q)=(position(cur.id,side),position(id,side));
+            if !clear(p,q,&v.obstacles,v.world_size) { continue }
             // Preserve the distance planner's grid edge arithmetic.
             let edge=if weighted {segment_cost(p,q,&v.zones,&v.metric,v.heightfield.as_ref())} else {GRID*(dx as f64).hypot(dy as f64)};
             let ng=cur.g+edge;
@@ -163,14 +165,14 @@ fn plan(v: &Input) -> Option<Vec<Point>> {
     }
     let Some(mut id)=best_goal else { return direct.is_finite().then_some(vec![v.target]) };
     let mut path=Vec::new();
-    loop { path.push(position(id));match parents[id] {Some(parent)=>id=parent,None=>break} }
+    loop { path.push(position(id,side));match parents[id] {Some(parent)=>id=parent,None=>break} }
     path.reverse();path.push(v.target);
     let (mut from,mut index)=(v.start,0);let mut out=Vec::new();
     while index<path.len() {
         let mut far=index;let mut routed=segment_cost(from,path[index],&v.zones,&v.metric,v.heightfield.as_ref());
         for j in index+1..path.len() {
             if weighted { routed+=segment_cost(path[j-1],path[j],&v.zones,&v.metric,v.heightfield.as_ref()) }
-            if clear(from,path[j],&v.obstacles) && (!weighted || segment_cost(from,path[j],&v.zones,&v.metric,v.heightfield.as_ref())<=routed+1e-8) { far=j }
+            if clear(from,path[j],&v.obstacles,v.world_size) && (!weighted || segment_cost(from,path[j],&v.zones,&v.metric,v.heightfield.as_ref())<=routed+1e-8) { far=j }
         }
         if distance(from,path[far])>1e-9 { out.push(path[far]) }
         from=path[far];index=far+1;
@@ -204,19 +206,19 @@ pub(crate) fn collision_route(input:String,reach:bool,radius:f64,others:&[Point]
     for p in others{v.obstacles.push(Obstacle{x:p[0]-0.8,y:p[1]-0.8,w:1.6,h:1.6,padding:Some(0.9)})}
     let distance=|a:Point,b:Point|crate::world_perceptions::sensor_distance(a[0]-b[0],a[1]-b[1]);
     let escape_clear=|end:Point|{
-        if !clear(start,end,&escape_planning){return false}
+        if !clear(start,end,&escape_planning,v.world_size){return false}
         let dx=end[0]-start[0];let dy=end[1]-start[1];
         if !rapier{return others.iter().all(|p|crate::world_route::kinematic_body_fraction(start[0]-p[0],start[1]-p[1],dx,dy)==1.0)}
         let length=dx*dx+dy*dy;
         others.iter().all(|p|{let t=if length!=0.0{(((p[0]-start[0])*dx+(p[1]-start[1])*dy)/length).clamp(0.0,1.0)}else{0.0};distance([start[0]+t*dx,start[1]+t*dy],*p)>=1.59})
     };
     let mut entries:Vec<(Point,Vec<Point>,f64)>=Vec::new();
-    if free(start,&v.obstacles){entries.push((start,Vec::new(),0.0))}else{
-        for length in 1..=6{for unit in COLLISION_DIRECTIONS{let p=[start[0]+length as f64*unit[0],start[1]+length as f64*unit[1]];if free(p,&v.obstacles)&&escape_clear(p){entries.push((p,vec![p],length as f64))}}}
+    if free(start,&v.obstacles,v.world_size){entries.push((start,Vec::new(),0.0))}else{
+        for length in 1..=6{for unit in COLLISION_DIRECTIONS{let p=[start[0]+length as f64*unit[0],start[1]+length as f64*unit[1]];if free(p,&v.obstacles,v.world_size)&&escape_clear(p){entries.push((p,vec![p],length as f64))}}}
     }
     entries.sort_by(|a,b|(a.2+distance(a.0,goal)).total_cmp(&(b.2+distance(b.0,goal))));
-    let mut targets=Vec::new();if free(goal,&v.obstacles){targets.push(goal)}
-    if reach{for unit in COLLISION_DIRECTIONS{let p=[goal[0]+radius*unit[0],goal[1]+radius*unit[1]];if free(p,&v.obstacles)&&clear_goal(p)?{targets.push(p)}}}
+    let mut targets=Vec::new();if free(goal,&v.obstacles,v.world_size){targets.push(goal)}
+    if reach{for unit in COLLISION_DIRECTIONS{let p=[goal[0]+radius*unit[0],goal[1]+radius*unit[1]];if free(p,&v.obstacles,v.world_size)&&clear_goal(p)?{targets.push(p)}}}
     let mut best=None;let mut best_cost=f64::INFINITY;
     for (point,prefix,_) in entries.into_iter().take(24){
         let mut ordered=targets.clone();ordered.sort_by(|a,b|distance(point,*a).total_cmp(&distance(point,*b)));

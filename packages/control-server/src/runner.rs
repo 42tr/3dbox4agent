@@ -33,7 +33,8 @@ const MAX_ARCHIVE_FAILURES: u8 = 5;
 const RUNNER_ONLINE_SECONDS: u64 = 12;
 const RECENT_RUNS: usize = 128;
 const MAX_RUNNERS: usize = 32;
-const SCENES: [&str; 12] = [
+const SCENES: [&str; 13] = [
+    "industrial-park-v2",
     "industrial-park-v1",
     "industrial-park-parallel-v1",
     "lunar-base-v1",

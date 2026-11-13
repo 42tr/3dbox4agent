@@ -5,7 +5,7 @@ function freeze(v){if(v&&typeof v==='object'){Object.values(v).forEach(freeze);O
 function guarded(fn){try{return fn()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldEnvironmentFailure:true})}}
 function create(world){
  const lastRoadblockEvent=world.events.reduce((last,e)=>e.kind==='roadblock_started'&&/^roadblock-[1-9][0-9]*$/.test(e.id)?Math.max(last,Number(e.id.slice(10))):last,0);
- const native=new WorldEnvironment(JSON.stringify({tick:world.tick,state:Object.fromEntries(fields.map(k=>[k,world[k]])),agents:world.agents.map(a=>({id:a.id,air:(a.mobility??(a.role==='drone'?'air':'ground'))==='air',...(a.mobility==='water'?{water:true}:{})})),lastRoadblockEvent}));
+ const native=new WorldEnvironment(JSON.stringify({tick:world.tick,state:{...Object.fromEntries(fields.map(k=>[k,world[k]])),worldSize:world.worldSize},agents:world.agents.map(a=>({id:a.id,air:(a.mobility??(a.role==='drone'?'air':'ground'))==='air',...(a.mobility==='water'?{water:true}:{})})),lastRoadblockEvent}));
  let cache,terrain,closed=false;function active(){if(closed)throw Error('closed')}
  function refresh(){cache=freeze(JSON.parse(native.snapshot()));terrain=freeze(JSON.parse(native.effectiveTerrain()))}refresh();
  function commit(fn){return guarded(()=>{active();const result=JSON.parse(fn());refresh();return result})}

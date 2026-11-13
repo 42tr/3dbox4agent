@@ -8,7 +8,7 @@ fn present<'de, D, T>(d: D) -> std::result::Result<Option<T>, D::Error>
 where D: Deserializer<'de>, T: Deserialize<'de> { T::deserialize(d).map(Some) }
 fn token(s: &str, max: usize) -> bool { !s.is_empty() && s.len() <= max && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') }
 fn finite(n: f64) -> bool { n.is_finite() && n >= 0.0 }
-fn point(p: &[f64; 2]) -> bool { p.iter().all(|n| n.is_finite() && (0.0..=100.0).contains(n)) }
+fn point(p: &[f64; 2]) -> bool { p.iter().all(|n| n.is_finite() && (0.0..=crate::MAX_WORLD_SIZE).contains(n)) }
 const MAX_TICK: u32 = 10_000_000;
 
 #[derive(Clone, Copy, PartialEq, Deserialize, Serialize)]

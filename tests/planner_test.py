@@ -42,6 +42,15 @@ class PlannerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             plan({'tasks':[{'id':'a','target':[0,0],'candidates':[candidate]}]})
 
+    def test_plans_in_the_expanded_world(self):
+        task = {'id': 'repair', 'target': [164, 120], 'candidates': [
+            {'id': 'east', 'x': 160, 'y': 128, 'battery': 100},
+            {'id': 'west', 'x': 62, 'y': 101, 'battery': 100},
+        ]}
+        self.assertEqual(plan({'worldSize': 224, 'tasks': [task]})[0]['agentId'], 'east')
+        with self.assertRaises(ValueError):
+            plan({'tasks': [task]})
+
 
 class PriorityTests(unittest.TestCase):
     def test_priority_breaks_resource_contention_after_cardinality(self):

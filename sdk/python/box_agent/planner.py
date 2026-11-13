@@ -10,6 +10,9 @@ def plan(observation):
     distance plus a half-unit penalty per missing battery unit. This is a
     one-step assignment plan, not a route or future-task planner.
     """
+    size = observation.get('worldSize', 100)
+    if type(size) is not int or not 100 <= size <= 256:
+        raise ValueError('invalid world size')
     tasks = sorted(observation['tasks'], key=lambda task: task['id'])
     if len(tasks) > 100 or len({task['id'] for task in tasks}) != len(tasks):
         raise ValueError('too many tasks or duplicate task IDs')
@@ -30,12 +33,13 @@ def plan(observation):
 
     agent_index = {agent_id: i for i, agent_id in enumerate(agent_ids)}
     assignment_edges = []
+    priority_penalty = max(2_000_001, 1 + n_tasks * math.ceil(100 * math.hypot(size, size) + 5000))
     for i, task in enumerate(tasks):
         priority = task.get('priority', 0)
         if not isinstance(priority, int) or isinstance(priority, bool) or not 0 <= priority <= 100:
             raise ValueError('invalid priority')
         # Maximum aggregate geometric/battery cost is below this penalty.
-        edge(source, task_base + i, (100 - priority) * 2_000_001)
+        edge(source, task_base + i, (100 - priority) * priority_penalty)
         tx, ty = task['target']
         seen = set()
         for candidate in sorted(task['candidates'], key=lambda item: item['id']):
@@ -44,7 +48,7 @@ def plan(observation):
                 raise ValueError('duplicate candidate')
             seen.add(agent_id)
             x, y, battery = candidate['x'], candidate['y'], candidate['battery']
-            if not all(math.isfinite(v) for v in (tx, ty, x, y, battery)) or not all(0 <= v <= 100 for v in (tx, ty, x, y, battery)):
+            if not all(math.isfinite(v) for v in (tx, ty, x, y, battery)) or not all(0 <= v <= size for v in (tx, ty, x, y)) or not 0 <= battery <= 100:
                 raise ValueError('invalid candidate data')
             cost = round(100 * math.hypot(x - tx, y - ty) + 50 * (100 - battery))
             arc = edge(task_base + i, agent_base + agent_index[agent_id], cost)

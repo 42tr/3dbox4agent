@@ -16,6 +16,7 @@ fn same_box(c:&rapier3d::prelude::Collider,b:&Value,field:Option<&crate::heightf
 pub(super) fn validate_physics(physics:&PhysicsWorld,motion:&WorldMotion,environment:&WorldEnvironment)->Result<u64>{
  if physics.closed{return Err(invalid())}
  let actors=motion.lifecycle_agents()?;let map=value(environment.snapshot()?)?;
+ if physics.world_size!=environment.world_size(){return Err(invalid())}
  let field=environment.heightfield()?;if physics.heightfield.as_ref()!=field{return Err(invalid())}
  let domain=environment.surface_domain()?;if physics.surface_domain.as_ref()!=domain{return Err(invalid())}
  let mut expected_domains=0;

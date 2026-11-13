@@ -56,6 +56,7 @@ impl WorldControl {
         let mut memory=Vec::new();for item in data["memory"].as_array().into_iter().flatten(){let mut row=item.clone();row["current"]=current.iter().any(|c|c["kind"]==item["kind"]&&c["id"]==item["id"]).into();row["age"]=(now-item["observedTick"].as_u64().ok_or_else(invalid)?).into();memory.push(row)}
         let report=value(reports.snapshot()?)?;let mode=match self.state.execution_mode.unwrap_or(Execution::Auto){Execution::Auto=>"auto",Execution::Agent=>"agent",Execution::Primitive=>"primitive"};
         let mut observation=json!({"version":2,"tick":now,"done":ledger.done()?,"executionMode":mode,"self":self_view,"nearby":current.iter().filter(|r|r["kind"]=="agent").collect::<Vec<_>>(),"visibleTargets":current.iter().filter(|r|r["kind"]=="target").collect::<Vec<_>>(),"assignedTasks":assigned,"memory":memory,"inbox":config["inboxes"][&agent_id],"actions":selected(&value(actions.snapshot()?)?,&agent_id),"evidenceReports":selected(&report["evidenceReports"],&agent_id)});
+        if environment.world_size()!=100.0{observation["worldSize"]=json!(environment.world_size());}
         if all.iter().any(|t|t.behavior==crate::world_tasks::Behavior::Sample){observation["sampleReports"]=json!(selected(&report["sampleReports"],&agent_id));observation["samples"]=json!(ledger.entries()?.iter().filter(|e|e["kind"]=="sample_collected"&&e["agentId"].as_str()==Some(agent_id.as_str())).map(|e|json!({"taskId":e["taskId"],"position":e["position"],"collectedTick":e["tick"]})).collect::<Vec<_>>())}
         encode(&observation)
     }

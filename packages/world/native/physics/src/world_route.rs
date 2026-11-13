@@ -19,7 +19,7 @@ impl Context{
  }
 }
 pub(crate) struct Terrain{pub id:String,pub rect:[f64;4],pub speed:f64,pub energy:f64,pub started:Option<u64>}
-pub(crate) struct Map{pub identity:u64,pub surface_domain:Option<crate::surface_domain::Profile>,pub heightfield:Option<crate::heightfield::Heightfield>,pub terrain:Vec<Terrain>,pub risks:Vec<(String,[f64;4])>}
+pub(crate) struct Map{pub world_size:f64,pub identity:u64,pub surface_domain:Option<crate::surface_domain::Profile>,pub heightfield:Option<crate::heightfield::Heightfield>,pub terrain:Vec<Terrain>,pub risks:Vec<(String,[f64;4])>}
 // V8's bounded two-argument hypot; identical rounding matters at route corners.
 fn distance(x:f64,y:f64)->f64{let scale=x.abs().max(y.abs());if scale==0.0{0.0}else{let a=x.abs()/scale;let b=y.abs()/scale;(a*a+b*b).sqrt()*scale}}
 pub(crate) fn kinematic_body_fraction(ox:f64,oy:f64,dx:f64,dy:f64)->f64{
@@ -49,16 +49,17 @@ fn intersects(p:[f64;2],d:[f64;2],r:[f64;4])->bool{
   else{let a=(min-p)/d;let b=(max-p)/d;lo=lo.max(a.min(b));hi=hi.min(a.max(b));if lo>hi{return false}}
  }lo<=hi
 }
-fn footprint(from:[f64;2],to:[f64;2])->bool{
- let safe=|p:[f64;2]|p[0]>=0.8&&p[0]<=99.2&&p[1]>=0.8&&p[1]<=99.2;
+fn footprint(from:[f64;2],to:[f64;2],size:f64)->bool{
+ let max=size-0.8;
+ let safe=|p:[f64;2]|p[0]>=0.8&&p[0]<=max&&p[1]>=0.8&&p[1]<=max;
  if safe(to){return false}if safe(from){return true}
  let(mut lo,mut hi)=(0.0_f64,1.0_f64);
  for(start,delta)in [(from[0],to[0]-from[0]),(from[1],to[1]-from[1])]{
-  if delta.abs()<1e-12{if start<=0.8||start>=99.2{return false}}
-  else{let a=(0.8-start)/delta;let b=(99.2-start)/delta;lo=lo.max(a.min(b));hi=hi.min(a.max(b));if lo>=hi{return false}}
+  if delta.abs()<1e-12{if start<=0.8||start>=max{return false}}
+  else{let a=(0.8-start)/delta;let b=(max-start)/delta;lo=lo.max(a.min(b));hi=hi.min(a.max(b));if lo>=hi{return false}}
  }
  let t=(lo+hi)/2.0;let x=from[0]+t*(to[0]-from[0]);let y=from[1]+t*(to[1]-from[1]);
- lo<hi&&hi<1.0&&x>0.8&&x<99.2&&y>0.8&&y<99.2
+ lo<hi&&hi<1.0&&x>0.8&&x<max&&y>0.8&&y<max
 }
 pub(crate) struct Segment{pub speed:f64,pub energy:f64,pub boundary:f64,pub inside:Vec<usize>,pub micro:bool}
 pub(crate) fn segment(p:[f64;2],u:[f64;2],d:f64,zones:&[Terrain],minimum:f64)->Segment{
@@ -86,7 +87,7 @@ pub(crate) fn advance(a:&mut Motion,e:&mut Execution,map:&Map,c:&Context,others:
  if a.id!=e.id||e.disabled||c.exposures.iter().any(|(id,t)|!map.terrain.iter().any(|z|&z.id==id&&z.started==Some(*t))){return Err(invalid())}
  let air=e.mobility.as_deref().unwrap_or(if e.role=="drone"{"air"}else{"ground"})=="air";
  if e.mobility.as_deref()==Some("water")&&map.surface_domain.is_none(){return Err(invalid())}
- if let Some(p)=physics.as_ref(){if p.surface_domain!=map.surface_domain||p.water.contains(&a.id)!=(e.mobility.as_deref()==Some("water")){return Err(invalid())}}
+ if let Some(p)=physics.as_ref(){if p.world_size!=map.world_size||p.surface_domain!=map.surface_domain||p.water.contains(&a.id)!=(e.mobility.as_deref()==Some("water")){return Err(invalid())}}
  let initial=e.route.first().copied();let mut remaining=if e.thermal_protected(){0.0}else{e.speed};let mut contact=false;let mut moved=0.0;let mut events=Vec::new();
  let mut exposures=c.exposures.clone();
  while remaining>1e-9&&!e.route.is_empty(){
@@ -98,18 +99,18 @@ pub(crate) fn advance(a:&mut Motion,e:&mut Execution,map:&Map,c:&Context,others:
   if heat_limit<=minimum{e.thermal_protect("heat_budget")?;break}
   let desired=d.min(boundary).min(remaining*speed).min(a.battery/(rate*energy)).min(heat_limit);
   let raw=if let Some(p)=physics.as_mut(){p.move_agent(a.id.clone(),a.x,a.y,ux*desired,uy*desired)?}else if map.surface_domain.as_ref().is_some_and(|p|!p.clear(if air{"air"}else if e.mobility.as_deref()==Some("water"){"water"}else{"ground"},[a.x,a.y],[a.x+ux*desired,a.y+uy*desired],0.8).unwrap_or(false)){vec![0.0,0.0,1.0]}else{kinematic_move(&a.id,a.x,a.y,air,ux*desired,uy*desired,others).to_vec()};
-  let(mut mx,mut my)=(raw[0],raw[1]);let ex=a.x+mx;let ey=a.y+my;let outside=ex<0.0||ex>100.0||ey<0.0||ey>100.0;
-  let crossing=ex< -1e-7||ex>100.0+1e-7||ey< -1e-7||ey>100.0+1e-7;
+  let(mut mx,mut my)=(raw[0],raw[1]);let ex=a.x+mx;let ey=a.y+my;let outside=ex<0.0||ex>map.world_size||ey<0.0||ey>map.world_size;
+  let crossing=ex< -1e-7||ex>map.world_size+1e-7||ey< -1e-7||ey>map.world_size+1e-7;
   if outside{
-   let mut fraction=1.0_f64;for(start,delta)in [(a.x,mx),(a.y,my)]{if delta>0.0{fraction=fraction.min((100.0-start)/delta)}else if delta<0.0{fraction=fraction.min((0.0-start)/delta)}}fraction=fraction.max(0.0).min(1.0);
-   let x=(a.x+mx*fraction).max(0.0).min(100.0);let y=(a.y+my*fraction).max(0.0).min(100.0);
+   let mut fraction=1.0_f64;for(start,delta)in [(a.x,mx),(a.y,my)]{if delta>0.0{fraction=fraction.min((map.world_size-start)/delta)}else if delta<0.0{fraction=fraction.min((0.0-start)/delta)}}fraction=fraction.max(0.0).min(1.0);
+   let x=(a.x+mx*fraction).max(0.0).min(map.world_size);let y=(a.y+my*fraction).max(0.0).min(map.world_size);
    if let Some(p)=physics.as_mut(){p.correct_position(a.id.clone(),x,y)?}
    if c.boundary&&crossing&&(!e.boundary_active.unwrap_or(false)||(e.boundary_last_tick.unwrap_or(0) as i64)<(c.tick as i64)-1){events.push(json!({"kind":"boundary_exit_prevented","attempted":{"x":ex,"y":ey},"position":{"x":x,"y":y}}))}
    e.boundary_active=Some(crossing);if crossing{e.boundary_last_tick=Some(c.tick as u32)}mx=x-a.x;my=y-a.y;
   }else{e.boundary_active=Some(false)}
-  let actual=distance(mx,my);let from=[a.x,a.y];let to=[(a.x+mx).max(0.0).min(100.0),(a.y+my).max(0.0).min(100.0)];
+  let actual=distance(mx,my);let from=[a.x,a.y];let to=[(a.x+mx).max(0.0).min(map.world_size),(a.y+my).max(0.0).min(map.world_size)];
   if c.risks&&(mx!=0.0||my!=0.0){for(id,rect)in &map.risks{if !contains(from,*rect)&&intersects(from,[mx,my],*rect){events.push(json!({"kind":"risk_zone_entered","zoneId":id}))}}}
-  if c.footprint&&(mx!=0.0||my!=0.0)&&footprint(from,to){events.push(json!({"kind":"footprint_boundary_exit","from":{"x":from[0],"y":from[1]},"to":{"x":to[0],"y":to[1]},"radius":0.8}))}
+  if c.footprint&&(mx!=0.0||my!=0.0)&&footprint(from,to,map.world_size){events.push(json!({"kind":"footprint_boundary_exit","from":{"x":from[0],"y":from[1]},"to":{"x":to[0],"y":to[1]},"radius":0.8}))}
   e.thermal_spend(a.battery.min(actual*rate*energy))?;a.x=to[0];a.y=to[1];a.distance+=actual;a.battery=(a.battery-actual*rate*energy).max(0.0);
   let inside=if step.micro{map.terrain.iter().enumerate().filter(|(_,z)|intersects(from,[mx,my],z.rect)).map(|(i,_)|i).collect()}else{step.inside};
   if !inside.is_empty()||(!air&&map.heightfield.as_ref().is_some_and(|h|h.factor((from[0]+to[0])/2.0,(from[1]+to[1])/2.0).energy>1.0)){e.terrain_distance=Some(e.terrain_distance.unwrap_or(0.0)+actual)}

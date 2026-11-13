@@ -35,7 +35,11 @@ struct Block { id: Option<String>, x: f32, y: f32, w: f32, h: f32, height: f32 }
 #[derive(Clone, Deserialize)]
 struct Agent { id: String, x: f64, y: f64, role: String, mobility: Option<String> }
 #[derive(Clone, Deserialize)]
-struct State { #[serde(default,rename="surfaceDomain",deserialize_with="surface_domain::present")] surface_domain:Option<surface_domain::Profile>, obstacles: Vec<Block>, agents: Vec<Agent>, #[serde(default)] roadblocks: Vec<Block>, #[serde(default,deserialize_with="heightfield::present")] heightfield:Option<heightfield::Heightfield> }
+struct State { #[serde(default="default_world_size",rename="worldSize")] world_size:f64, #[serde(default,rename="surfaceDomain",deserialize_with="surface_domain::present")] surface_domain:Option<surface_domain::Profile>, obstacles: Vec<Block>, agents: Vec<Agent>, #[serde(default)] roadblocks: Vec<Block>, #[serde(default,deserialize_with="heightfield::present")] heightfield:Option<heightfield::Heightfield> }
+
+pub(crate) const MAX_WORLD_SIZE:f64=256.0;
+pub(crate) fn default_world_size()->f64{100.0}
+pub(crate) fn valid_world_size(size:f64)->bool{(100.0..=MAX_WORLD_SIZE).contains(&size)&&size.fract()==0.0}
 
 fn parse<T: for<'a> Deserialize<'a>>(value: &str) -> Result<T> {
     serde_json::from_str(value).map_err(|_| Error::from_reason("invalid physics input"))
@@ -53,6 +57,7 @@ fn block(b: &Block,terrain:Option<&heightfield::Heightfield>) -> Collider {
 #[napi]
 #[derive(Clone)]
 pub struct PhysicsWorld {
+    world_size:f64,
     checkpoint_id: u64,
     bodies: RigidBodySet,
     colliders: ColliderSet,
@@ -101,9 +106,10 @@ impl PhysicsWorld {
     #[napi(constructor)]
     pub fn new(input: String) -> Result<Self> {
         let state: State = parse(&input)?;
+        if !valid_world_size(state.world_size)||(state.world_size!=100.0&&(state.heightfield.is_some()||state.surface_domain.is_some())){return Err(Error::from_reason("invalid world size"))}
         if let Some(h)=&state.heightfield{h.validate()?}
         if let Some(p)=&state.surface_domain{p.validate()?;if state.heightfield.is_some(){return Err(Error::from_reason("surface domains require a flat map"))}}
-        let mut world = Self { checkpoint_id: crate::world_checkpoint::identity(), bodies: RigidBodySet::new(), colliders: ColliderSet::new(), query: QueryPipeline::new(),
+        let mut world = Self { world_size:state.world_size, checkpoint_id: crate::world_checkpoint::identity(), bodies: RigidBodySet::new(), colliders: ColliderSet::new(), query: QueryPipeline::new(),
             agents: HashMap::new(),air:HashSet::new(),water:HashSet::new(),surface_domain:state.surface_domain,domain_colliders:HashMap::new(),heightfield:state.heightfield,terrain_handle:None, roadblocks: HashMap::new(), closed: false, controller: KinematicCharacterController { offset: CharacterLength::Absolute(0.02), slide: true, ..Default::default() } };
         if let Some(h)=&world.heightfield{let(vertices,indices)=h.mesh();world.terrain_handle=Some(world.colliders.insert(ColliderBuilder::trimesh(vertices.into_iter().map(Point::from).collect(),indices).build()))}
         for b in &state.obstacles {
@@ -154,7 +160,10 @@ impl PhysicsWorld {
         let movement = self.controller.move_shape(1.0/20.0,&self.bodies,&self.colliders,&self.query,
             collider.shape(),&pos,vector![dx as f32,0.0,dy as f32],QueryFilter::default().exclude_collider(handle).predicate(&domain_filter), |_| contacts+=1);
         let m = movement.translation;
-        self.colliders[handle].set_translation(pos.translation.vector+m);
+        // Like the WASM backend, keep flat-map proxies at their configured elevation.
+        // A slide along a roof edge can include a vertical Rapier correction even
+        // though the World movement and snapshot only own x and y.
+        self.colliders[handle].set_translation(pos.translation.vector+vector![m.x,0.0,m.z]);
         self.query.update(&self.colliders);
         Ok(vec![m.x as f64,m.z as f64,contacts as f64])
     }
@@ -230,7 +239,7 @@ impl PhysicsWorld {
     #[napi]
     pub fn body_position(&self,id:String)->Result<Vec<f64>>{if self.closed{return Err(Error::from_reason("physics world is closed"))}let handle=self.agents.get(&id).ok_or_else(||Error::from_reason("missing physics collider"))?;let p=self.colliders[*handle].translation();Ok(vec![p.x as f64,p.z as f64,p.y as f64])}
     #[napi]
-    pub fn surface(&self,x:f64,y:f64)->Result<Vec<f64>>{if self.closed||![x,y].iter().all(|v|v.is_finite()&&(0.0..=100.0).contains(v)){return Err(Error::from_reason("invalid surface position"))}Ok(self.heightfield.as_ref().map_or([0.0;4],|h|h.surface(x,y)).to_vec())}
+    pub fn surface(&self,x:f64,y:f64)->Result<Vec<f64>>{if self.closed||![x,y].iter().all(|v|v.is_finite()&&(0.0..=self.world_size).contains(v)){return Err(Error::from_reason("invalid surface position"))}Ok(self.heightfield.as_ref().map_or([0.0;4],|h|h.surface(x,y)).to_vec())}
 }
 impl PhysicsWorld {
     fn update_roadblocks(&mut self, blocks: Vec<Block>) -> Result<()> {
@@ -683,25 +692,25 @@ pub fn motion_accounting(battery:f64,actual_distance:f64,energy_rate:f64,energy_
 struct RiskRect { x:f64, y:f64, w:f64, h:f64 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all="camelCase")]
-struct MovementGuard { x:f64, y:f64, dx:f64, dy:f64, risk_zones:Vec<RiskRect> }
+struct MovementGuard { #[serde(default="default_world_size")] world_size:f64, x:f64, y:f64, dx:f64, dy:f64, risk_zones:Vec<RiskRect> }
 
 // Clip the actual physics displacement to the world and find risk rectangles
 // intersected by the clipped segment, in scene order.
 #[napi]
 pub fn guard_movement(input:String)->Result<String> {
     let v:MovementGuard=parse(&input)?;
-    if ![v.x,v.y,v.dx,v.dy].iter().all(|n|n.is_finite()) || v.risk_zones.len()>32 ||
+    if !valid_world_size(v.world_size)||![v.x,v.y,v.dx,v.dy].iter().all(|n|n.is_finite()) || v.risk_zones.len()>32 ||
         v.risk_zones.iter().any(|z|![z.x,z.y,z.w,z.h].iter().all(|n|n.is_finite()) || z.w<=0.0 || z.h<=0.0) {
         return Err(Error::from_reason("invalid movement guard input"));
     }
     let (ex,ey)=(v.x+v.dx,v.y+v.dy);
-    let outside=ex<0.0||ex>100.0||ey<0.0||ey>100.0;
-    let crossing=ex< -1e-7||ex>100.0+1e-7||ey< -1e-7||ey>100.0+1e-7;
+    let outside=ex<0.0||ex>v.world_size||ey<0.0||ey>v.world_size;
+    let crossing=ex< -1e-7||ex>v.world_size+1e-7||ey< -1e-7||ey>v.world_size+1e-7;
     let (x,y,dx,dy)=if outside {
         let mut f=1.0_f64;
-        for (start,delta) in [(v.x,v.dx),(v.y,v.dy)] {if delta>0.0 {f=f.min((100.0-start)/delta)}else if delta<0.0 {f=f.min((0.0-start)/delta)}}
+        for (start,delta) in [(v.x,v.dx),(v.y,v.dy)] {if delta>0.0 {f=f.min((v.world_size-start)/delta)}else if delta<0.0 {f=f.min((0.0-start)/delta)}}
         f=f.max(0.0).min(1.0);
-        let x=(v.x+v.dx*f).max(0.0).min(100.0);let y=(v.y+v.dy*f).max(0.0).min(100.0);
+        let x=(v.x+v.dx*f).max(0.0).min(v.world_size);let y=(v.y+v.dy*f).max(0.0).min(v.world_size);
         (x,y,x-v.x,y-v.y)
     }else{(ex,ey,v.dx,v.dy)};
     let mut risks=Vec::<usize>::new();

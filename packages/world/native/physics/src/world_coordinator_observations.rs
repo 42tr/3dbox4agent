@@ -31,7 +31,7 @@ impl WorldControl {
    if reported{let matched=statuses.iter().find(|r|r["id"]==v["assignee"]&&r["activeAssignment"]["taskId"]==v["id"]&&r["activeAssignment"]["assignmentId"]==v["assignmentId"]);row["statusReport"]=if let Some(r)=matched{let captured=r["capturedTick"].as_u64().ok_or_else(invalid)?;let age=now-captured;json!({"status":r["status"],"routeBlockedSince":r["routeBlockedSince"],"capturedTick":captured,"receivedTick":r["receivedTick"],"age":age,"fresh":age<=max_age})}else{Value::Null};}active.push(row)
   }
   let dispatch=value(dispatch.snapshot()?)?;let request=value(requests.snapshot()?)?;let mut out=json!({"version":1,"tick":now,"done":ledger.done()?,"failed":ledger.failed()?,"tasks":ready,"active":active,"decisions":dispatch["decisions"].as_array().into_iter().flatten().filter(|d|d["actor"]=="external").collect::<Vec<_>>(),"revocations":request.get("revocations").cloned().unwrap_or(json!([])),"proposals":request.get("proposals").cloned().unwrap_or(json!([])),"evidence":report["evidence"],"sampleReports":report["sampleReports"],"fixedSensorReports":report["fixedSensorReports"],"knownTasks":all.iter().map(|t|{let v=serde_json::to_value(t).map_err(|_|invalid())?;Ok(json!({"id":t.id,"name":v["name"],"status":t.status}))}).collect::<Result<Vec<_>>>()?});
-  if reported{if report["reporting"].is_null(){return Err(invalid())}out["reporting"]=report["reporting"].clone()}encode(&out)
+  if environment.world_size()!=100.0{out["worldSize"]=json!(environment.world_size());}if reported{if report["reporting"].is_null(){return Err(invalid())}out["reporting"]=report["reporting"].clone()}encode(&out)
  }
 }
 fn reporting_age(report:&Value)->Result<u64>{report["maxAge"].as_u64().ok_or_else(invalid)}

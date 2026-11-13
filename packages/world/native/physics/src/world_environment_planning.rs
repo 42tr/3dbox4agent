@@ -69,14 +69,14 @@ impl WorldEnvironment {
         let mut next=self.clone();let mut next_motion=motion.clone();let mut next_control=control.clone();let mut next_ledger=ledger.clone();
         let result=match command{
             Disturbance::Roadblock{rect:r,duration}=>{
-                if !rect(r.x,r.y,r.w,r.h,2.0)||!(1..=1000).contains(&duration){return Ok("{\"ok\":false,\"reason\":\"invalid_roadblock\"}".into())}
+                if !rect(r.x,r.y,r.w,r.h,2.0,self.world_size())||!(1..=1000).contains(&duration){return Ok("{\"ok\":false,\"reason\":\"invalid_roadblock\"}".into())}
                 if self.blocks().count()>=8{return Ok("{\"ok\":false,\"reason\":\"roadblock_limit\"}".into())}
                 let rect=json!({"x":r.x,"y":r.y,"w":r.w,"h":r.h});
-                for(i,agent,_)in &context.actors{if !self.agents[*i].air&&crate::navigation::environment_route_blocked([agent.x,agent.y],&[[agent.x,agent.y]],rect.clone())?{return Ok("{\"ok\":false,\"reason\":\"agent_in_roadblock\"}".into())}}
+                for(i,agent,_)in &context.actors{if !self.agents[*i].air&&crate::navigation::environment_route_blocked([agent.x,agent.y],&[[agent.x,agent.y]],rect.clone(),self.world_size())?{return Ok("{\"ok\":false,\"reason\":\"agent_in_roadblock\"}".into())}}
                 let barrier:Value=decode(&next.roadblock(encode(&json!({"rect":rect,"duration":duration,"eventId":next_ledger.entries()?.len()+1,"agents":context.actors.iter().map(|(_,a,_)|json!({"id":a.id,"x":a.x,"y":a.y})).collect::<Vec<_>>()}))?,expected)?)?;
                 // Preflight every affected route/owner before any event is appended.
                 let mut routes=Vec::new();for(i,agent,execution)in &context.actors{
-                    if execution.disabled||self.agents[*i].air||execution.route.is_empty()||!crate::navigation::environment_route_blocked([agent.x,agent.y],&execution.route,rect.clone())?{continue}
+                    if execution.disabled||self.agents[*i].air||execution.route.is_empty()||!crate::navigation::environment_route_blocked([agent.x,agent.y],&execution.route,rect.clone(),self.world_size())?{continue}
                     let Some(owner)=execution.environment_owner(&context.tasks,actions)?else{return encode(&json!({"ok":false,"reason":"route_owner_unavailable","agentId":agent.id}))};
                     let goal=*execution.route.last().ok_or_else(invalid)?;let path=next.planned_route(&agent.id,[agent.x,agent.y],goal,true,false)?;routes.push((*i,agent.clone(),execution.clone(),owner,goal,path));
                 }

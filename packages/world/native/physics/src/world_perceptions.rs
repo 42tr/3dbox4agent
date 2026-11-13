@@ -13,7 +13,7 @@ fn decode<T: for<'a> Deserialize<'a>>(input: &str) -> Result<T> {
 }
 fn encode<T: Serialize>(value: &T) -> Result<String> { serde_json::to_string(value).map_err(|_| invalid()) }
 fn token(s: &str) -> bool { !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') }
-fn xy(x: f64, y: f64) -> bool { [x,y].iter().all(|n| n.is_finite() && (0.0..=100.0).contains(n)) }
+fn xy(x: f64, y: f64,size:f64) -> bool { [x,y].iter().all(|n| n.is_finite() && (0.0..=size).contains(n)) }
 // Match the existing Node/V8 two-number Math.hypot rounding at the exact
 // range boundary. Inputs here are finite, bounded world coordinates.
 // https://github.com/nodejs/node/blob/v24.14.1/deps/v8/src/builtins/math.tq
@@ -53,14 +53,15 @@ struct Target { id: String, target: [f64;2] }
 #[serde(deny_unknown_fields)]
 pub(crate) struct Block { pub(crate) x: f64, pub(crate) y: f64, pub(crate) w: f64, pub(crate) h: f64, pub(crate) height: f64 }
 impl Block {
-    fn valid(&self) -> bool {
-        xy(self.x,self.y) && [self.w,self.h,self.height].iter().all(|n| n.is_finite() && *n>0.0)
-            && self.x+self.w<=100.0 && self.y+self.h<=100.0 && self.height<=1000.0
+    fn valid(&self,size:f64) -> bool {
+        xy(self.x,self.y,size) && [self.w,self.h,self.height].iter().all(|n| n.is_finite() && *n>0.0)
+            && self.x+self.w<=size && self.y+self.h<=size && self.height<=1000.0
     }
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Initial {
+    #[serde(default="crate::default_world_size",rename="worldSize")]world_size:f64,
     tick: u32, agents: Vec<AgentSpec>, targets: Vec<Target>, obstacles: Vec<Block>,
     ray: bool, perceptions: OrderedMap<Perception>,
     #[serde(default,deserialize_with="crate::heightfield::present")]heightfield:Option<crate::heightfield::Heightfield>,
@@ -116,6 +117,7 @@ pub(crate) fn visible_heightfield(from:[f64;3],to:[f64;3],blocks:impl Iterator<I
 #[napi]
 #[derive(Clone)]
 pub struct WorldPerceptions {
+    world_size:f64,
     checkpoint_id: u64,
     tick: u32, agents: Vec<AgentSpec>, targets: Vec<Target>, obstacles: Vec<Block>, ray: bool,
     heightfield:Option<crate::heightfield::Heightfield>,state: OrderedMap<Perception>, closed: bool,
@@ -126,7 +128,7 @@ impl WorldPerceptions {
     }
     fn check(&self) -> Result<()> { if self.closed { Err(Error::from_reason("world perceptions is closed")) } else { Ok(()) } }
     fn valid_item(&self, item: &Item, observer: &str) -> bool {
-        if item.fault_generation.is_some_and(|n|n==0||item.kind!=Kind::Agent||item.status!=Some(Status::Fault)) || !xy(item.x,item.y) || item.observed_tick>self.tick || self.tick-item.observed_tick>TTL {return false;}
+        if item.fault_generation.is_some_and(|n|n==0||item.kind!=Kind::Agent||item.status!=Some(Status::Fault)) || !xy(item.x,item.y,self.world_size) || item.observed_tick>self.tick || self.tick-item.observed_tick>TTL {return false;}
         match item.kind {
             Kind::Agent=>item.id!=observer && self.agents.iter().any(|a| a.id==item.id && item.role.as_ref()==Some(&a.role)) && item.status.is_some(),
             Kind::Target=>item.role.is_none() && item.status.is_none() && self.targets.iter().any(|t| t.id==item.id && t.target==[item.x,item.y]),
@@ -134,7 +136,7 @@ impl WorldPerceptions {
     }
     fn owned_frame(&self,now:u32,motion:&crate::world_motion::WorldMotion,environment:&crate::world_environment::WorldEnvironment,ray:bool)->Result<Frame>{
         self.check()?;let actors=motion.lifecycle_agents()?;let(range,obstacles,roadblocks)=environment.perception_map(now as u64,&actors)?;
-        if self.heightfield.as_ref()!=environment.heightfield()?||self.ray!=ray||self.obstacles!=obstacles||actors.len()!=self.agents.len(){return Err(invalid())}let mut agents=Vec::new();
+        if self.world_size!=environment.world_size()||self.heightfield.as_ref()!=environment.heightfield()?||self.ray!=ray||self.obstacles!=obstacles||actors.len()!=self.agents.len(){return Err(invalid())}let mut agents=Vec::new();
         for((_,a,e),spec)in actors.into_iter().zip(&self.agents){let air=e.mobility.as_deref().map_or(e.role=="drone",|m|m=="air");if spec.id!=a.id||spec.role!=e.role||spec.height!=(if air{16.0}else{1.5})||spec.range!=e.sensor_range.unwrap_or(range){return Err(invalid())}use crate::world_execution::Status as S;let status=match e.status{S::Idle=>Status::Idle,S::Assigned=>Status::Assigned,S::Working=>Status::Working,S::Manual=>Status::Manual,S::Fault=>Status::Fault,S::Deployed=>Status::Deployed};agents.push(AgentState{id:a.id,x:a.x,y:a.y,status,disabled:e.disabled,fault_generation:e.fault_generation})}
         Ok(Frame{tick:now,agents,roadblocks})
     }
@@ -144,8 +146,8 @@ impl WorldPerceptions {
     fn update_frame(&mut self,frame:Frame,physics:Option<&PhysicsWorld>)->Result<()>{
         self.check()?;
         if self.ray!=physics.is_some() || frame.tick<self.tick || frame.tick>MAX_TICK || frame.agents.len()!=self.agents.len()
-            || frame.agents.iter().zip(&self.agents).any(|(a,s)| a.id!=s.id || !xy(a.x,a.y))
-            || frame.roadblocks.len()>8 || frame.roadblocks.iter().any(|b| !b.valid()) {return Err(invalid());}
+            || frame.agents.iter().zip(&self.agents).any(|(a,s)| a.id!=s.id || !xy(a.x,a.y,self.world_size))
+            || frame.roadblocks.len()>8 || frame.roadblocks.iter().any(|b| !b.valid(self.world_size)) {return Err(invalid());}
         let mut next=OrderedMap::default();
         for ((self_spec,who),(_,previous)) in self.agents.iter().zip(&frame.agents).zip(&self.state) {
             let mut current=Vec::new();
@@ -187,12 +189,12 @@ impl WorldPerceptions {
     #[napi(constructor)]
     pub fn new(input: String) -> Result<Self> {
         let i: Initial=decode(&input)?;if let Some(h)=&i.heightfield{h.validate()?}
-        if i.tick>MAX_TICK || i.agents.is_empty() || i.agents.len()>50 || i.targets.is_empty() || i.targets.len()>100
-            || i.obstacles.len()>64 || i.obstacles.iter().any(|b|!b.valid()) || i.perceptions.len()!=i.agents.len() {return Err(invalid());}
+        if !crate::valid_world_size(i.world_size)||i.tick>MAX_TICK || i.agents.is_empty() || i.agents.len()>50 || i.targets.is_empty() || i.targets.len()>100
+            || i.obstacles.len()>64 || i.obstacles.iter().any(|b|!b.valid(i.world_size)) || i.perceptions.len()!=i.agents.len() {return Err(invalid());}
         let mut ids=HashSet::new();
         for a in &i.agents {if !token(&a.id)||!token(&a.role)||!ids.insert(&a.id)||![1.5,16.0].contains(&a.height)||!a.range.is_finite()||a.range<=0.0||a.range>10000.0 {return Err(invalid());}}
-        ids.clear();for t in &i.targets {if !token(&t.id)||!ids.insert(&t.id)||!xy(t.target[0],t.target[1]) {return Err(invalid());}}
-        let world=Self{ checkpoint_id: crate::world_checkpoint::identity(),tick:i.tick,agents:i.agents,targets:i.targets,obstacles:i.obstacles,ray:i.ray,heightfield:i.heightfield,state:i.perceptions,closed:false};
+        ids.clear();for t in &i.targets {if !token(&t.id)||!ids.insert(&t.id)||!xy(t.target[0],t.target[1],i.world_size) {return Err(invalid());}}
+        let world=Self{ world_size:i.world_size, checkpoint_id: crate::world_checkpoint::identity(),tick:i.tick,agents:i.agents,targets:i.targets,obstacles:i.obstacles,ray:i.ray,heightfield:i.heightfield,state:i.perceptions,closed:false};
         for (spec,(id,p)) in world.agents.iter().zip(&world.state) {
             if &spec.id!=id || p.current.len()>world.agents.len()+world.targets.len()-1 || p.memory.len()>world.agents.len()+world.targets.len()-1 {return Err(invalid());}
             let mut seen=HashSet::new();
@@ -220,7 +222,7 @@ impl WorldPerceptions {
     #[napi]
     pub fn register(&mut self, input: String, tick: u32) -> Result<()> {
         self.check()?;let t: Target=decode(&input)?;
-        if tick<self.tick || tick>MAX_TICK || self.targets.len()>=100 || !token(&t.id)||!xy(t.target[0],t.target[1])||self.targets.iter().any(|old|old.id==t.id) {return Err(invalid());}
+        if tick<self.tick || tick>MAX_TICK || self.targets.len()>=100 || !token(&t.id)||!xy(t.target[0],t.target[1],self.world_size)||self.targets.iter().any(|old|old.id==t.id) {return Err(invalid());}
         self.targets.push(t);Ok(())
     }
     #[napi]

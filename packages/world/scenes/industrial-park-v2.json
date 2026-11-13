@@ -1,0 +1,41 @@
+{
+  "id": "industrial-park-v2",
+  "name": "现代工业园区",
+  "worldSize": 224,
+  "sensorRange": 28,
+  "communication": {"range": 150, "delay": 3, "lossRate": 0.1, "ttl": 15, "maxPerTick": 4, "maxBytes": 256, "statusInterval": 5, "statusMaxAge": 20, "decisionMaxAge": 5},
+  "resource": {"warehouse": [62, 101], "site": [164, 120]},
+  "obstacles": [
+    {"id":"warehouse","x":25,"y":53,"w":58,"h":34,"height":12},
+    {"id":"warehouse-annex","x":25,"y":116,"w":42,"h":28,"height":9},
+    {"id":"workshop","x":143,"y":56,"w":54,"h":42,"height":16},
+    {"id":"assembly","x":150,"y":147,"w":47,"h":29,"height":13},
+    {"id":"equipment","x":95,"y":29,"w":33,"h":33,"height":8},
+    {"id":"power","x":145,"y":24,"w":35,"h":19,"height":9},
+    {"id":"control","x":62,"y":163,"w":32,"h":24,"height":15},
+    {"id":"office","x":133,"y":181,"w":31,"h":18,"height":9},
+    {"id":"south-booth","x":128,"y":204,"w":6,"h":7,"height":4},
+    {"id":"east-booth","x":214,"y":132,"w":7,"h":6,"height":4},
+    {"id":"median-north","x":110.75,"y":177,"w":2.5,"h":8,"height":0.6},
+    {"id":"median-center","x":110.75,"y":188,"w":2.5,"h":8,"height":0.6},
+    {"id":"median-south","x":110.75,"y":199,"w":2.5,"h":7,"height":0.6},
+    {"id":"wall-north","x":10,"y":10,"w":204,"h":1,"height":3},
+    {"id":"wall-west","x":10,"y":11,"w":1,"h":202,"height":3},
+    {"id":"wall-east-north","x":213,"y":11,"w":1,"h":100,"height":3},
+    {"id":"wall-east-south","x":213,"y":129,"w":1,"h":84,"height":3},
+    {"id":"wall-south-west","x":10,"y":213,"w":92,"h":1,"height":3},
+    {"id":"wall-south-east","x":122,"y":213,"w":92,"h":1,"height":3}
+  ],
+  "agents": [
+    {"role":"drone","label":"无人机","count":5,"capabilities":["inspect","confirm"],"speed":3.8,"spawnArea":{"x":99,"y":74,"w":26,"h":16}},
+    {"role":"vehicle","label":"运输车","count":5,"capabilities":["deliver"],"speed":2.8,"spawnArea":{"x":34,"y":97,"w":24,"h":12}},
+    {"role":"robot","label":"维修机器人","count":5,"capabilities":["repair"],"speed":2.4,"spawnArea":{"x":128,"y":128,"w":18,"h":10}}
+  ],
+  "tasks": [
+    {"id":"inspect","behavior":"detect","name":"巡检北侧设备区","role":"drone","capability":"inspect","target":[112,70],"duration":8,"dependsOn":[]},
+    {"id":"confirm","behavior":"confirm","name":"确认维修场设备异常","role":"drone","capability":"confirm","target":[164,120],"duration":7,"dependsOn":["inspect"]},
+    {"id":"deliver","behavior":"deliver","name":"从西侧仓库运输备件","role":"vehicle","capability":"deliver","target":[164,120],"duration":9,"dependsOn":["confirm"]},
+    {"id":"repair","behavior":"repair","name":"维修设备","role":"robot","capability":"repair","target":[164,120],"duration":12,"dependsOn":["deliver"]},
+    {"id":"verify","behavior":"verify","name":"复核设备状态","role":"drone","capability":"confirm","target":[164,120],"duration":5,"dependsOn":["repair"]}
+  ]
+}

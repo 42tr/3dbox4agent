@@ -9,7 +9,7 @@ from box_agent import CoordinatorClient
 from box_agent.client import AgentClient
 from box_agent.planner import plan
 
-SCENES = ('industrial-park-v1', 'industrial-park-parallel-v1', 'lunar-base-v1', 'lunar-terrain-v1', 'lunar-sampling-v1', 'lunar-outpost-v1', 'shore-coordination-v1', 'shore-surface-v1','shore-sea-state-v1','shore-echelons-v1','shore-rescue-v1', 'industrial-park-fixed-sensor-v1')
+SCENES = ('industrial-park-v1', 'industrial-park-parallel-v1', 'lunar-base-v1', 'lunar-terrain-v1', 'lunar-sampling-v1', 'lunar-outpost-v1', 'shore-coordination-v1', 'shore-surface-v1','shore-sea-state-v1','shore-echelons-v1','shore-rescue-v1', 'industrial-park-fixed-sensor-v1', 'industrial-park-v2')
 
 
 def nearest(observation):

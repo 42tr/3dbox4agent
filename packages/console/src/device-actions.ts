@@ -5,13 +5,13 @@ export type RescueContact={faultGeneration:number;id:string;role:string;x:number
 export type Device={operatingEnergyPerTick?:number;operatingState?:{energySpent:number;tick:number};rescueWorkTicks?:number;id:string;name:string;x:number;y:number;battery:number;disabled:boolean;status:string;mobility?:string};
 export type DeviceTask={id:string;name:string;status:string;waypoint?:number[]|null;approachPoint?:number[]|null;withinReach?:boolean};
 export type DeviceAction={agentId:string;requestId:string;type:string;status:string;targetTick:number;expiresTick:number;submittedTick:number;updatedTick?:number;taskId?:string;reason?:string;phase?:string;progress?:number;energyAdded?:number};
-export type DeviceContext={key:string;observer:boolean;imported:boolean;latest:boolean;failed:boolean;done:boolean;busy:boolean;running:boolean;remote:boolean;connection?:DeviceConnection;speed?:number;tick:number;mode:string;selected:string;rescueContacts?:RescueContact[];agents:Device[];tasks:DeviceTask[];actions:DeviceAction[];reports?:ReportData};
+export type DeviceContext={worldSize?:number;key:string;observer:boolean;imported:boolean;latest:boolean;failed:boolean;done:boolean;busy:boolean;running:boolean;remote:boolean;connection?:DeviceConnection;speed?:number;tick:number;mode:string;selected:string;rescueContacts?:RescueContact[];agents:Device[];tasks:DeviceTask[];actions:DeviceAction[];reports?:ReportData};
 export type DeviceDraft={type:'move';x:string;y:string}|{type:'scan'|'charge'}|{type:'execute_task'|'work_task';taskId:string}|{type:'rescue';targetAgentId:string;observedTick:number;faultGeneration:number}|{type:'cancel';requestId:string};
 export type DeviceIntent={requestId:string;type:'move'|'scan'|'charge'|'execute_task'|'work_task'|'rescue';targetTick:number;expiresTick:number;target?:{x:number;y:number};taskId?:string;targetAgentId?:string;observedTick?:number;faultGeneration?:number};
 export type DeviceResult={ok:boolean;reason?:string;requestId?:string;targetTick?:number;cancelled?:boolean;refreshPending?:boolean};
 const token=(s:string)=>typeof s==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(s);
 export function deviceBlock(c:DeviceContext):string|null{if(c.observer)return 'read_only';if(c.imported)return 'imported_replay';if(!c.latest)return 'history_view';if(c.failed)return 'session_stopped';if(c.done)return 'world_finished';if(c.busy)return 'busy';return null}
-export function deviceTaskMovePoint(task:DeviceTask|undefined):[number,number]|null{if(!task)return null;const p=Object.prototype.hasOwnProperty.call(task,'approachPoint')?task.approachPoint:task.waypoint;return Array.isArray(p)&&p.length===2&&p.every(n=>Number.isFinite(n)&&n>=0&&n<=100)?[p[0],p[1]]:null}
+export function deviceTaskMovePoint(task:DeviceTask|undefined,worldSize=100):[number,number]|null{if(!task)return null;const p=Object.prototype.hasOwnProperty.call(task,'approachPoint')?task.approachPoint:task.waypoint;return Array.isArray(p)&&p.length===2&&p.every(n=>Number.isFinite(n)&&n>=0&&n<=worldSize)?[p[0],p[1]]:null}
 export function taskActionBlock(c:DeviceContext,taskId:string):string|null{
  const a=c.agents.find(a=>a.id===c.selected),t=c.tasks.find(t=>t.id===taskId&&t.status==='active');
  if(!['agent','primitive'].includes(c.mode))return 'execution_mode';if(!t||a?.status!=='assigned')return 'task_not_assigned';
@@ -27,7 +27,7 @@ export function prepareDeviceIntent(c:DeviceContext,agentId:string,draft:DeviceD
  const intent:DeviceIntent={requestId,type:draft.type,targetTick,expiresTick};
  if(draft.type==='move'){
   if(typeof draft.x!=='string'||typeof draft.y!=='string'||!draft.x.trim()||!draft.y.trim())return {reason:'invalid_target'};const x=Number(draft.x),y=Number(draft.y);
-  if(![x,y].every(n=>Number.isFinite(n)&&n>=0&&n<=100))return {reason:'invalid_target'};intent.target={x,y};
+  if(![x,y].every(n=>Number.isFinite(n)&&n>=0&&n<=(c.worldSize??100)))return {reason:'invalid_target'};intent.target={x,y};
  }else if(draft.type==='rescue'){
   if(!c.agents.find(a=>a.id===agentId)?.rescueWorkTicks)return {reason:'missing_capability'};if(!c.rescueContacts?.some(t=>t.id===draft.targetAgentId&&t.observedTick===draft.observedTick&&t.faultGeneration===draft.faultGeneration))return {reason:'fault_not_observed'};intent.targetAgentId=draft.targetAgentId;intent.observedTick=draft.observedTick;intent.faultGeneration=draft.faultGeneration;
  }else if(draft.type==='execute_task'||draft.type==='work_task'){

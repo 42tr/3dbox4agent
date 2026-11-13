@@ -16,7 +16,7 @@ pub(crate) struct Rect{pub x:f64,pub y:f64,pub w:f64,pub h:f64}
 #[derive(Clone,Deserialize,Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SpawnArea{pub x:f64,pub y:f64,pub w:f64,pub h:f64}
-impl SpawnArea{pub(crate) fn valid(&self)->bool{[self.x,self.y,self.w,self.h].iter().all(|n|n.is_finite())&&self.x>=2.0&&self.y>=2.0&&self.w>0.0&&self.h>0.0&&self.x+self.w<=98.0&&self.y+self.h<=98.0}}
+impl SpawnArea{pub(crate) fn valid(&self,size:f64)->bool{[self.x,self.y,self.w,self.h].iter().all(|n|n.is_finite())&&self.x>=2.0&&self.y>=2.0&&self.w>0.0&&self.h>0.0&&self.x+self.w<=size-2.0&&self.y+self.h<=size-2.0}}
 pub(crate) fn approaches(goal:[f64;2],radius:f64)->Vec<[f64;2]>{[[1.0,0.0],[0.8,0.6],[0.6,0.8],[0.0,1.0],[-0.6,0.8],[-0.8,0.6],[-1.0,0.0],[-0.8,-0.6],[-0.6,-0.8],[0.0,-1.0],[0.6,-0.8],[0.8,-0.6]].map(|[x,y]|[goal[0]+x*radius,goal[1]+y*radius]).to_vec()}
 impl Profile{
  pub(crate) fn body_free(&self,mobility:&str,at:[f64;2],radius:f64)->Result<bool>{

@@ -26,7 +26,7 @@ enum LifecycleEvent {Cancel(f64),Travel(f64),Run}
 #[derive(Clone,PartialEq,Deserialize,Serialize)]
 #[serde(deny_unknown_fields)]
 struct Point {x:f64,y:f64}
-impl Point {fn valid(&self)->bool{[self.x,self.y].iter().all(|n|n.is_finite()&&(0.0..=100.0).contains(n))}}
+impl Point {fn valid(&self,size:f64)->bool{[self.x,self.y].iter().all(|n|n.is_finite()&&(0.0..=size).contains(n))}}
 #[derive(Clone,PartialEq,Deserialize,Serialize)]
 #[serde(tag="kind",rename_all="snake_case",deny_unknown_fields)]
 enum ScanResult {
@@ -36,7 +36,7 @@ enum ScanResult {
 }
 impl ScanResult {
     fn observed(&self)->u32{match self{Self::Anomaly{observed_tick,..}|Self::Normal{observed_tick,..}|Self::NotDetected{observed_tick}=>*observed_tick}}
-    fn valid(&self,now:u32)->bool{self.observed()<=now&&match self{Self::Anomaly{position,..}|Self::Normal{position,..}=>position.iter().all(|n|n.is_finite()&&(0.0..=100.0).contains(n)),Self::NotDetected{..}=>true}}
+    fn valid(&self,now:u32,size:f64)->bool{self.observed()<=now&&match self{Self::Anomaly{position,..}|Self::Normal{position,..}=>position.iter().all(|n|n.is_finite()&&(0.0..=size).contains(n)),Self::NotDetected{..}=>true}}
 }
 #[derive(Clone,Deserialize,Serialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
@@ -58,11 +58,11 @@ struct Action {
     #[serde(default,deserialize_with="present",skip_serializing_if="Option::is_none")]result:Option<ScanResult>,
 }
 impl Action {
-    fn valid(&self,now:u32)->bool {
+    fn valid(&self,now:u32,size:f64)->bool {
         token(&self.agent_id)&&token(&self.request_id)&&self.submitted_tick<=now
             &&self.target_tick>self.submitted_tick&&self.expires_tick>=self.target_tick
             &&self.expires_tick as u64<=self.submitted_tick as u64+100
-            &&match self.kind{Kind::Move=>self.target.as_ref().is_some_and(Point::valid)&&self.task_id.is_none(),Kind::ExecuteTask|Kind::WorkTask=>self.target.is_none()&&self.task_id.as_deref().is_some_and(token),_=>self.target.is_none()&&self.task_id.is_none()}
+            &&match self.kind{Kind::Move=>self.target.as_ref().is_some_and(|p|p.valid(size))&&self.task_id.is_none(),Kind::ExecuteTask|Kind::WorkTask=>self.target.is_none()&&self.task_id.as_deref().is_some_and(token),_=>self.target.is_none()&&self.task_id.is_none()}
             &&if self.kind==Kind::Rescue{self.target_agent_id.as_deref().is_some_and(|id|token(id)&&id!=self.agent_id)&&self.observed_tick.is_some_and(|n|n<=self.submitted_tick)&&self.fault_seq.is_some_and(|n|n>0)&&self.fault_generation.is_some_and(|n|n>0)}else{self.target_agent_id.is_none()&&self.observed_tick.is_none()&&self.fault_seq.is_none()&&self.fault_generation.is_none()}
             &&self.resume_task_id.as_deref().is_none_or(|id|token(id)&&matches!(self.kind,Kind::Move|Kind::Charge))
             &&self.progress.is_none_or(|p|self.kind==Kind::Scan&&p<=3||self.kind==Kind::Rescue&&p<=100)
@@ -71,7 +71,7 @@ impl Action {
             &&self.phase.is_none_or(|_|self.kind==Kind::Charge)
             &&self.energy_added.is_none_or(|n|self.kind==Kind::Charge&&n.is_finite()&&(0.0..=80.0).contains(&n))
             &&(self.kind!=Kind::Charge||!matches!(self.status,Status::Accepted|Status::Failed|Status::Completed)||self.phase.is_some()&&self.energy_added.is_some())
-            &&self.result.as_ref().is_none_or(|r|self.kind==Kind::Scan&&matches!(self.status,Status::Accepted|Status::Completed)&&self.progress==Some(3)&&r.valid(now))
+            &&self.result.as_ref().is_none_or(|r|self.kind==Kind::Scan&&matches!(self.status,Status::Accepted|Status::Completed)&&self.progress==Some(3)&&r.valid(now,size))
             &&self.reason.as_ref().is_none_or(|r|!r.is_empty()&&r.encode_utf16().count()<=100)
             &&match self.status{
                 Status::Pending=>self.updated_tick.is_none()&&self.reason.is_none(),
@@ -91,7 +91,7 @@ impl Action {
 struct Patch {status:Option<Status>,updated_tick:Option<u32>,reason:Option<String>,resume_task_id:Option<String>,progress:Option<u32>,phase:Option<Phase>,energy_added:Option<f64>,result:Option<ScanResult>}
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Initial {tick:u32,agents:Vec<String>,actions:Vec<Action>}
+struct Initial {#[serde(default="crate::default_world_size",rename="worldSize")]world_size:f64,tick:u32,agents:Vec<String>,actions:Vec<Action>}
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 struct StationaryContext {tick:u32,resume_agent:bool}
@@ -124,6 +124,7 @@ impl WorldActivationTicket {
 #[napi]
 #[derive(Clone)]
 pub struct WorldActions {
+    world_size:f64,
     checkpoint_id: u64,actions:Vec<Action>,agents:HashSet<String>,indices:HashMap<(String,String),usize>,last_tick:u32,
     stationary_binding:Option<[u64;5]>,stationary_ticks:HashMap<usize,u32>,activation_binding:Option<[u64;6]>,activation_ticket:Option<u64>,lifecycle_binding:Option<[u64;6]>,closed:bool}
 pub(crate) enum FrameKind { Move{target:[f64;2],resume:Option<String>},Charge{travel:bool},Scan,Rescue,Task }
@@ -241,7 +242,7 @@ impl WorldActions {
   self.work_identity(agent,now)?;
   if self.lifecycle_binding.is_some_and(|b|b!=binding)||self.activation_binding.is_some_and(|b|b!=binding)||self.stationary_binding.is_some_and(|b|b[..4]!=binding[..4]){return Err(invalid())}
   let mut events=Vec::new();
-  for a in &mut self.actions{if a.agent_id!=agent||a.status.terminal(){continue}let mut next=a.clone();next.status=Status::Cancelled;next.reason=Some("task_revoked".into());next.updated_tick=Some(now);if !next.valid(now){return Err(invalid())}
+  for a in &mut self.actions{if a.agent_id!=agent||a.status.terminal(){continue}let mut next=a.clone();next.status=Status::Cancelled;next.reason=Some("task_revoked".into());next.updated_tick=Some(now);if !next.valid(now,self.world_size){return Err(invalid())}
    let label=match next.kind{Kind::Scan=>"扫描",Kind::Charge=>"补能",Kind::Move=>"移动",Kind::ExecuteTask=>"执行任务",Kind::WorkTask=>"执行作业",Kind::Rescue=>"现场救援"};
    events.push(serde_json::json!({"message":format!("{} 的{}动作已取消",name,label),"type":"warning","kind":"action_cancelled","agentId":agent,"requestId":next.request_id,"actionType":next.kind,"reason":"task_revoked"}));*a=next;
   }
@@ -298,16 +299,16 @@ impl WorldActions {
    indices.extend(self.actions.iter().enumerate().filter(|(_,a)|a.agent_id==agent&&matches!(a.kind,Kind::Move|Kind::Charge)&&a.status==Status::Accepted).map(|(i,_)|i));
   }
   let mut effects=Vec::new();
-  for i in indices{let mut next=self.actions[i].clone();next.status=if (low_energy||all_actions)&&next.status==Status::Pending{Status::Rejected}else{Status::Failed};next.reason=Some(if depleted{"energy_depleted"}else if low_energy{"low_battery"}else{"agent_unavailable"}.into());next.updated_tick=Some(now);if !next.valid(now){return Err(invalid())}
+  for i in indices{let mut next=self.actions[i].clone();next.status=if (low_energy||all_actions)&&next.status==Status::Pending{Status::Rejected}else{Status::Failed};next.reason=Some(if depleted{"energy_depleted"}else if low_energy{"low_battery"}else{"agent_unavailable"}.into());next.updated_tick=Some(now);if !next.valid(now,self.world_size){return Err(invalid())}
    effects.push(serde_json::json!({"kind":"action_status","index":i,"status":next.status,"reason":next.reason}));self.actions[i]=next;
   }
   self.last_tick=now;self.lifecycle_binding=Some(binding);self.activation_ticket=None;Ok(effects)
  }
- pub(crate) fn fail_work(&mut self,task:&str,agent:&str,now:u32,reason:&str)->Result<Option<usize>>{let found=self.finish_work(task,agent,now,true)?;if let Some(i)=found{self.actions[i].reason=Some(reason.into());if !self.actions[i].valid(now){return Err(invalid())}}Ok(found)}
+ pub(crate) fn fail_work(&mut self,task:&str,agent:&str,now:u32,reason:&str)->Result<Option<usize>>{let found=self.finish_work(task,agent,now,true)?;if let Some(i)=found{self.actions[i].reason=Some(reason.into());if !self.actions[i].valid(now,self.world_size){return Err(invalid())}}Ok(found)}
  pub(crate) fn finish_work(&mut self,task:&str,agent:&str,now:u32,depleted:bool)->Result<Option<usize>>{
   self.work_identity(agent,now)?;
   let found=self.actions.iter().position(|a|matches!(a.kind,Kind::ExecuteTask|Kind::WorkTask)&&a.task_id.as_deref()==Some(task)&&a.agent_id==agent&&a.status==Status::Accepted);
-  if let Some(i)=found{let mut next=self.actions[i].clone();next.status=if depleted{Status::Failed}else{Status::Completed};next.updated_tick=Some(now);next.reason=if depleted{Some("energy_depleted".into())}else{None};if !next.valid(now){return Err(invalid())}self.actions[i]=next;}
+  if let Some(i)=found{let mut next=self.actions[i].clone();next.status=if depleted{Status::Failed}else{Status::Completed};next.updated_tick=Some(now);next.reason=if depleted{Some("energy_depleted".into())}else{None};if !next.valid(now,self.world_size){return Err(invalid())}self.actions[i]=next;}
   self.last_tick=now;Ok(found)
  }
  fn rescue_reason(&self,action:&Action,motion:&crate::world_motion::WorldMotion,environment:&crate::world_environment::WorldEnvironment,ledger:Option<&crate::world_ledger::WorldLedger>,index:usize)->Result<Option<String>>{
@@ -391,7 +392,7 @@ impl WorldActions {
    },
    _=>return Err(invalid()),
   }
-  if !next.valid(now)||!execution.valid(agent.distance){return Err(invalid())}
+  if !next.valid(now,self.world_size)||!execution.valid(agent.distance){return Err(invalid())}
   // Encode before writing any participating component. Queries and all checks
   // above use private copies, so a rejection cannot retain a successful prefix.
   let result=serde_json::to_string(&effects).map_err(|_|invalid())?;
@@ -405,10 +406,10 @@ impl WorldActions {
     pub fn new(input:String)->Result<Self>{
         if input.len()>4*1024*1024{return Err(invalid());}
         let initial:Initial=serde_json::from_str(&input).map_err(|_|invalid())?;
-        if initial.tick>MAX_TICK||initial.agents.is_empty()||initial.agents.len()>50||initial.actions.len()>1000{return Err(invalid());}
+        if !crate::valid_world_size(initial.world_size)||initial.tick>MAX_TICK||initial.agents.is_empty()||initial.agents.len()>50||initial.actions.len()>1000{return Err(invalid());}
         let mut agents=HashSet::new();for a in initial.agents{if !token(&a)||!agents.insert(a){return Err(invalid());}}
         let mut indices=HashMap::new();for(i,a)in initial.actions.iter().enumerate(){
-            if !agents.contains(&a.agent_id)||a.target_agent_id.as_ref().is_some_and(|id|!agents.contains(id))||!a.valid(initial.tick)||indices.insert((a.agent_id.clone(),a.request_id.clone()),i).is_some(){return Err(invalid());}
+            if !agents.contains(&a.agent_id)||a.target_agent_id.as_ref().is_some_and(|id|!agents.contains(id))||!a.valid(initial.tick,initial.world_size)||indices.insert((a.agent_id.clone(),a.request_id.clone()),i).is_some(){return Err(invalid());}
             // A committed scan result belongs to a completed scan. Updates may
             // temporarily attach the result immediately before completing it.
             if a.result.is_some()&&a.status!=Status::Completed{return Err(invalid());}
@@ -418,7 +419,7 @@ impl WorldActions {
         // has already participated in this snapshot's tick. Forks must not
         // reopen that tick when rebuilding runtime-only native ownership.
         let stationary_ticks=initial.actions.iter().enumerate().filter(|(_,a)|a.status==Status::Accepted&&(matches!(a.kind,Kind::Scan|Kind::Rescue)&&a.progress.is_some_and(|n|n>0)||a.kind==Kind::Charge&&matches!(a.phase,Some(Phase::Waiting|Phase::Charging)))).map(|(i,_)|(i,initial.tick)).collect();
-        Ok(Self{ checkpoint_id: crate::world_checkpoint::identity(),actions:initial.actions,agents,indices,last_tick:initial.tick,stationary_binding:None,stationary_ticks,activation_binding:None,activation_ticket:None,lifecycle_binding:None,closed:false})
+        Ok(Self{ world_size:initial.world_size, checkpoint_id: crate::world_checkpoint::identity(),actions:initial.actions,agents,indices,last_tick:initial.tick,stationary_binding:None,stationary_ticks,activation_binding:None,activation_ticket:None,lifecycle_binding:None,closed:false})
     }
     #[napi]
     pub fn submit(&mut self,input:String,now:f64)->Result<String>{
@@ -430,7 +431,7 @@ impl WorldActions {
             if !self.actions[*i].same_intent(&a){return Err(invalid());}
             return Ok(serde_json::json!({"index":i,"duplicate":true}).to_string());
         }
-        if self.actions.len()>=1000||!a.valid(now){return Err(invalid());}
+        if self.actions.len()>=1000||!a.valid(now,self.world_size){return Err(invalid());}
         let i=self.actions.len();self.indices.insert((a.agent_id.clone(),a.request_id.clone()),i);self.actions.push(a);self.last_tick=now;
         Ok(serde_json::json!({"index":i,"duplicate":false}).to_string())
     }
@@ -461,7 +462,7 @@ impl WorldActions {
         if let Some(v)=p.status{next.status=v;}
         macro_rules! apply{($($field:ident),*)=>{$(if let Some(v)=p.$field{next.$field=Some(v);})*};}
         apply!(updated_tick,reason,resume_task_id,progress,phase,energy_added,result);
-        if !next.valid(now){return Err(invalid());}
+        if !next.valid(now,self.world_size){return Err(invalid());}
         if next.status==Status::Accepted&&next.phase==Some(Phase::Charging)&&self.actions.iter().enumerate().any(|(j,a)|j!=i&&a.status==Status::Accepted&&a.phase==Some(Phase::Charging)){return Err(invalid());}
         let encoded=serde_json::to_string(&next).map_err(|_|invalid())?;
         self.actions[i]=next;self.last_tick=now;if stationary_update{self.stationary_ticks.insert(i,now);}Ok(encoded)
@@ -491,7 +492,7 @@ impl WorldActions {
             }
         }
         let mut next=current.clone();next.status=Status::Cancelled;next.reason=Some("cancel_requested".into());next.updated_tick=Some(now);
-        if !next.valid(now)||!state.execution.valid(state.agent.distance){return Err(invalid())}
+        if !next.valid(now,self.world_size)||!state.execution.valid(state.agent.distance){return Err(invalid())}
         let encoded=serde_json::json!({"ok":true,"duplicate":false,"clearedWait":cleared_wait}).to_string();
         if current.status==Status::Accepted{motion.commit_stationary(state.agent_index,state.agent,state.execution)?}
         self.actions[i]=next;self.last_tick=now;self.lifecycle_binding=Some(state.binding);self.activation_ticket=None;Ok(encoded)
@@ -535,7 +536,7 @@ impl WorldActions {
                 next.status=Status::Completed;next.updated_tick=Some(now);effects.push(serde_json::json!({"kind":"action_completed"}));
             }
         }
-        if !next.valid(now)||!state.execution.valid(state.agent.distance){return Err(invalid())}
+        if !next.valid(now,self.world_size)||!state.execution.valid(state.agent.distance){return Err(invalid())}
         let encoded=serde_json::to_string(&effects).map_err(|_|invalid())?;
         motion.commit_stationary(state.agent_index,state.agent,state.execution)?;
         if let Some(next)=next_resources{*resources=next}if let Some(next)=next_tasks{*tasks=next}
@@ -550,7 +551,7 @@ impl WorldActions {
         for(i,action)in next.iter_mut().enumerate(){if !matches!(action.status,Status::Pending|Status::Accepted){continue}
             let(index,agent,mut execution,_)=next_motion.activation_components(&action.agent_id)?;
             if action.status==Status::Accepted&&execution.status==crate::world_execution::Status::Manual{execution.status=crate::world_execution::Status::Idle;execution.route.clear();next_motion.commit_stationary(index,agent,execution)?;}
-            action.status=Status::Cancelled;action.reason=Some("run_ended".into());action.updated_tick=Some(now);if !action.valid(now){return Err(invalid())}
+            action.status=Status::Cancelled;action.reason=Some("run_ended".into());action.updated_tick=Some(now);if !action.valid(now,self.world_size){return Err(invalid())}
             effects.push(serde_json::json!({"kind":"action_cancelled","index":i}));
         }
         for(index,agent,mut execution)in next_motion.lifecycle_agents()?{if let Some(wait)=execution.activation_clear_wait()?{effects.push(serde_json::json!({"kind":"wait_cancelled","agentId":agent.id,"wait":wait}));next_motion.commit_stationary(index,agent,execution)?;}}
@@ -619,7 +620,7 @@ impl WorldActions {
             }
         }
         next.updated_tick=Some(ticket.tick);
-        if !next.valid(ticket.tick)||!state.execution.valid(state.agent.distance){return Err(invalid())}
+        if !next.valid(ticket.tick,self.world_size)||!state.execution.valid(state.agent.distance){return Err(invalid())}
         let encoded=serde_json::json!({"status":next.status,"reason":state.reason,"clearedWait":cleared_wait,"startedWait":started_wait}).to_string();
         if next.status==Status::Accepted{motion.commit_stationary(state.agent_index,state.agent,state.execution)?}
         self.actions[ticket.index]=next;self.last_tick=ticket.tick;self.activation_binding=Some(state.binding);self.activation_ticket=None;ticket.used=true;Ok(encoded)

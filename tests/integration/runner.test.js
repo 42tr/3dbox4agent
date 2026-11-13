@@ -13,7 +13,7 @@ const {createConsoleServer} = require('../../packages/console/server/console-ser
 const {unwrapArchive} = require('../../packages/world/src/replay');
 
 const config = {
-  sceneId: 'industrial-park-parallel-v1', seed: 42, physics: 'rapier',
+  sceneId: 'industrial-park-v2', seed: 42, physics: 'rapier',
   coordinators: 1, fault: 'none', maxTicks: 1000, timeoutSeconds: 45, strategy: 'planner'
 };
 const caps = {scenes: [config.sceneId], physics: ['rapier'], faults: ['none'], strategies: ['planner'],
@@ -120,7 +120,10 @@ async function api(base, route, {method = 'GET', token, data, status = 200} = {}
     assert(finished.hasReplay);
     assert.equal(finished.progress.completedTasks, finished.progress.totalTasks);
     const completed = await op(root + '/report');
-    assert(unwrapArchive(completed).archive.frames.at(-1).done);
+    const completedFrames = unwrapArchive(completed).archive.frames;
+    assert(completedFrames.at(-1).done);
+    assert.equal(completedFrames.at(-1).worldSize, 224);
+    assert(completedFrames.some(frame => frame.agents.some(agent => agent.role === "vehicle" && agent.x > 100)));
     assert.equal(completed.config.seed, 42);
     assert.equal(completed.config.sceneId, config.sceneId);
     assert.equal(world.inspectWorkers().filter(worker => worker.state === 'active').length, 0);

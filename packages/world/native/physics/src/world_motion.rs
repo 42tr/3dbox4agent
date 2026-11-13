@@ -17,8 +17,8 @@ pub(crate) struct Motion {
 }
 
 fn invalid() -> Error { Error::from_reason("invalid world motion input") }
-fn valid(x: f64, y: f64, battery: f64, distance: f64) -> bool {
-    [x, y, battery].iter().all(|n| n.is_finite() && (0.0..=100.0).contains(n))
+fn valid(x: f64, y: f64, battery: f64, distance: f64, size:f64) -> bool {
+    [x, y].iter().all(|n| (0.0..=size).contains(n)) && (0.0..=100.0).contains(&battery)
         && distance.is_finite() && distance >= 0.0
 }
 fn index(value: f64) -> Result<usize> {
@@ -29,6 +29,7 @@ fn index(value: f64) -> Result<usize> {
 #[napi]
 #[derive(Clone)]
 pub struct WorldMotion {
+    world_size:f64,
     checkpoint_id: u64,
     agents: Vec<Motion>,
     execution: Option<Vec<super::world_execution::Execution>>,
@@ -81,7 +82,7 @@ impl WorldMotion {
     }
     pub(crate) fn commit_stationary(&mut self,index:usize,agent:Motion,execution:super::world_execution::Execution)->Result<()>{
         self.active()?;
-        if self.agents.get(index).is_none_or(|a|a.id!=agent.id)||agent.id!=execution.id||!valid(agent.x,agent.y,agent.battery,agent.distance)||!execution.valid(agent.distance)||execution.relay_state.as_ref().is_some_and(|s|s.deployed&&s.position!=Some([agent.x,agent.y]))||self.execution.as_ref().is_none_or(|a|index>=a.len()){return Err(invalid())}
+        if self.agents.get(index).is_none_or(|a|a.id!=agent.id)||agent.id!=execution.id||!valid(agent.x,agent.y,agent.battery,agent.distance,self.world_size)||!execution.valid(agent.distance)||execution.relay_state.as_ref().is_some_and(|s|s.deployed&&s.position!=Some([agent.x,agent.y]))||self.execution.as_ref().is_none_or(|a|index>=a.len()){return Err(invalid())}
         self.agents[index]=agent;self.execution.as_mut().unwrap()[index]=execution;Ok(())
     }
     fn active(&self) -> Result<()> {
@@ -146,7 +147,7 @@ impl WorldMotion {
         let events=if let Some(event)=approach{
             state.route.clear();state.blocked_ticks=Some(0);state.progress_waypoint=Some(String::new());state.best_waypoint_distance=Some(0.0);state.collision_active=Some(false);vec![event]
         }else{crate::world_route::advance(&mut next,&mut state,&map,&context,&bodies,physical.as_mut())?};
-        if !valid(next.x,next.y,next.battery,next.distance)||!state.valid(next.distance){return Err(invalid())}
+        if !valid(next.x,next.y,next.battery,next.distance,self.world_size)||!state.valid(next.distance){return Err(invalid())}
         let mut next_control=control.clone();let mut next_ledger=ledger.clone();
         for effect in &events{
             let kind=effect["kind"].as_str().ok_or_else(invalid)?;
@@ -177,18 +178,24 @@ impl WorldMotion {
     #[napi(constructor)]
     pub fn new(input: String) -> Result<Self> {
         if input.len() > 65536 { return Err(invalid()) }
-        let agents: Vec<Motion> = serde_json::from_str(&input).map_err(|_| invalid())?;
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Input { Legacy(Vec<Motion>), Sized { #[serde(rename="worldSize")] world_size:f64, agents:Vec<Motion> } }
+        let (size,agents)=match serde_json::from_str::<Input>(&input).map_err(|_|invalid())? {
+            Input::Legacy(agents)=>(100.0,agents), Input::Sized{world_size,agents}=>(world_size,agents),
+        };
+        if !crate::valid_world_size(size){return Err(invalid())}
         if agents.is_empty() || agents.len() > 50 { return Err(invalid()) }
         let mut ids = HashSet::new();
         for a in &agents {
             if a.id.is_empty() || a.id.len() > 64
                 || !a.id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-                || !ids.insert(&a.id) || !valid(a.x, a.y, a.battery, a.distance)
+                || !ids.insert(&a.id) || !valid(a.x, a.y, a.battery, a.distance,size)
                 || !a.initial_battery.is_finite() || !(0.0..=100.0).contains(&a.initial_battery) {
                 return Err(invalid());
             }
         }
-        Ok(Self { checkpoint_id: crate::world_checkpoint::identity(), agents, execution: None, route_environment: None, route_physics: None, route_event_binding: None, route_event_ticks: HashMap::new(), collision_event_binding:None,collision_event_ticks:HashMap::new(),closed: false })
+        Ok(Self { world_size:size, checkpoint_id: crate::world_checkpoint::identity(), agents, execution: None, route_environment: None, route_physics: None, route_event_binding: None, route_event_ticks: HashMap::new(), collision_event_binding:None,collision_event_ticks:HashMap::new(),closed: false })
     }
 
     #[napi]
@@ -211,7 +218,7 @@ impl WorldMotion {
         if self.execution.as_ref().and_then(|e|e.get(i)).and_then(|e|e.relay_state.as_ref()).is_some_and(|s|s.deployed&&s.position!=Some([x,y])){return Err(invalid())}
         let a = self.agents.get_mut(i).ok_or_else(invalid)?;
         if self.execution.as_ref().and_then(|e|e.get(i)).and_then(|e|e.relay_state.as_ref()).is_some_and(|s|s.deployed)&&distance!=a.distance{return Err(invalid())}
-        if !valid(x, y, battery, distance) || distance < a.distance { return Err(invalid()); }
+        if !valid(x, y, battery, distance,self.world_size) || distance < a.distance { return Err(invalid()); }
         a.x = x;
         a.y = y;
         a.battery = battery;
@@ -230,7 +237,7 @@ impl WorldMotion {
         self.active()?;
         if self.execution.is_some() {return Err(Error::from_reason("world execution is already bound"));}
         let initial=super::world_execution::Initial::parse(&input)?;
-        if initial.agents.len()!=self.agents.len() || initial.agents.iter().zip(&self.agents).any(|(a,m)|a.id!=m.id||!a.valid(m.distance)||a.relay_state.as_ref().is_some_and(|s|s.deployed&&s.position!=Some([m.x,m.y]))) {return Err(Error::from_reason("invalid world execution input"));}
+        if initial.agents.len()!=self.agents.len() || initial.agents.iter().zip(&self.agents).any(|(a,m)|a.id!=m.id||!a.valid(m.distance)||a.route.iter().flatten().any(|v|*v>self.world_size)||a.relay_state.as_ref().is_some_and(|s|s.deployed&&s.position!=Some([m.x,m.y]))) {return Err(Error::from_reason("invalid world execution input"));}
         self.execution=Some(initial.agents);
         Ok(())
     }
@@ -243,7 +250,7 @@ impl WorldMotion {
         let agents=self.execution.as_mut().ok_or_else(||Error::from_reason("world execution is not bound"))?;
         let current=agents.get(i).ok_or_else(invalid)?;
         let (next,encoded)=current.updated(&input,motion.distance)?;
-        if next.relay_state.as_ref().is_some_and(|s|s.deployed&&s.position!=Some([motion.x,motion.y])){return Err(invalid())}
+        if next.route.iter().flatten().any(|v|*v>self.world_size)||next.relay_state.as_ref().is_some_and(|s|s.deployed&&s.position!=Some([motion.x,motion.y])){return Err(invalid())}
         agents[i]=next;
         Ok(encoded)
     }
@@ -267,11 +274,11 @@ impl WorldMotion {
         let context=crate::world_route::Context::parse(&input)?;
         let map=environment.route_map(i,&current.id,context.tick)?;
         let physics_id=physics.as_ref().map_or(0,|p|p.checkpoint_id);
-        if self.route_environment.is_some_and(|id|id!=map.identity)||self.route_physics.is_some_and(|id|id!=physics_id){return Err(invalid())}
+        if self.world_size!=map.world_size||self.route_environment.is_some_and(|id|id!=map.identity)||self.route_physics.is_some_and(|id|id!=physics_id){return Err(invalid())}
         let mut next=current.clone();let mut state=execution.clone();let mut physical=physics.as_ref().map(|p|(**p).clone());
         let bodies:Vec<_>=self.agents.iter().zip(self.execution.as_ref().unwrap()).map(|(a,e)|(a.id.clone(),a.x,a.y,e.mobility.as_deref().map_or(e.role=="drone",|m|m=="air"))).collect();
         let events=crate::world_route::advance(&mut next,&mut state,&map,&context,&bodies,physical.as_mut())?;
-        if !valid(next.x,next.y,next.battery,next.distance)||!state.valid(next.distance){return Err(invalid())}
+        if !valid(next.x,next.y,next.battery,next.distance,self.world_size)||!state.valid(next.distance){return Err(invalid())}
         let encoded=serde_json::to_string(&events).map_err(|_|invalid())?;
         self.agents[i]=next;self.execution.as_mut().unwrap()[i]=state;self.route_environment=Some(map.identity);self.route_physics=Some(physics_id);
         if let (Some(target),Some(saved))=(physics.as_mut(),physical){**target=saved;}

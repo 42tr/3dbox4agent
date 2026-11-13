@@ -40,7 +40,7 @@ function createPhysics(state){
    const filter=domain?c=>!domainColliders.has(c.handle)||(!air.has(agent.id)&&domainColliders.get(c.handle)===water.has(agent.id)):undefined;
    controller.computeColliderMovement(collider,{x:dx,y:0,z:dy},undefined,undefined,filter);const m=controller.computedMovement(),contacts=controller.numComputedCollisions();const actual={x:m.x,y:m.z,contacts};collider.setTranslation({x:pos.x+m.x,y:pos.y,z:pos.z+m.z});world.step();return actual},
   correctPosition(agent,x,y){if(domain&&!SurfaceDomain.bodyFree(domain,air.has(agent.id)?'air':water.has(agent.id)?'water':'ground',[x,y],.8))throw Error('position outside surface domain');const collider=colliders.get(agent.id);if(!collider)throw Error('missing physics collider');const pos=collider.translation();collider.setTranslation({x,y:heightfield&&!air.has(agent.id)?Elevation.proxyHeight(heightfield,x,y):pos.y,z:y});world.step()},
-  surface(x,y){if(closed||![x,y].every(v=>Number.isFinite(v)&&v>=0&&v<=100))throw Error('invalid surface position');const p=Elevation.surface(heightfield,x,y);return [p.height,p.dx,p.dy,p.slopeDegrees]},
+  surface(x,y){if(closed||![x,y].every(v=>Number.isFinite(v)&&v>=0&&v<=(state.worldSize??100)))throw Error('invalid surface position');const p=Elevation.surface(heightfield,x,y);return [p.height,p.dx,p.dy,p.slopeDegrees]},
   bodyPosition(id){if(closed)throw Error('physics world is closed');const c=colliders.get(id);if(!c)throw Error('missing physics collider');const p=c.translation();return [p.x,p.z,p.y]},
   free(){if(!closed){world.removeCharacterController(controller);world.free();closed=true}}
  };

@@ -16,7 +16,7 @@ fn token(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 fn point(p: &[f64; 2]) -> bool {
-    p.iter().all(|n| n.is_finite() && (0.0..=100.0).contains(n))
+    p.iter().all(|n| n.is_finite() && (0.0..=crate::MAX_WORLD_SIZE).contains(n))
 }
 fn decode<T: for<'de> Deserialize<'de>>(s: &str) -> Result<T> {
     if s.len() > 2 * 1024 * 1024 {

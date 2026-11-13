@@ -13,8 +13,8 @@ function analyze(input){
  for(const task of scene.tasks){
   const candidates=scene.agents.filter(a=>a.capabilities.includes(task.capability));
   if(!candidates.length)warnings.push({code:'missing_capability',taskId:task.id,capability:task.capability});
-  if(candidates.length&&candidates.every(a=>!Sensors.isAir(a))&&!Nav.free(...task.target,blocks))warnings.push({code:'ground_target_blocked',taskId:task.id,target:task.target.slice()});
-  if(task.behavior==='deliver'&&candidates.length&&candidates.every(a=>!Sensors.isAir(a))&&!Nav.free(...scene.resource.warehouse,blocks))warnings.push({code:'ground_pickup_blocked',taskId:task.id,target:scene.resource.warehouse.slice()});
+  if(candidates.length&&candidates.every(a=>!Sensors.isAir(a))&&!Nav.free(...task.target,blocks,Nav.RADIUS,scene.worldSize??100))warnings.push({code:'ground_target_blocked',taskId:task.id,target:task.target.slice()});
+  if(task.behavior==='deliver'&&candidates.length&&candidates.every(a=>!Sensors.isAir(a))&&!Nav.free(...scene.resource.warehouse,blocks,Nav.RADIUS,scene.worldSize??100))warnings.push({code:'ground_pickup_blocked',taskId:task.id,target:scene.resource.warehouse.slice()});
   if(scene.surfaceDomain&&candidates.length){for(const [kind,goal]of [['surface_target_unavailable',task.target],...(task.behavior==='deliver'?[['surface_pickup_unavailable',scene.resource.warehouse]]:[])]){const possible=candidates.some(a=>Sensors.isAir(a)||[goal,...Surface.approaches(goal,3.7)].some(p=>Nav.free(...p,blocks.concat(Surface.masks(scene.surfaceDomain,a.mobility??'ground')))&&Nav.clearSegment(p,goal,scene.obstacles,0)));if(!possible)warnings.push({code:kind,taskId:task.id,target:goal.slice()})}}
   if(task.behavior==='repair')for(const source of ['confirm','deliver'])checkSource(task,source);
   if(task.behavior==='verify')checkSource(task,'repair');

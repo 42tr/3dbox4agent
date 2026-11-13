@@ -49,7 +49,7 @@ impl Task {
 struct Agent { id: String, role: String, capabilities: Vec<String> }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Initial { tasks: Vec<Task>, agents: Vec<Agent>, #[serde(default)] tick:u32 }
+struct Initial { #[serde(default="crate::default_world_size",rename="worldSize")] world_size:f64, tasks: Vec<Task>, agents: Vec<Agent>, #[serde(default)] tick:u32 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,11 +86,11 @@ enum Command {
     Phase { #[serde(rename="taskId")] task_id: String, #[serde(rename="assignmentId")] assignment_id: u32, phase: Option<Phase> },
 }
 
-fn valid_task(t: &Task) -> bool {
+fn valid_task(t: &Task,size:f64) -> bool {
     t.material_cost.as_ref().is_none_or(|c|crate::materials::cost_valid(c)) && id(&t.id, 64) && !matches!(t.id.as_str(), "__proto__" | "constructor" | "prototype")
         && id(&t.role, 48) && id(&t.capability, 64)
         && !t.name.is_empty() && t.name.encode_utf16().count() <= 100
-        && t.target.iter().all(|n| n.is_finite() && (0.0..=100.0).contains(n))
+        && t.target.iter().all(|n| n.is_finite() && (0.0..=size).contains(n))
         && (1..=10000).contains(&t.duration) && t.depends_on.len() <= 100
         && t.depends_on.iter().all(|d| id(d, 64))
         && t.priority.is_none_or(|p| p <= 100) && t.deadline.is_none_or(|d| (1..=10_000_000).contains(&d))
@@ -109,6 +109,7 @@ fn valid_task(t: &Task) -> bool {
 #[napi]
 #[derive(Clone)]
 pub struct WorldTasks {
+    world_size:f64,
     checkpoint_id: u64,
     tasks: Vec<Task>,
     indices: HashMap<String, usize>,
@@ -197,8 +198,8 @@ impl WorldTasks {
     #[napi(constructor)]
     pub fn new(input: String) -> Result<Self> {
         if input.len() > 1024 * 1024 { return Err(invalid()); }
-        let Initial { tasks, agents, tick } = serde_json::from_str(&input).map_err(|_| invalid())?;
-        if tick>10_000_000{return Err(invalid())}
+        let Initial {world_size, tasks, agents, tick } = serde_json::from_str(&input).map_err(|_| invalid())?;
+        if !crate::valid_world_size(world_size)||tick>10_000_000{return Err(invalid())}
         if tasks.is_empty() || tasks.len() > 100 || agents.is_empty() || agents.len() > 50 { return Err(invalid()); }
         let mut agent_map = HashMap::new();
         let mut survey_roles = HashSet::new();
@@ -210,7 +211,7 @@ impl WorldTasks {
         }
         let mut indices = HashMap::new();
         for (i, t) in tasks.iter().enumerate() {
-            if !valid_task(t) || indices.insert(t.id.clone(), i).is_some() { return Err(invalid()); }
+            if !valid_task(t,world_size) || indices.insert(t.id.clone(), i).is_some() { return Err(invalid()); }
         }
         // A topological pass validates both dependency references and cycles.
         let mut visited = HashSet::new();
@@ -238,7 +239,7 @@ impl WorldTasks {
         }
         let last_assignment = tasks.iter().filter_map(|t| t.assignment_id).max().unwrap_or(0);
         let work_ticks=tasks.iter().filter(|t|t.status==Status::Active).map(|t|((t.id.clone(),t.assignment_id.unwrap()),tick)).collect();
-        Ok(Self { checkpoint_id: crate::world_checkpoint::identity(), tasks, indices, agents: agent_map, survey_roles, last_assignment, work_binding:None,work_ticks,assignment_binding:None,assignment_ticket:None,interruption_binding:None,event_binding:None,closed: false })
+        Ok(Self { world_size:world_size, checkpoint_id: crate::world_checkpoint::identity(), tasks, indices, agents: agent_map, survey_roles, last_assignment, work_binding:None,work_ticks,assignment_binding:None,assignment_ticket:None,interruption_binding:None,event_binding:None,closed: false })
     }
 
     #[napi]
@@ -284,7 +285,7 @@ impl WorldTasks {
         let mut state=self.assignment_state(&ticket.request,ticket.tick,motion,environment,resources,control,ledger)?;
         if state.binding!=ticket.binding||state.fingerprint!=ticket.fingerprint{return Err(invalid())}
         let route:Option<Vec<[f64;2]>>=serde_json::from_str(&route).map_err(|_|invalid())?;
-        if let Some(points)=&route{if points.len()>4096||points.iter().flatten().any(|n|!n.is_finite()||!(0.0..=100.0).contains(n)){return Err(invalid())}}
+        if let Some(points)=&route{if points.len()>4096||points.iter().flatten().any(|n|!n.is_finite()||!(0.0..=self.world_size).contains(n)){return Err(invalid())}}
         if state.reason.is_none()&&route.is_none(){state.reason=Some("unreachable_target".into())}
         if let Some(reason)=state.reason{let encoded=serde_json::json!({"ok":false,"reason":reason}).to_string();self.assignment_binding=Some(state.binding);self.assignment_ticket=None;ticket.used=true;return Ok(encoded)}
         let(_,task)=state.task.ok_or_else(invalid)?;let(index,agent,mut execution)=state.agent.ok_or_else(invalid)?;
@@ -368,7 +369,7 @@ impl WorldTasks {
                 if next.behavior==Behavior::Deploy{if execution.deployable_relay!=Some(true)||execution.relay_state.as_ref().is_none_or(|s|s.deployed){return Err(invalid())}execution.relay_state=Some(crate::relay::State::deploy(next.id.clone(),next.assignment_id.ok_or_else(invalid)?,now as u32,[agent.x,agent.y]));execution.status=crate::world_execution::Status::Deployed;}
             }
         }
-        if !valid_task(&next)||!execution.valid(agent.distance){return Err(invalid())}
+        if !valid_task(&next,self.world_size)||!execution.valid(agent.distance){return Err(invalid())}
         let encoded=serde_json::to_string(&serde_json::json!({"effect":effect,"actionIndex":action_index,"dropped":dropped})).map_err(|_|invalid())?;
         motion.commit_stationary(agent_index,agent,execution)?;
         *resources=next_resources;*actions=next_actions;self.tasks[i]=next;
@@ -391,7 +392,7 @@ impl WorldTasks {
         let mut next=current.clone();let mut next_resources=resources.clone();
         next_resources.work_command("load",current,&agent,now)?;
         next.phase=Some(Some(Phase::ToSite));execution.work=0;execution.route=route;
-        if !valid_task(&next)||!execution.valid(agent.distance){return Err(invalid())}
+        if !valid_task(&next,self.world_size)||!execution.valid(agent.distance){return Err(invalid())}
         motion.commit_stationary(agent_index,agent,execution)?;*resources=next_resources;self.tasks[i]=next;Ok(())
     }
 
@@ -472,7 +473,7 @@ impl WorldTasks {
         self.active()?;
         if input.len() > 65536 || self.tasks.len() >= 100 { return Err(invalid()); }
         let t: Task = serde_json::from_str(&input).map_err(|_| invalid())?;
-        if !valid_task(&t) || t.behavior != Behavior::Survey || t.capability != "inspect" || t.duration > 1000
+        if !valid_task(&t,self.world_size) || t.behavior != Behavior::Survey || t.capability != "inspect" || t.duration > 1000
             || t.status != Status::Pending || t.assignee.is_some() || t.assignment_id.is_some()
             || t.started_assignment_id.is_some() || t.phase.is_some() || self.indices.contains_key(&t.id)
             || !self.survey_roles.contains(&t.role)

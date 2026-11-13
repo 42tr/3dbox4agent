@@ -82,7 +82,7 @@ impl WorldPeer{
  }
  fn active(&self)->Result<()>{if self.closed{Err(Error::from_reason("world peer communication is closed"))}else{Ok(())}}
  fn now(&self,n:f64)->Result<u64>{self.active()?;let n=clock(n)?;if n<self.last_tick{Err(invalid())}else{Ok(n)}}
- fn devices(&self,agents:&[Device])->bool{agents.len()==self.agents.len()&&agents.iter().zip(&self.agents).all(|(a,b)|a.id==b.id&&(b.deployable_relay==Some(true))==a.relay_ready.is_some()&&a.x.is_finite()&&a.y.is_finite()&&(0.0..=100.0).contains(&a.x)&&(0.0..=100.0).contains(&a.y))}
+ fn devices(&self,agents:&[Device])->bool{agents.len()==self.agents.len()&&agents.iter().zip(&self.agents).all(|(a,b)|a.id==b.id&&(b.deployable_relay==Some(true))==a.relay_ready.is_some()&&a.x.is_finite()&&a.y.is_finite()&&(0.0..=crate::MAX_WORLD_SIZE).contains(&a.x)&&(0.0..=crate::MAX_WORLD_SIZE).contains(&a.y))}
  fn packet_valid(&self,p:&Packet,now:u64,inbox:bool)->bool{
   let route=p.route();let hop=p.hop.unwrap_or(0);p.id>0&&p.id<self.peer.next_id&&p.sent_tick<=now&&p.expires_tick==p.sent_tick+self.peer.config.ttl&&p.due_tick>p.sent_tick&&p.due_tick<=MAX_TICK+20000&&p.text.len()<=self.peer.config.max_bytes&&!blank(&p.text)&&route.len()<=5&&route.iter().all(|id|self.agents.iter().any(|a|a.id==*id))&&route.iter().copied().collect::<HashSet<_>>().len()==route.len()&&hop<=route.len()-2&&p.via.as_ref().is_none_or(|v|!v.is_empty()&&p.hop.is_some())&&(p.via.is_some()||p.hop.is_none())&&p.tx_remaining.is_none_or(|n|n<=p.text.len()as u64)&&if inbox{p.received_tick.is_some_and(|t|t<=now&&t>=p.due_tick&&t<=p.expires_tick)&&hop==route.len()-2&&p.tx_remaining.is_none()}else{p.received_tick.is_none()}
  }

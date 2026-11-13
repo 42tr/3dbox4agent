@@ -6,10 +6,13 @@
 
 | 想验证的行为 | 场景或配置 |
 | --- | --- |
-| 巡检、备件运输、维修和并行任务 | `industrial-park-v1`、`industrial-park-parallel-v1` |
+| 北侧巡检、西侧领取备件、东侧维修 | `industrial-park-v2`（Console 与内置 Runner 默认，224 × 224） |
+| 旧园区及并行任务 | `industrial-park-v1`、`industrial-park-parallel-v1` |
 | 月面设施协作与采样复勘 | `lunar-outpost-v1`、`lunar-sampling-v1` |
 | 建设、耗材、热控、运行耗电和中继 | [月面场景配置](../packages/world/scenes)，例如 [设施建设](../packages/world/scenes/lunar-construction.json)、[基础耗电](../packages/world/scenes/lunar-power.json) |
 | 水陆空通行、海况扰动、梯队和驻留中继救援 | [水陆空协同](../packages/world/scenes/shore-surface.json)、[海况](../packages/world/scenes/shore-sea-state.json)、[梯队](../packages/world/scenes/shore-echelons.json)、[海岸救援](../packages/world/scenes/shore-rescue.json) |
+
+平坦场景可通过 `worldSize` 指定正方形世界边长（100–256 的整数），坐标原点仍在西北角。省略时为 100；带高度场或水域的场景继续使用原尺寸。回放保留原场景 ID 和尺寸，旧版园区的会话和回放无需迁移。
 
 自定义场景可在页面导入 JSON 或 YAML。CLI 可以检查文件并直接运行一次无头运动学仿真：
 

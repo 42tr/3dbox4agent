@@ -1,4 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
+import {DEFAULT_SCENE_ID} from './world-settings';
 
 type Capabilities = {
   scenes: string[];
@@ -40,7 +41,7 @@ type Run = {
 };
 
 const defaults: RunConfig = {
-  sceneId: 'industrial-park-parallel-v1', seed: 42, physics: 'rapier',
+  sceneId: DEFAULT_SCENE_ID, seed: 42, physics: 'rapier',
   coordinators: 1, fault: 'none', maxTicks: 1000, timeoutSeconds: 45, strategy: 'planner',
 };
 
@@ -50,7 +51,8 @@ const statuses: Record<string, string> = {
 };
 
 const optionLabels: Record<string, string> = {
-  'industrial-park-v1': '工业园区',
+  'industrial-park-v2': '现代工业园区',
+  'industrial-park-v1': '经典工业园区',
   'industrial-park-parallel-v1': '工业园区并行巡检',
   'industrial-park-fixed-sensor-v1': '工业园区固定传感器',
   'lunar-base-v1': '月球基地', 'lunar-terrain-v1': '月面地形',

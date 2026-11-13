@@ -54,8 +54,8 @@ function bodyFree(profile,mobility,at,radius=.8){
  const tolerance=1e-4;if(at.some(n=>n<radius-tolerance||n>100-radius+tolerance))return false;
  return blocks.every(r=>Math.hypot(Math.max(r.x-at[0],0,at[0]-r.x-r.w),Math.max(r.y-at[1],0,at[1]-r.y-r.h))>=radius-tolerance);
 }
-function spawnArea(area){
- if(!object(area)||Object.keys(area).length!==4||Object.keys(area).some(k=>!['x','y','w','h'].includes(k))||![area.x,area.y,area.w,area.h].every(Number.isFinite)||area.x<2||area.y<2||area.w<=0||area.h<=0||area.x+area.w>98||area.y+area.h>98)fail();return {x:area.x,y:area.y,w:area.w,h:area.h};
+function spawnArea(area,worldSize=100){
+ if(!object(area)||Object.keys(area).length!==4||Object.keys(area).some(k=>!['x','y','w','h'].includes(k))||![area.x,area.y,area.w,area.h].every(Number.isFinite)||area.x<2||area.y<2||area.w<=0||area.h<=0||area.x+area.w>worldSize-2||area.y+area.h>worldSize-2)fail();return {x:area.x,y:area.y,w:area.w,h:area.h};
 }
 const offsets=[[1,0],[.8,.6],[.6,.8],[0,1],[-.6,.8],[-.8,.6],[-1,0],[-.8,-.6],[-.6,-.8],[0,-1],[.6,-.8],[.8,-.6]];
 function approaches(goal,radius){return offsets.map(([x,y])=>[goal[0]+x*radius,goal[1]+y*radius])}

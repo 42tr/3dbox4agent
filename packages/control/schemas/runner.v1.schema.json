@@ -42,6 +42,7 @@
       "properties": {
         "sceneId": {
           "enum": [
+            "industrial-park-v2",
             "industrial-park-v1",
             "industrial-park-parallel-v1",
             "lunar-base-v1",
@@ -111,9 +112,10 @@
         "scenes": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 12,
+          "maxItems": 13,
           "items": {
             "enum": [
+              "industrial-park-v2",
               "industrial-park-v1",
               "industrial-park-parallel-v1",
               "lunar-base-v1",

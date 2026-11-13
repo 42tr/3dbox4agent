@@ -7,7 +7,7 @@ const block=b=>({x:b.x,y:b.y,w:b.w,h:b.h,height:b.height});
 function create(world,physics=null){
  const ray=world.sensorModel==='rapier-ray-v1';
  if(ray&&['refreshPerceptions','syncRoadblocks'].some(key=>typeof physics?.[key]!=='function'))throw Error('native perception ray backend unavailable');
- const native=new WorldPerceptions(JSON.stringify({tick:world.tick,ray,...(world.heightfield?{heightfield:world.heightfield}:{}),agents:world.agents.map(a=>({id:a.id,role:a.role,height:(a.mobility??(a.role==='drone'?'air':'ground'))==='air'?16:1.5,range:a.sensorRange??world.sensorRange})),targets:world.tasks.map(target),obstacles:world.obstacles.map(block),perceptions:world.perceptions}));
+ const native=new WorldPerceptions(JSON.stringify({tick:world.tick,worldSize:world.worldSize,ray,...(world.heightfield?{heightfield:world.heightfield}:{}),agents:world.agents.map(a=>({id:a.id,role:a.role,height:(a.mobility??(a.role==='drone'?'air':'ground'))==='air'?16:1.5,range:a.sensorRange??world.sensorRange})),targets:world.tasks.map(target),obstacles:world.obstacles.map(block),perceptions:world.perceptions}));
  let cache=freeze(JSON.parse(native.snapshot())),closed=false;
  function active(){if(closed)throw Error('closed')}
  return require('./native-components').expose({

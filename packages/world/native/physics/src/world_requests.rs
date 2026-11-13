@@ -9,7 +9,7 @@ const MAX_ID:u64=9_007_199_254_740_991;
 fn invalid()->Error{Error::from_reason("invalid world coordinator requests")}
 fn token(s:&str,max:usize)->bool{!s.is_empty()&&s.len()<=max&&s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')}
 fn blank(s:&str)->bool{s.chars().all(|c|matches!(c,'\u{0009}'..='\u{000d}'|'\u{0020}'|'\u{00a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}'))}
-fn point(p:&[f64;2])->bool{p.iter().all(|n|n.is_finite()&&(0.0..=100.0).contains(n))}
+fn point(p:&[f64;2])->bool{p.iter().all(|n|n.is_finite()&&(0.0..=crate::MAX_WORLD_SIZE).contains(n))}
 fn decode<T:for<'a> Deserialize<'a>>(s:&str)->Result<T>{if s.len()>16*1024*1024{return Err(invalid())}serde_json::from_str(s).map_err(|_|invalid())}
 fn encode<T:Serialize>(v:&T)->Result<String>{serde_json::to_string(v).map_err(|_|invalid())}
 fn clock(t:f64)->Result<u64>{if !t.is_finite()||t.fract()!=0.0||!(0.0..=MAX_TICK as f64).contains(&t){Err(invalid())}else{Ok(t as u64)}}

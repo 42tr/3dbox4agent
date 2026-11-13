@@ -4,7 +4,7 @@ const runtimeFields=Object.freeze(['status','assignee','assignmentId','startedAs
 function freeze(value){if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value)}return value}
 function guarded(operation){try{return operation()}catch{throw Object.assign(Error('world_step_failed'),{status:503,worldTasksFailure:true})}}
 function create(world){
- const native=new WorldTasks(JSON.stringify({tick:world.tick,tasks:world.tasks,agents:world.agents.map(a=>({id:a.id,role:a.role,capabilities:a.capabilities}))}));
+ const native=new WorldTasks(JSON.stringify({tick:world.tick,worldSize:world.worldSize,tasks:world.tasks,agents:world.agents.map(a=>({id:a.id,role:a.role,capabilities:a.capabilities}))}));
  function view(task){
   const taskId=task.id;
   const projection=Object.fromEntries(Object.entries(task).filter(([key])=>!runtimeFields.includes(key)).map(([key,value])=>[key,freeze(value)]));
