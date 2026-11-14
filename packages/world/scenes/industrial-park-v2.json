@@ -27,8 +27,8 @@
     {"id":"wall-south-east","x":122,"y":213,"w":92,"h":1,"height":3}
   ],
   "agents": [
-    {"role":"drone","label":"无人机","count":5,"capabilities":["inspect","confirm"],"speed":3.8,"spawnArea":{"x":99,"y":74,"w":26,"h":16}},
-    {"role":"vehicle","label":"运输车","count":5,"capabilities":["deliver"],"speed":2.8,"spawnArea":{"x":34,"y":97,"w":24,"h":12}},
+    {"role":"drone","label":"无人机","count":5,"capabilities":["inspect","confirm"],"speed":3.8,"spawnArea":{"x":99,"y":74,"w":26,"h":16},"camera":{"enabled":true,"mount":[0,1.6,0.8],"yaw":0,"pitch":-8,"fov":72,"range":60,"updateTicks":10,"resolution":[320,180]}},
+    {"role":"vehicle","label":"运输车","count":5,"capabilities":["deliver"],"speed":2.8,"spawnArea":{"x":34,"y":97,"w":24,"h":12},"camera":{"enabled":true,"mount":[0,1.1,0.9],"yaw":0,"pitch":-5,"fov":68,"range":45,"updateTicks":10,"resolution":[320,180]}},
     {"role":"robot","label":"维修机器人","count":5,"capabilities":["repair"],"speed":2.4,"spawnArea":{"x":128,"y":128,"w":18,"h":10}}
   ],
   "tasks": [

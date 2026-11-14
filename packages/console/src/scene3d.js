@@ -172,7 +172,7 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   lunarEnvironment.ready.then(()=>{lastThumbnailAt=-Infinity});
   surfacePresentation.ready.then(()=>{lastThumbnailAt=-Infinity});
   function thumbnails(now){
-    if(now-lastThumbnailAt<1500||!lastState)return;lastThumbnailAt=now;
+    if(now-lastThumbnailAt<500||!lastState)return;lastThumbnailAt=now;
     const destinations=new Map();
     for(const target of document.querySelectorAll('canvas[data-device-camera]')){const id=target.dataset.deviceCamera;if(!destinations.has(id))destinations.set(id,[]);destinations.get(id).push(target)}
     for(const [id,targets] of destinations){

@@ -17,6 +17,7 @@
 - 内置和外部 Runner 都通过 Control 领取运行。Control 创建独立会话并保管管理员凭据，Runner 按租约推进仿真，设备和协调器用各自的凭据提交操作。World 校验并执行动作。停止或失联时，Control 先冻结写入，再归档保留历史并关闭会话。
 - 管理员负责配置、推进和签发凭据。观察者读取授权的全局快照与实时流，设备和协调器使用各自范围的观察和操作。导入回放时，Console 使用本地文件中的快照。
 - JS 策略实现 `policy.decide(observation, context)`。LLM 适配器通过注入的 `complete()` 获取 `{actions: [...]}`，再检查输出大小、超时和动作数量。具体动作仍由 World 校验。
+- 仿真摄像头由 World 根据场景中的设备 `camera` 配置生成确定性的 SVG 帧。当前帧随世界快照传给 Console，每个摄像头默认每 10 个仿真步（2 FPS）更新一次；`GET /sessions/:id/agents/:agentId/camera` 支持带凭据读取当前或保留版本，并可用 `yaw`、`pitch` 调整视角。摄像头帧随快照进入回放，不依赖浏览器 WebGL。
 
 ## 后端与本地配置
 
