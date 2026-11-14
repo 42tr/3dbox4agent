@@ -122,7 +122,10 @@ export function createIndustrialPark(scene, {modern=false}={}) {
           });
           mesh.userData.industrialInstances = true;
           mesh.userData.decorative = detail;
-          mesh.castShadow = root !== yard;
+          // Thin markings and trim are detail-only presentation geometry. They
+          // do not need to cast full-resolution shadows and otherwise create
+          // repeated aliasing bands across the large industrial site.
+          mesh.castShadow = root !== yard && !detail;
           mesh.receiveShadow = receiveShadow;
           root.add(mesh);
         }
