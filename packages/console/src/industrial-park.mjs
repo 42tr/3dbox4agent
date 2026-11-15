@@ -347,25 +347,28 @@ export function createIndustrialPark(scene, {modern=false}={}) {
     siteModels.add(streets);
     const {box,build}=model(streets);
     const groundRect=(color,[x,z,w,d],y)=>box(color,w,.02,d,x+w/2-center,y,z+d/2-center);
-    for(const rect of campus.yards)groundRect(0xaba89e,rect,-.065);
-    for(const rect of campus.walks)groundRect(0xc3b8a6,rect,-.05);
+    // Keep overlapping surface patches on separate depth layers. The layout
+    // intentionally lets roads cross yards, so a small but consistent height
+    // gap is needed to prevent z-fighting at those intersections.
+    for(const rect of campus.yards)groundRect(0xaba89e,rect,-.08);
+    for(const rect of campus.walks)groundRect(0xc3b8a6,rect,-.055);
     for(const rect of campus.roads){
-      groundRect(asphalt,rect,-.035);
+      groundRect(asphalt,rect,-.025);
       const [x,z,w,d]=rect;
       const horizontal=w>d;
       for(let i=9;i<(horizontal?w:d)-7;i+=9){
         if(!horizontal&&z===136&&z+i>=175&&z+i<=210)continue;
         box(white,horizontal?3:.18,.01,horizontal?.18:3,
-          (horizontal?x+i:x+w/2)-center,-.018,(horizontal?z+d/2:z+i)-center,true);
+          (horizontal?x+i:x+w/2)-center,.005,(horizontal?z+d/2:z+i)-center,true);
       }
     }
     const [crossX,crossZ,crossW,crossD]=campus.crossing;
     for(let x=crossX+1;x<crossX+crossW-1;x+=1.55){
-      groundRect(white,[x,crossZ,.8,crossD],-.019);
+      groundRect(white,[x,crossZ,.8,crossD],.015);
     }
     for(const [x,z] of campus.truckBays){
-      for(const shift of [-2.1,2.1])box(yellow,.17,.015,8,x+shift-center,-.047,z-center);
-      box(yellow,4.2,.015,.17,x-center,-.046,z+4-center);
+      for(const shift of [-2.1,2.1])box(yellow,.17,.015,8,x+shift-center,.006,z-center);
+      box(yellow,4.2,.015,.17,x-center,.006,z+4-center);
     }
     const crown=new THREE.IcosahedronGeometry(.5,1);
     for(const [x,z] of campus.trees){
