@@ -3,6 +3,16 @@
 'use strict';
 const Sensors=typeof module!=='undefined'?require('@42tr/3dbox4agent-world/sensors'):root.SandboxSensors;
 function clear(from,to,obstacles,heightfield){return Sensors.visible(from,to,1000,obstacles,heightfield)}
+// Keep the requested orbit direction and find the nearest unobstructed radius.
+function visibleFraction(from,to,obstacles,heightfield){
+ if(clear(from,to,obstacles,heightfield)||!clear(to,to,obstacles,heightfield))return 1;
+ let lo=0,hi=1;
+ for(let i=0;i<10;i++){
+  const t=(lo+hi)/2,point={x:to.x+(from.x-to.x)*t,y:to.y+(from.y-to.y)*t,z:to.z+(from.z-to.z)*t};
+  if(clear(point,to,obstacles,heightfield))lo=t;else hi=t;
+ }
+ return lo;
+}
 function offset(position,angle,obstacles,scale=1,heightfield){
  for(const [x,y,z] of [[5,3.1,6],[-5,3.1,6],[5,4,-6],[-5,4,-6],[0,12,0]]){
   const dx=(x*Math.cos(angle)+z*Math.sin(angle))*scale,dz=(-x*Math.sin(angle)+z*Math.cos(angle))*scale,dy=y*scale;
@@ -10,5 +20,5 @@ function offset(position,angle,obstacles,scale=1,heightfield){
  }
  return {x:0,y:12*scale,z:0};
 }
-const api={clear,offset};if(typeof module!=='undefined')module.exports=api;else root.SandboxVehicleCamera=api;
+const api={clear,visibleFraction,offset};if(typeof module!=='undefined')module.exports=api;else root.SandboxVehicleCamera=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

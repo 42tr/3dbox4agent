@@ -20,4 +20,11 @@ const obstacles=E.getScene('lunar-outpost-v1').obstacles;
 const rover={x:23.3,y:21,z:0},angle=-.1;
 for(const scale of [1,1.6]){const o=Camera.offset(rover,angle,obstacles,scale);assert(Camera.clear({x:rover.x+o.x,y:rover.y+o.z,z:rover.z+o.y},{x:rover.x,y:rover.y,z:.9},obstacles));assert(o.y>0)}
 for(const a of world.agents){const p={x:a.x,y:a.y,z:0},o=Camera.offset(p,0,obstacles);assert(Camera.clear({x:p.x+o.x,y:p.y+o.z,z:o.y},{...p,z:.9},obstacles))}
+const target={x:0,y:0,z:1},orbit={x:10,y:0,z:3};
+const wall=[{x:4,y:-1,w:2,h:2,height:6}];
+const fraction=Camera.visibleFraction(orbit,target,wall);
+assert(fraction>.398&&fraction<.4,'follow camera stops in front of the wall on the same ray');
+assert(Camera.clear({x:10*fraction,y:0,z:1+2*fraction},target,wall));
+assert.equal(Camera.visibleFraction({...orbit,y:10},target,wall),1,'a clear angle keeps the requested orbit radius');
+assert.equal(Camera.visibleFraction(orbit,{x:5,y:0,z:1},wall),1,'a target inside an obstacle does not collapse the orbit');
 console.log('vehicle presentation yaw: route corners, stopped/faulted devices and complete outpost movement passed');

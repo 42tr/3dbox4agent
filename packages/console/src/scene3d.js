@@ -19,21 +19,64 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   const renderer = new THREE.WebGLRenderer({canvas, context:graphics.createContext(canvas), antialias:true, alpha:false});
   let graphicsLost=false;
   canvas.addEventListener('webglcontextlost',()=>{graphicsLost=true;onUnavailable?.({code:'WEBGL_CONTEXT_LOST'})});
-  let qualityName='high',lastRenderAt=-Infinity;
+  let qualityName='high',nextRenderAt=-Infinity,lastRenderAt=-Infinity;
   renderer.setPixelRatio(quality.pixelRatio(qualityName,window.devicePixelRatio));
   renderer.setClearColor(0xdce9e4);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;
+  // The light is fixed. Moving the viewpoint doesn't change the shadow map.
+  renderer.shadowMap.autoUpdate=false;
+  renderer.shadowMap.needsUpdate=true;
   renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;
   const elevation=window.SandboxElevation;const floor=(x,y)=>elevation.height(lastState?.heightfield,x,y);
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0xdce9e4, 230, 400);
-  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
+  const camera = new THREE.PerspectiveCamera(42, 1, 2, 500);
+  const viewCamera=camera.clone();
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping=true;controls.dampingFactor=.08;controls.minDistance=18;controls.maxDistance=210;
   controls.maxPolarAngle=Math.PI*.49;controls.target.set(0,0,0);
   let lunarCamera=false,industrial=false,modern=false,center=50,cameraFocus=null,overviewCamera=null;
-  function resetCamera(){if(cameraFocus){const object=agents.get(cameraFocus)?.group;if(object){controls.minDistance=4;controls.enablePan=false;const offset=vehicleCamera.offset({x:object.position.x+center,y:object.position.z+center,z:object.position.y},object.rotation.y,lastState?.obstacles||[],1.6,lastState?.heightfield);camera.position.copy(object.position).add(new THREE.Vector3(offset.x,offset.y,offset.z));controls.target.copy(object.position).add(new THREE.Vector3(0,1,0));controls.update();return}}controls.minDistance=18;controls.maxDistance=industrial?410:210;controls.maxTargetRadius=industrial?170:Infinity;controls.enablePan=true;if(lunarCamera){const aspect=canvas.clientWidth/Math.max(1,canvas.clientHeight),fit=Math.max(1,Math.min(1.55,1.65/aspect));if(lunarCamera==='outpost'){camera.position.set(-12*fit,42*fit,2+68*fit);controls.target.set(4,0,2)}else{camera.position.set(-45*fit,40*fit,-6+56*fit);controls.target.set(0,0,-6)}}else if(modern){const aspect=canvas.clientWidth/Math.max(1,canvas.clientHeight),fit=Math.max(1,Math.min(1.45,1.38/aspect));controls.target.set(10,0,21);camera.position.set(10+138*fit,220*fit,21+178*fit)}else if(industrial){const aspect=canvas.clientWidth/Math.max(1,canvas.clientHeight),fit=Math.max(1,Math.min(1.45,1.42/aspect));controls.target.set(13,0,41);camera.position.set(13+82*fit,209*fit,41+183*fit)}else{camera.position.set(85,92,105);controls.target.set(0,0,0)}controls.update()}
+  let followRadius=Infinity,lastRequestedRadius=Infinity;
+  const followTarget=new THREE.Vector3();
+  const toWorld=p=>({x:p.x+center,y:p.z+center,z:p.y});
+  function setCameraLimits(following) {
+    // A farther near plane preserves depth precision for thin paint and roof details.
+    camera.near=following ? .1 : 2;
+    camera.updateProjectionMatrix();
+    controls.minDistance=following?4:18;
+    controls.maxDistance=industrial?410:210;
+    controls.maxTargetRadius=!following&&industrial?170:Infinity;
+    controls.enablePan=!following;
+  }
+  function resetCamera(){
+    controls.enableDamping=false;
+    controls.update();
+    followRadius=lastRequestedRadius=Infinity;
+    const object=agents.get(cameraFocus)?.group;
+    setCameraLimits(!!object);
+    if(object){
+      const offset=vehicleCamera.offset(toWorld(object.position),object.rotation.y,lastState.obstacles,1.6,lastState.heightfield);
+      camera.position.copy(object.position).add(new THREE.Vector3(offset.x,offset.y,offset.z));
+      controls.target.copy(object.position);
+      controls.target.y+=1;
+    }else{
+      const aspect=canvas.clientWidth/Math.max(1,canvas.clientHeight);
+      if(lunarCamera){
+        const fit=Math.max(1,Math.min(1.55,1.65/aspect));
+        if(lunarCamera==='outpost'){camera.position.set(-12*fit,42*fit,2+68*fit);controls.target.set(4,0,2)}
+        else{camera.position.set(-45*fit,40*fit,-6+56*fit);controls.target.set(0,0,-6)}
+      }else if(modern){
+        const fit=Math.max(1,Math.min(1.45,1.38/aspect));
+        controls.target.set(10,0,21);camera.position.set(10+138*fit,220*fit,21+178*fit);
+      }else if(industrial){
+        const fit=Math.max(1,Math.min(1.45,1.42/aspect));
+        controls.target.set(13,0,41);camera.position.set(13+82*fit,209*fit,41+183*fit);
+      }else{camera.position.set(85,92,105);controls.target.set(0,0,0)}
+    }
+    controls.update();
+    controls.enableDamping=true;
+  }
   const ambient=new THREE.HemisphereLight(0xc9d5e7,0x766148,2.0);scene.add(ambient);
   const sun=new THREE.DirectionalLight(0xfff2df,3.6);sun.position.set(-50,60,-40);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-110,right:110,top:110,bottom:-110,near:1,far:250});sun.shadow.bias=-.0004;sun.shadow.normalBias=.12;scene.add(sun);const lunarEnvironment=createLunarEnvironment(scene,renderer);
   const mat=(color,options={})=>new THREE.MeshStandardMaterial({color,roughness:.82,...options});
@@ -141,53 +184,143 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
       if(!sceneChanged&&!cameraFocus&&nextFocus){
         overviewCamera={position:camera.position.clone(),target:controls.target.clone()};
       }
-      // Clear damping left over from the previous view before moving the camera.
-      controls.enableDamping=false;
-      controls.update();
       cameraFocus=nextFocus;
       if(!cameraFocus&&overviewCamera){
-        controls.minDistance=18;
-        controls.enablePan=true;
+        controls.enableDamping=false;
+        controls.update();
+        setCameraLimits(false);
         camera.position.copy(overviewCamera.position);
         controls.target.copy(overviewCamera.target);
         controls.update();
+        controls.enableDamping=true;
         overviewCamera=null;
       }else{
         resetCamera();
       }
-      controls.enableDamping=true;
       lastThumbnailAt=-Infinity;
     }
     const part=state.part;const carrier=state.agents.find(a=>a.id===part.carrierId);const p=carrier?[carrier.x,carrier.y]:part.position;carriedBy=carrier?.id||null;partMesh.scale.setScalar(lunar ? .6 : 1);partMesh.visible=!focus&&!!p&&part.location!=='consumed';if(p)partMesh.position.set(p[0]-center,(carrier&&window.SandboxSensors.isAir(carrier)?16:floor(p[0],p[1]))+(carrier?(lunar?1.8:3):(lunar ? .54 : .9)),p[1]-center);
     const moving=state.agents.find(a=>(a.status==='working'||a.status==='manual')&&a.route.length&&(!focus||a.id===focus.id));routeLine.visible=!!moving&&!focus;if(moving&&!focus){const air=window.SandboxSensors.isAir(moving),route=[[moving.x,moving.y],...moving.route],points=[];for(let i=1;i<route.length;i++){const a=route[i-1],b=route[i],cuts=air?[0,1]:elevation.cuts(state.heightfield,a,b);for(const t of cuts){const x=a[0]+(b[0]-a[0])*t,y=a[1]+(b[1]-a[1])*t;points.push(new THREE.Vector3(x-center,air?16:floor(x,y)+.3,y-center))}}updateRouteGeometry(routeLine,points)}
     const samples=focus?(observation.samples||[]):state.events.filter(e=>e.kind==='sample_collected');const sampleIds=new Set(samples.map(x=>x.taskId));for(const [id,marker] of sampleMarkers)if(!sampleIds.has(id))marker.visible=false;for(const item of samples){if(!sampleMarkers.has(item.taskId))sampleMarkers.set(item.taskId,createSampleMarker());const marker=sampleMarkers.get(item.taskId);marker.visible=true;marker.position.set(item.position[0]-center,floor(...item.position),item.position[1]-center)}
     const targets=focus?[...new Map([...observation.visibleTargets.map(t=>({id:t.id,target:[t.x,t.y]})),...observation.assignedTasks].map(t=>[t.id,t])).values()]:state.tasks.filter(t=>t.status==='active'||(t.status==='pending'&&t.dependsOn.every(id=>state.tasks.some(x=>x.id===id&&x.status==='done'))));const activeIds=new Set(targets.map(t=>t.id));for(const [id,marker] of markers)if(!activeIds.has(id))marker.visible=false;for(const t of targets){if(!markers.has(t.id))markers.set(t.id,createMarker());const marker=markers.get(t.id);marker.visible=true;marker.children[1].visible=!focus;marker.scale.setScalar(focus ? .32 : 1);marker.position.set(t.target[0]-center,floor(...t.target),t.target[1]-center)}
+    renderer.shadowMap.needsUpdate=true;
   }
   const disabledCache=new Map();function disabledMaterial(original){if(original.userData.original)return original;if(!disabledCache.has(original)){const copy=original.clone();copy.color.set(0x889995);copy.userData.original=original;disabledCache.set(original,copy)}return disabledCache.get(original)}function restoreMaterial(material){return material.userData.original||material}
   const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();let down=null;
-  canvas.addEventListener('pointerdown',event=>{down=[event.clientX,event.clientY]});
-  canvas.addEventListener('pointerup',event=>{if(!down||Math.hypot(event.clientX-down[0],event.clientY-down[1])>5)return;const rect=canvas.getBoundingClientRect();mouse.set((event.clientX-rect.left)/rect.width*2-1,-((event.clientY-rect.top)/rect.height)*2+1);ray.setFromCamera(mouse,camera);const hit=ray.intersectObjects(pickables,false).find(h=>h.object.parent.visible);if(hit&&lastState)onSelect(hit.object.userData.agentId)});
-  function setQuality(name){quality.profile(name);qualityName=name;renderer.setPixelRatio(quality.pixelRatio(name,window.devicePixelRatio));for(const g of buildingGroups)g.traverse(o=>{if(o.userData.decorative)o.visible=quality.profile(name).detail});const lunar=['lunar-base-v1','lunar-terrain-v1','lunar-sampling-v1','lunar-outpost-v1','lunar-heightfield-v1','lunar-thermal-v1','lunar-materials-v1','lunar-relay-v1','lunar-construction-v1','lunar-rescue-v1','lunar-power-v1'].includes(lastState?.sceneId),shore=lastState?.sceneId==='shore-coordination-v1'||!!lastState?.surfaceDomain;park.setDetail(park.yard,quality.profile(name).detail);trees.visible=!!lastState&&!industrial&&!lunar&&!shore&&quality.profile(name).detail;lastRenderAt=-Infinity}
-  const thumbnailTarget=new THREE.WebGLRenderTarget(320,170),thumbnailSource=new THREE.WebGLRenderTarget(320,170,{type:renderer.extensions.has('EXT_color_buffer_float')?THREE.HalfFloatType:THREE.UnsignedByteType}),thumbnailOutput=new OutputPass(),thumbnailCamera=new THREE.PerspectiveCamera(48,320/170,.1,500),pixels=new Uint8Array(320*170*4),thumbnailImage=new ImageData(320,170);let lastThumbnailAt=-Infinity;
-  lunarEnvironment.ready.then(()=>{lastThumbnailAt=-Infinity});
-  surfacePresentation.ready.then(()=>{lastThumbnailAt=-Infinity});
+  canvas.addEventListener('pointerdown',event=>{down=event.isPrimary&&event.button===0&&!event.ctrlKey&&!event.metaKey&&!event.shiftKey?event:null});
+  const beyondClick=event=>Math.hypot(event.clientX-down.clientX,event.clientY-down.clientY)>5;
+  canvas.addEventListener('pointermove',event=>{if(down&&event.pointerId===down.pointerId&&beyondClick(event))down=null});
+  canvas.addEventListener('pointercancel',()=>{down=null});
+  canvas.addEventListener('pointerup',event=>{
+    const clicked=down&&event.pointerId===down.pointerId&&!beyondClick(event);
+    down=null;
+    if(!clicked)return;
+    const rect=canvas.getBoundingClientRect();
+    mouse.set((event.clientX-rect.left)/rect.width*2-1,-((event.clientY-rect.top)/rect.height)*2+1);
+    ray.setFromCamera(mouse,viewCamera);
+    const hit=ray.intersectObjects(pickables,false).find(h=>h.object.parent.visible);
+    if(hit&&lastState)onSelect(hit.object.userData.agentId);
+  });
+  function setQuality(name){quality.profile(name);qualityName=name;renderer.setPixelRatio(quality.pixelRatio(name,window.devicePixelRatio));for(const g of buildingGroups)g.traverse(o=>{if(o.userData.decorative)o.visible=quality.profile(name).detail});const lunar=['lunar-base-v1','lunar-terrain-v1','lunar-sampling-v1','lunar-outpost-v1','lunar-heightfield-v1','lunar-thermal-v1','lunar-materials-v1','lunar-relay-v1','lunar-construction-v1','lunar-rescue-v1','lunar-power-v1'].includes(lastState?.sceneId),shore=lastState?.sceneId==='shore-coordination-v1'||!!lastState?.surfaceDomain;park.setDetail(park.yard,quality.profile(name).detail);trees.visible=!!lastState&&!industrial&&!lunar&&!shore&&quality.profile(name).detail;nextRenderAt=-Infinity;renderer.shadowMap.needsUpdate=true}
+  const thumbnailTarget=new THREE.WebGLRenderTarget(320,170),thumbnailSource=new THREE.WebGLRenderTarget(320,170,{type:renderer.extensions.has('EXT_color_buffer_float')?THREE.HalfFloatType:THREE.UnsignedByteType}),thumbnailOutput=new OutputPass(),thumbnailCamera=new THREE.PerspectiveCamera(48,320/170,.1,500),pixels=new Uint8Array(320*170*4),thumbnailImage=new ImageData(320,170);
+  let lastThumbnailAt=-Infinity,thumbnailIndex=0,thumbnailPending=false;
+  let draggingCamera=false,lastCameraInputAt=-Infinity;
+  controls.addEventListener('start',()=>{draggingCamera=true;lastCameraInputAt=performance.now()});
+  controls.addEventListener('end',()=>{draggingCamera=false;lastCameraInputAt=performance.now()});
+  function refreshAssets(){lastThumbnailAt=-Infinity;renderer.shadowMap.needsUpdate=true}
+  lunarEnvironment.ready.then(refreshAssets);
+  surfacePresentation.ready.then(refreshAssets);
   function thumbnails(now){
-    if(now-lastThumbnailAt<1500||!lastState)return;lastThumbnailAt=now;
+    if(thumbnailPending||draggingCamera||now-lastCameraInputAt<200||now-lastThumbnailAt<375||!lastState)return;
+    lastThumbnailAt=now;
     const destinations=new Map();
-    for(const target of document.querySelectorAll('canvas[data-device-camera]')){const id=target.dataset.deviceCamera;if(!destinations.has(id))destinations.set(id,[]);destinations.get(id).push(target)}
-    for(const [id,targets] of destinations){
-      const a=lastState.agents.find(a=>a.id===id);if(!a)continue;
-      const object=agents.get(a.id)?.group,position=object?.position||new THREE.Vector3(a.x-center,0,a.y-center),angle=object?.rotation.y||0,offset=vehicleCamera.offset({x:position.x+center,y:position.z+center,z:position.y},angle,lastState.obstacles,1,lastState.heightfield);
-      thumbnailCamera.position.copy(position).add(new THREE.Vector3(offset.x,offset.y,offset.z));thumbnailCamera.lookAt(position.x,position.y+.9,position.z);
+    for(const target of document.querySelectorAll('canvas[data-device-camera]')){
+      const id=target.dataset.deviceCamera;
+      if(!agents.has(id)||!target.getClientRects().length)continue;
+      if(!destinations.has(id))destinations.set(id,[]);
+      destinations.get(id).push(target);
+    }
+    if(!destinations.size)return;
+    const [id,targets]=[...destinations][thumbnailIndex%destinations.size];
+    thumbnailIndex=(thumbnailIndex+1)%destinations.size;
+    const object=agents.get(id).group,position=object.position;
+    const offset=vehicleCamera.offset(toWorld(position),object.rotation.y,lastState.obstacles,1,lastState.heightfield);
+    thumbnailCamera.position.copy(position).add(new THREE.Vector3(offset.x,offset.y,offset.z));
+    thumbnailCamera.lookAt(position.x,position.y+.9,position.z);
+    const sceneId=lastState.sceneId;
+    thumbnailPending=true;
+    try{
       renderer.setRenderTarget(thumbnailSource);renderer.render(scene,thumbnailCamera);
       // Match the main canvas: linear lighting -> ACES/exposure -> sRGB bytes.
       thumbnailOutput.render(renderer,thumbnailTarget,thumbnailSource);
-      renderer.readRenderTargetPixels(thumbnailTarget,0,0,320,170,pixels);
-      for(let y=0;y<170;y++)thumbnailImage.data.set(pixels.subarray((169-y)*320*4,(170-y)*320*4),y*320*4);
-      for(const target of targets){target.getContext('2d').putImageData(thumbnailImage,0,0);target.dataset.ready='true'}
+      renderer.readRenderTargetPixelsAsync(thumbnailTarget,0,0,320,170,pixels).then(()=>{
+        if(graphicsLost||lastState.sceneId!==sceneId)return;
+        for(let y=0;y<170;y++)thumbnailImage.data.set(pixels.subarray((169-y)*320*4,(170-y)*320*4),y*320*4);
+        for(const target of targets){
+          if(!target.isConnected||target.dataset.deviceCamera!==id)continue;
+          target.getContext('2d').putImageData(thumbnailImage,0,0);
+          target.dataset.ready='true';
+        }
+      }).catch(error=>{if(!graphicsLost)console.warn('Device preview readback failed:',error)})
+        .finally(()=>{thumbnailPending=false});
+    }finally{
+      renderer.setRenderTarget(null);
     }
-    renderer.setRenderTarget(null);
   }
-  function animate(now){if(graphicsLost)return;requestAnimationFrame(animate);if(now-lastRenderAt<1000/quality.profile(qualityName).frameRate-1)return;lastRenderAt=now;for(const [id,transition] of transitions){const agent=agents.get(id);if(!agent){transitions.delete(id);continue}const p=motion.position(transition.from,transition.to,transition.start,transition.duration,reducedMotion?.matches?transition.start+transition.duration:now);agent.group.position.x=p.x;agent.group.position.z=p.y;const spec=lastState?.agents.find(a=>a.id===id);if(spec&&!window.SandboxSensors.isAir(spec))agent.group.position.y=floor(p.x+center,p.y+center);if(p.done)transitions.delete(id)}if(carriedBy&&partMesh.visible){const agent=agents.get(carriedBy);if(agent){partMesh.position.x=agent.group.position.x;partMesh.position.z=agent.group.position.z;partMesh.position.y=agent.group.position.y+(lastState?.sceneId?.startsWith('lunar')?1.8:3)}}const w=canvas.clientWidth,h=canvas.clientHeight;if(w&&h&&(canvas.width!==Math.round(w*renderer.getPixelRatio())||canvas.height!==Math.round(h*renderer.getPixelRatio()))){renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}if(cameraFocus){const object=agents.get(cameraFocus)?.group;if(object){const target=object.position.clone().add(new THREE.Vector3(0,1,0)),delta=target.clone().sub(controls.target);camera.position.add(delta);controls.target.copy(target);if(!vehicleCamera.clear({x:camera.position.x+center,y:camera.position.z+center,z:camera.position.y},{x:target.x+center,y:target.z+center,z:target.y},lastState.obstacles,lastState.heightfield)){const offset=vehicleCamera.offset({x:object.position.x+center,y:object.position.z+center,z:object.position.y},object.rotation.y,lastState.obstacles,1.6,lastState.heightfield);camera.position.copy(object.position).add(new THREE.Vector3(offset.x,offset.y,offset.z))}}}controls.update();thumbnails(now);renderer.render(scene,camera)}requestAnimationFrame(animate);
+  function updateViewCamera(elapsed){
+    const object=agents.get(cameraFocus)?.group;
+    if(object){
+      followTarget.copy(object.position);
+      followTarget.y+=1;
+      camera.position.add(followTarget).sub(controls.target);
+      controls.target.copy(followTarget);
+    }
+    controls.update();
+    viewCamera.copy(camera);
+    if(object){
+      // Apply occlusion only to the rendered camera; OrbitControls retains the user's orbit.
+      const radius=camera.position.distanceTo(controls.target);
+      const fraction=vehicleCamera.visibleFraction(toWorld(camera.position),toWorld(controls.target),lastState.obstacles,lastState.heightfield);
+      const limit=fraction<1?Math.max(.2,radius*fraction-.15):radius;
+      const previous=followRadius*radius/lastRequestedRadius;
+      followRadius=!Number.isFinite(previous)||reducedMotion?.matches?limit:
+        Math.min(limit,previous+(limit-previous)*-Math.expm1(-elapsed/140));
+      lastRequestedRadius=radius;
+      viewCamera.position.lerpVectors(controls.target,camera.position,followRadius/radius);
+    }
+  }
+  let renderWidth=0,renderHeight=0;
+  function animate(now){
+    if(graphicsLost)return;
+    requestAnimationFrame(animate);
+    if(now+1<nextRenderAt)return;
+    const interval=1000/quality.profile(qualityName).frameRate;
+    nextRenderAt=(now>=nextRenderAt+interval?now:nextRenderAt)+interval;
+    const elapsed=now-lastRenderAt;
+    lastRenderAt=now;
+    for(const [id,transition] of transitions){
+      const agent=agents.get(id);
+      if(!agent){transitions.delete(id);continue}
+      const p=motion.position(transition.from,transition.to,transition.start,transition.duration,reducedMotion?.matches?transition.start+transition.duration:now);
+      if(agent.group.position.x!==p.x||agent.group.position.z!==p.y)renderer.shadowMap.needsUpdate=true;
+      agent.group.position.x=p.x;agent.group.position.z=p.y;
+      const spec=lastState?.agents.find(a=>a.id===id);
+      if(spec&&!window.SandboxSensors.isAir(spec))agent.group.position.y=floor(p.x+center,p.y+center);
+      if(p.done)transitions.delete(id);
+    }
+    if(carriedBy&&partMesh.visible){
+      const agent=agents.get(carriedBy);
+      if(agent){partMesh.position.x=agent.group.position.x;partMesh.position.z=agent.group.position.z;partMesh.position.y=agent.group.position.y+(lastState?.sceneId?.startsWith('lunar')?1.8:3)}
+    }
+    const w=canvas.clientWidth,h=canvas.clientHeight;
+    if(w&&h&&(w!==renderWidth||h!==renderHeight)){
+      renderWidth=w;renderHeight=h;
+      renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();
+    }
+    updateViewCamera(elapsed);
+    if(w&&h)renderer.render(scene,viewCamera);
+    thumbnails(now);
+  }
+  requestAnimationFrame(animate);
   return {update,resetCamera,setQuality};
 };
