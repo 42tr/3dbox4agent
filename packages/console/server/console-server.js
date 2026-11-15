@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {createControlProxy} = require('@42tr/3dbox4agent-control/http-forward');
 const {requestOriginError} = require('@42tr/3dbox4agent-control/request-origin');
+const {loadDeploymentInfo, renderDeploymentPage} = require('./deployment-info');
 
 const streamHeaders = ['host', 'origin', 'connection', 'upgrade', 'sec-websocket-key',
   'sec-websocket-version', 'sec-websocket-protocol', 'sec-websocket-extensions'];
@@ -43,7 +44,8 @@ function proxyStream(origin, req, socket, head) {
 function createConsoleServer({
   controlUrl,
   worldUrl = process.env.BOX_WORLD_URL || 'http://127.0.0.1:8787',
-  htmlPath = path.join(__dirname, '../dist/index.html')
+  htmlPath = path.join(__dirname, '../dist/index.html'),
+  deploymentInfoPath = process.env.BOX_DEPLOYMENT_INFO || path.join(__dirname, '../../../deployment-info.json')
 } = {}) {
   const world = new URL(worldUrl);
   if (!['http:', 'https:'].includes(world.protocol) || world.username || world.password || world.pathname !== '/' || world.search || world.hash) {
@@ -51,6 +53,9 @@ function createConsoleServer({
   }
   const proxy = createControlProxy(controlUrl, {preserveOrigin: true});
   const html = fs.readFileSync(htmlPath);
+  const deploymentInfo = loadDeploymentInfo(deploymentInfoPath);
+  const deploymentJson = Buffer.from(JSON.stringify(deploymentInfo), 'utf8');
+  const deploymentHtml = renderDeploymentPage(deploymentInfo);
   const server = http.createServer((req, res) => {
     const error = requestOriginError(req);
     if (error) {
@@ -58,6 +63,14 @@ function createConsoleServer({
       return res.end(JSON.stringify({error}));
     }
     const pathname = req.url.split('?', 1)[0];
+    if (pathname === '/deployment.json' && ['GET', 'HEAD'].includes(req.method)) {
+      res.writeHead(200, {'content-type': 'application/json; charset=utf-8', 'content-length': deploymentJson.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff'});
+      return res.end(req.method === 'HEAD' ? undefined : deploymentJson);
+    }
+    if (pathname === '/deployment' && ['GET', 'HEAD'].includes(req.method)) {
+      res.writeHead(200, {'content-type': 'text/html; charset=utf-8', 'content-length': deploymentHtml.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff'});
+      return res.end(req.method === 'HEAD' ? undefined : deploymentHtml);
+    }
     if (pathname === '/' && ['GET', 'HEAD'].includes(req.method)) {
       res.writeHead(200, {'content-type': 'text/html; charset=utf-8', 'content-length': html.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff'});
       return res.end(req.method === 'HEAD' ? undefined : html);

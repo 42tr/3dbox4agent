@@ -1,5 +1,6 @@
 *
 !Dockerfile
+!deployment-info.json
 !package.json
 !package-lock.json
 !build.py

@@ -116,3 +116,4 @@
 .mc-standard-tools { display: contents; }
 .mc-standard-tools[hidden], .mc-runner-tools[hidden] { display: none; }
 .mc-runner-tools { flex: 1; min-height: 0; overflow: auto; }
+.mc-camera{aspect-ratio:16/9;cursor:grab;touch-action:none}.mc-camera:not(.can-rotate){cursor:default}.mc-camera:active{cursor:grabbing}.mc-camera img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}.mc-camera-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#737e8e;font:8px ui-monospace,monospace;background:linear-gradient(145deg,#1a2029,#11151a)}.mc-camera small{position:absolute;top:3px;right:4px;z-index:2;color:#b2c0d0;font:6px ui-monospace,monospace;text-shadow:0 1px 2px #000;pointer-events:none}.mc-camera.ready .mc-camera-unavailable{display:none}.mc-camera.custom-view{border-color:#8a94e0;box-shadow:0 0 0 1px #6772bc66}

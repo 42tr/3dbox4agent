@@ -1,0 +1,38 @@
+name: Build Docker release package
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build amd64 images and package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build images and create offline package
+        run: bash scripts/build-image.sh --arch amd64 --network default
+
+      - name: Upload release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3dbox4agent-${{ github.sha }}
+          path: |
+            .3dbox/releases/*.tar.gz
+            .3dbox/releases/*.tar.gz.sha256
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
