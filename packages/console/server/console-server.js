@@ -45,7 +45,7 @@ function createConsoleServer({
   controlUrl,
   worldUrl = process.env.BOX_WORLD_URL || 'http://127.0.0.1:8787',
   htmlPath = path.join(__dirname, '../dist/index.html'),
-  deploymentInfoPath = process.env.BOX_DEPLOYMENT_INFO || path.join(__dirname, '../../deployment-info.json')
+  deploymentInfoPath = process.env.BOX_DEPLOYMENT_INFO || path.join(__dirname, '../../../deployment-info.json')
 } = {}) {
   const world = new URL(worldUrl);
   if (!['http:', 'https:'].includes(world.protocol) || world.username || world.password || world.pathname !== '/' || world.search || world.hash) {

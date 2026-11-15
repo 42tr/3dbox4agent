@@ -33,7 +33,8 @@ COPY packages/control/src ./node_modules/@42tr/3dbox4agent-control/src
 COPY packages/console/server ./server
 COPY deployment-info.json ./deployment-info.json
 COPY --from=web-build /app/packages/console/dist ./dist
-ENV CONSOLE_BIND=0.0.0.0 CONSOLE_PORT=8787
+ENV CONSOLE_BIND=0.0.0.0 CONSOLE_PORT=8787 \
+    BOX_DEPLOYMENT_INFO=/app/deployment-info.json
 USER node
 EXPOSE 8787
 HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
