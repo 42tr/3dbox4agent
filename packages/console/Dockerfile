@@ -31,6 +31,7 @@ WORKDIR /app
 COPY packages/control/package.json ./node_modules/@42tr/3dbox4agent-control/package.json
 COPY packages/control/src ./node_modules/@42tr/3dbox4agent-control/src
 COPY packages/console/server ./server
+COPY deployment-info.json ./deployment-info.json
 COPY --from=web-build /app/packages/console/dist ./dist
 ENV CONSOLE_BIND=0.0.0.0 CONSOLE_PORT=8787
 USER node
