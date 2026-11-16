@@ -243,10 +243,33 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
     if(!destinations.size)return;
     const [id,targets]=[...destinations][thumbnailIndex%destinations.size];
     thumbnailIndex=(thumbnailIndex+1)%destinations.size;
-    const object=agents.get(id).group,position=object.position;
-    const offset=vehicleCamera.offset(toWorld(position),object.rotation.y,lastState.obstacles,1,lastState.heightfield);
-    thumbnailCamera.position.copy(position).add(new THREE.Vector3(offset.x,offset.y,offset.z));
-    thumbnailCamera.lookAt(position.x,position.y+.9,position.z);
+    const object=agents.get(id).group;
+    const spec=lastState.agents.find(agent=>agent.id===id);
+    const mountedCamera=spec?.camera?.enabled?spec.camera:null;
+    if(mountedCamera){
+      // Render from the camera mounted on the model. Camera mount coordinates
+      // use the same local X/Y/Z basis as the model, with +X as forward.
+      const mount=Array.isArray(mountedCamera.mount)&&mountedCamera.mount.length===3?mountedCamera.mount:[0,1.5,.8];
+      const position=object.localToWorld(new THREE.Vector3(mount[0],mount[1],mount[2]));
+      const yaw=THREE.MathUtils.degToRad(Number.isFinite(mountedCamera.yaw)?mountedCamera.yaw:0);
+      const pitch=THREE.MathUtils.degToRad(Number.isFinite(mountedCamera.pitch)?mountedCamera.pitch:0);
+      const direction=new THREE.Vector3(Math.cos(yaw),Math.tan(pitch),-Math.sin(yaw)).applyQuaternion(object.quaternion).normalize();
+      thumbnailCamera.position.copy(position);
+      thumbnailCamera.lookAt(position.clone().add(direction.multiplyScalar(Math.max(1,Number(mountedCamera.range)||60))));
+      thumbnailCamera.fov=Number.isFinite(mountedCamera.fov)?mountedCamera.fov:48;
+    }else{
+      // Legacy/custom devices without a camera definition keep the generic
+      // nearby preview instead of failing the device-card renderer.
+      const position=object.position;
+      const offset=vehicleCamera.offset(toWorld(position),object.rotation.y,lastState.obstacles,1,lastState.heightfield);
+      thumbnailCamera.position.copy(position).add(new THREE.Vector3(offset.x,offset.y,offset.z));
+      thumbnailCamera.lookAt(position.x,position.y+.9,position.z);
+      thumbnailCamera.fov=48;
+    }
+    thumbnailCamera.aspect=320/170;
+    thumbnailCamera.near=.1;
+    thumbnailCamera.far=Math.max(100,Number(mountedCamera?.range)||500);
+    thumbnailCamera.updateProjectionMatrix();
     const sceneId=lastState.sceneId;
     thumbnailPending=true;
     try{
