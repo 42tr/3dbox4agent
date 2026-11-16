@@ -1,0 +1,54 @@
+name: Test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Typecheck and regression tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Console and native backends
+        run: |
+          npm run build
+          npm run build:rust-physics
+          cargo build --locked --manifest-path packages/control-server/Cargo.toml
+      - name: Typecheck Console
+        run: npm run typecheck:ui
+      - name: Run contract and server regressions
+        run: |
+          node tests/scene-native-contract.test.js
+          node tests/kinematic-agent-collision.test.js
+          node tests/camera-server.test.js
+          node tests/session-lifecycle.test.js
+          node tests/rust-world-initialization-server.test.js
+          node tests/charging.test.js
+          node tests/configurable-energy.test.js
+          node tests/return-energy.test.js
+          node tests/rust-world-advance.test.js
+          node tests/rust-action-advance.test.js
+          node tests/evidence-mission.test.js
+          node tests/openai-policy.test.js
+          python3 tests/policy_compare_runtime_test.py
+          node tests/remote-access.test.js
+          node tests/world-supervisor.test.js
+          node tests/runner-token-reload.test.js
+          node tests/integration/build-image.test.js
+          node tests/integration/runner.test.js

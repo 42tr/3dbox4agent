@@ -37,6 +37,7 @@ struct Wait { goal: [f64; 2], roadblock_id: String, started_tick: u32, owner: Ow
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all="camelCase", deny_unknown_fields)]
 pub(crate) struct Execution {
+    #[serde(default,deserialize_with="present",skip_serializing_if="Option::is_none")]pub(crate) camera:Option<crate::camera::Camera>,
     #[serde(default,deserialize_with="present",skip_serializing_if="Option::is_none")]pub(crate) operating_energy_per_tick:Option<f64>,
     #[serde(default,deserialize_with="present",skip_serializing_if="Option::is_none")]pub(crate) operating_state:Option<crate::operating_power::State>,
     #[serde(default,deserialize_with="present",skip_serializing_if="Option::is_none")]pub(crate) fault_generation:Option<u32>,
@@ -129,7 +130,7 @@ impl Execution {
     pub(crate) fn work_eligible(&self)->bool{!self.disabled&&self.status==Status::Working&&self.route.is_empty()&&self.roadblock_wait.is_none()}
     pub fn valid(&self, distance: f64) -> bool {
         let limit = distance + 1e-6 * distance.max(1.0);
-        (match(self.recoverable_fault,self.fault_generation){(Some(true),Some(n))=>n<=MAX_TICK,(None,None)=>true,_=>false}) && crate::rescue::valid(self.rescue.as_ref(),self.recoverable_fault,self.mobility.as_deref().map_or(self.role!="drone",|m|m=="ground"),&self.capabilities) && self.valid_relay() && self.valid_thermal() && match(&self.operating_energy_per_tick,&self.operating_state){(None,None)=>true,(Some(rate),Some(state))=>state.valid(*rate),_=>false} && token(&self.id,64) && token(&self.role,48) && !self.name.is_empty() && self.name.encode_utf16().count()<=104
+        self.camera.as_ref().is_none_or(|camera|camera.valid()) && (match(self.recoverable_fault,self.fault_generation){(Some(true),Some(n))=>n<=MAX_TICK,(None,None)=>true,_=>false}) && crate::rescue::valid(self.rescue.as_ref(),self.recoverable_fault,self.mobility.as_deref().map_or(self.role!="drone",|m|m=="ground"),&self.capabilities) && self.valid_relay() && self.valid_thermal() && match(&self.operating_energy_per_tick,&self.operating_state){(None,None)=>true,(Some(rate),Some(state))=>state.valid(*rate),_=>false} && token(&self.id,64) && token(&self.role,48) && !self.name.is_empty() && self.name.encode_utf16().count()<=104
             && !self.capabilities.is_empty() && self.capabilities.len()<=32 && self.capabilities.iter().all(|c|token(c,64))
             && self.speed.is_finite() && self.speed>0.0 && self.speed<=100.0
             && self.mobility.as_deref().is_none_or(|m| matches!(m,"air"|"ground"|"water"))

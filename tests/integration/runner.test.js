@@ -214,7 +214,26 @@ async function api(base, route, {method = 'GET', token, data, status = 200} = {}
     assert.equal((await api(control.base, prefix + root, {token: operator})).status, 'completed');
     assert.deepEqual(await api(control.base, prefix + root + '/report', {token: operator}), completed);
     assert(!readFileSync(path.join(dir, 'runs', 'runner-state.json'), 'utf8').includes(external.runnerToken));
-    console.log('Runner Web service, Console API, shared protocol, leased World requests, cancellation, replay and restart passed');
+
+    const unconfigured = await processAt(binary, [], {
+      ...controlEnv, BOX_RUNNER_OPERATOR_TOKEN: '', BOX_RUNNER_DATA_DIR: path.join(dir, 'unconfigured-runs'),
+      BOX_RUNNER_BOOTSTRAP_FILE: path.join(dir, 'unconfigured.token'),
+    }, /address=(127\.0\.0\.1:\d+)/);
+    try {
+      const runId = randomUUID();
+      for (const [route, method, data] of [
+        ['/runners', 'GET'], ['/runners', 'POST', {label: 'forbidden'}],
+        ['/runners/external', 'DELETE'], ['/runs', 'GET'], ['/runs', 'POST', draft],
+        [`/runs/${runId}`, 'GET'], [`/runs/${runId}/cancel`, 'POST'],
+        [`/runs/${runId}/observer`, 'POST'], [`/runs/${runId}/report`, 'GET'],
+      ]) {
+        const result = await api(unconfigured.base, prefix + route, {method, data, status: 403});
+        assert.equal(result.error, 'runner_operator_token_required', method + ' ' + route);
+      }
+    } finally {
+      await unconfigured.stop();
+    }
+    console.log('Runner Web service, Console API, shared protocol, leased World requests, cancellation, replay, restart and empty-operator fail-closed checks passed');
   } finally {
     await externalRunner?.stop();
     await runner?.stop();

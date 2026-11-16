@@ -4,6 +4,7 @@ const http = require('node:http');
 const https = require('node:https');
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const {createControlProxy} = require('@42tr/3dbox4agent-control/http-forward');
 const {requestOriginError} = require('@42tr/3dbox4agent-control/request-origin');
 const {loadDeploymentInfo, renderDeploymentPage} = require('./deployment-info');
@@ -53,6 +54,7 @@ function createConsoleServer({
   }
   const proxy = createControlProxy(controlUrl, {preserveOrigin: true});
   const html = fs.readFileSync(htmlPath);
+  const htmlGzip = zlib.gzipSync(html, {level: 6});
   const deploymentInfo = loadDeploymentInfo(deploymentInfoPath);
   const deploymentJson = Buffer.from(JSON.stringify(deploymentInfo), 'utf8');
   const deploymentHtml = renderDeploymentPage(deploymentInfo);
@@ -72,8 +74,10 @@ function createConsoleServer({
       return res.end(req.method === 'HEAD' ? undefined : deploymentHtml);
     }
     if (pathname === '/' && ['GET', 'HEAD'].includes(req.method)) {
-      res.writeHead(200, {'content-type': 'text/html; charset=utf-8', 'content-length': html.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff'});
-      return res.end(req.method === 'HEAD' ? undefined : html);
+      const gzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+      const body = gzip ? htmlGzip : html;
+      res.writeHead(200, {'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'vary': 'accept-encoding', ...(gzip ? {'content-encoding': 'gzip'} : {})});
+      return res.end(req.method === 'HEAD' ? undefined : body);
     }
     const target = pathname.startsWith('/control/') ? req.url.slice('/control'.length)
       : pathname === '/health' ? '/world' + req.url : req.url;

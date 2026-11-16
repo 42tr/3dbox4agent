@@ -17,5 +17,9 @@ assert.throws(() => parseModelOutput({actions: new Array(5).fill({requestId: 'x'
   assert.deepEqual(await policy.decide({tick: 1, self: {id: 'agent-1'}}), [{requestId: 'move-1', type: 'move', target: {x: 4, y: 5}, targetTick: 2, expiresTick: 8}]);
   const timeout = createLlmPolicy({timeoutMs: 5, complete: () => new Promise(()=>{})});
   await assert.rejects(timeout.decide({tick: 1, self: {id: 'agent-1'}}), /llm_timeout/);
-  console.log('LLM policy: strict JSON actions, bounded output, action limit and timeout passed');
+  let called = false;
+  const bounded = createLlmPolicy({maxInputBytes: 64, complete: async () => { called = true; return {actions: []}; }});
+  await assert.rejects(bounded.decide({tick: 1, self: {id: 'agent-1', text: 'x'.repeat(128)}}), /llm_input_too_large/);
+  assert.equal(called, false);
+  console.log('LLM policy: strict JSON actions, bounded input/output, action limit and timeout passed');
 })().catch(error=>{console.error(error);process.exitCode=1});

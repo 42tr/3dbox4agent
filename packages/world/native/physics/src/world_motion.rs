@@ -311,7 +311,7 @@ impl WorldMotion {
                 (goal,task.behavior==B::Repair||task.behavior==B::Deliver&&(task.phase.flatten()==Some(P::ToSite)||ground_pickup)||occupied(goal),3.7)},
             S::Manual=>{let(moving,resume,target)=actions.collision_intent(&current.id)?.ok_or_else(invalid)?;
                 let waypoint=match(resume.as_deref(),task){(Some(id),Some(task))if id==task.id&&(!moving||mode=="primitive")=>Some(resources.work_owner(task,current,execution,now as u32)?.1),(None,None)=>None,_=>return Err(invalid())};
-                if moving{let waypoint=waypoint.ok_or_else(invalid)?;let goal=target.ok_or_else(invalid)?;(goal,goal==waypoint,3.7)}else{if current.battery<=0.0{return no()}(environment.activation_station()?,true,2.7)}},
+                if moving{let goal=target.ok_or_else(invalid)?;let reach=waypoint.is_some_and(|waypoint|goal==waypoint);(goal,reach,3.7)}else{if current.battery<=0.0{return no()}(environment.activation_station()?,true,2.7)}},
             _=>return Err(invalid()),
         };
         let Some(route)=environment.collision_route(&current.id,[current.x,current.y],goal,reach,radius,&actors,rapier)?else{return no()};

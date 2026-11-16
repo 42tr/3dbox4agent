@@ -3,7 +3,7 @@ use std::{env, sync::Arc, time::Duration};
 use anyhow::Context;
 use axum::{
     body::{Body, HttpBody},
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{header, request::Parts, HeaderMap, Method, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -278,7 +278,10 @@ async fn proxy(State(state): State<AppState>, inbound: Request<Body>) -> Respons
         parts.uri.path_and_query().map_or("/", |path| path.as_str())
     };
     let target = format!("{}{}", state.world_url, route);
-    let mut request = state.client.request(parts.method, target);
+    let mut request = state
+        .client
+        .request(parts.method, target)
+        .timeout(Duration::from_secs(35));
     for name in [
         header::AUTHORIZATION,
         header::CONTENT_TYPE,
@@ -378,6 +381,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(mcp_router)
         .merge(runner::router::<AppState>(state.client.clone(), state.world_url.clone())?)
         .fallback(proxy)
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024 + 64 * 1024))
         .with_state(state);
 
     let listener = TcpListener::bind(&bind)

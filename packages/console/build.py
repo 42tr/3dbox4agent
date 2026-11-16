@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import re
 import subprocess
 from tempfile import NamedTemporaryFile
 
@@ -30,7 +31,9 @@ planner_report = (ROOT / 'packages/world/src/reports/planner-report.js').read_te
 policy_report = (ROOT / 'packages/world/src/reports/policy-report.js').read_text()
 experiment_assets = (ROOT / 'packages/console/src/experiment-assets.js').read_text()
 policy_validation_path = (ROOT / 'examples/experiments/policy-acceptance-public-codex.json')
-policy_validation = json.dumps(json.loads(policy_validation_path.read_text())['example'] if policy_validation_path.exists() else None, ensure_ascii=True).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
+if not policy_validation_path.is_file():
+    raise FileNotFoundError(f'Required public experiment manifest is missing: {policy_validation_path}')
+policy_validation = json.dumps(json.loads(policy_validation_path.read_text())['example'], ensure_ascii=True).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
 policy_trace = (ROOT / 'packages/world/src/reports/policy-trace.js').read_text()
 policy_rerun_report = (ROOT / 'packages/world/src/reports/policy-rerun-report.js').read_text()
 task_graph = (ROOT / 'packages/world/src/task-graph.js').read_text()
@@ -127,7 +130,10 @@ replacements = {
 }
 
 for marker, content in replacements.items():
-    html = html.replace(marker, content)
+    if html.count(marker) != 1:
+        raise ValueError(f'Build marker must occur exactly once: {marker}')
+    safe_content = re.sub(r'</script', r'<\\/script', content, flags=re.IGNORECASE)
+    html = html.replace(marker, safe_content, 1)
 
 dist = CONSOLE / 'dist'
 dist.mkdir(exist_ok=True)

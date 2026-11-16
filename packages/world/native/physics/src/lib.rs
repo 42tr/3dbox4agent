@@ -12,6 +12,7 @@ mod materials;
 mod relay;
 mod construction;
 mod rescue;
+mod camera;
 mod world_ledger;
 mod world_motion;
 mod world_tasks;

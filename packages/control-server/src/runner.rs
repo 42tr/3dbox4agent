@@ -29,7 +29,7 @@ use crate::{bearer_token, http_error};
 
 const VERSION: u8 = 1;
 const LEASE_SECONDS: u64 = 15;
-const MAX_ARCHIVE_FAILURES: u8 = 5;
+const MAX_ARCHIVE_FAILURES: u8 = 12;
 const RUNNER_ONLINE_SECONDS: u64 = 12;
 const RECENT_RUNS: usize = 128;
 const MAX_RUNNERS: usize = 32;
@@ -246,6 +246,8 @@ struct Run {
     #[serde(default)]
     archive_failures: u8,
     #[serde(default)]
+    archive_retry_after: u64,
+    #[serde(default)]
     replay_error: Option<String>,
     credentials: BTreeMap<String, ScopedCredential>,
 }
@@ -284,6 +286,7 @@ struct Database {
 struct Storage {
     path: PathBuf,
     db: Database,
+    last_write: u64,
 }
 
 impl Storage {
@@ -294,7 +297,15 @@ impl Storage {
             Err(error) if error.kind() == ErrorKind::NotFound => Database::default(),
             Err(error) => return Err(error.into()),
         };
-        Ok(Self { path, db })
+        Ok(Self {
+            path,
+            db,
+            last_write: 0,
+        })
+    }
+
+    fn update_memory<T>(&mut self, edit: impl FnOnce(&mut Database) -> Result<T>) -> Result<T> {
+        edit(&mut self.db)
     }
 
     fn update<T>(&mut self, edit: impl FnOnce(&mut Database) -> Result<T>) -> Result<T> {
@@ -303,6 +314,7 @@ impl Storage {
         let bytes = serde_json::to_vec(&next).expect("serializable runner state");
         atomic_write(&self.path.join("runner-state.json"), &bytes).map_err(storage_error)?;
         self.db = next;
+        self.last_write = now();
         Ok(result)
     }
 
@@ -440,9 +452,13 @@ pub(crate) fn router<S: Clone + Send + Sync + 'static>(
 
 impl Broker {
     fn operator(&self, headers: &HeaderMap) -> Result<()> {
-        if self.operator_hash.as_ref().is_some_and(|hash| {
-            !bearer_token(headers).is_some_and(|token| matches_digest(token, hash))
-        }) {
+        let Some(expected) = self.operator_hash.as_ref() else {
+            return Err(ApiError(
+                StatusCode::FORBIDDEN,
+                "runner_operator_token_required",
+            ));
+        };
+        if !bearer_token(headers).is_some_and(|token| matches_digest(token, expected)) {
             return Err(unauthorized());
         }
         Ok(())
@@ -622,8 +638,9 @@ async fn register(
         return Err(conflict("runner_protocol_version"));
     }
     input.capabilities.validate()?;
-    broker.store.lock().await.update(|db| {
-        runner_auth(db, &id, &headers)?;
+    let mut store = broker.store.lock().await;
+    runner_auth(&store.db, &id, &headers)?;
+    store.update(|db| {
         let runner = db.runners.get_mut(&id).unwrap();
         runner.last_seen = now();
         runner.capabilities = Some(input.capabilities);
@@ -695,6 +712,7 @@ async fn create_run(
             report_id: None,
             archived: false,
             archive_failures: 0,
+            archive_retry_after: 0,
             replay_error: None,
             credentials: BTreeMap::new(),
         };
@@ -855,12 +873,17 @@ async fn heartbeat(
     let mut store = broker.store.lock().await;
     leased(&store.db, id, &headers)?;
     let current = now();
-    store.update(|db| {
+    let edit = |db: &mut Database| {
         let run = db.runs.get_mut(&id).unwrap();
         run.lease_until = current + LEASE_SECONDS;
         db.runners.get_mut(&run.runner_id).unwrap().last_seen = current;
         Ok(Json(json!({"leaseSeconds": LEASE_SECONDS})))
-    })
+    };
+    if current.saturating_sub(store.last_write) >= 15 {
+        store.update(edit)
+    } else {
+        store.update_memory(edit)
+    }
 }
 
 #[derive(Deserialize)]
@@ -1271,7 +1294,7 @@ impl Broker {
                     .db
                     .runs
                     .values()
-                    .filter(|run| run.status == Status::Stopping)
+                    .filter(|run| run.status == Status::Stopping && current >= run.archive_retry_after)
                     .map(|run| run.id)
                     .collect::<Vec<_>>()
             };
@@ -1298,7 +1321,9 @@ impl Broker {
                     let run = db.runs.get_mut(&id).unwrap();
                     if !run.archived && run.session.is_some() {
                         run.archive_failures = run.archive_failures.saturating_add(1);
-                        if run.archive_failures >= MAX_ARCHIVE_FAILURES {
+                        let shift = run.archive_failures.saturating_sub(1).min(6);
+                        run.archive_retry_after = now() + (1u64 << shift).min(60);
+                        if run.archive_failures >= 5 {
                             run.replay_error = Some("runner_archive_failed".into());
                         }
                     }
@@ -1320,13 +1345,6 @@ impl Broker {
         if let Some(session) = &run.session {
             let root = format!("/sessions/{}", session.id);
             let token = Some(session.admin_token.as_str());
-            if !run.archived
-                && run.archive_failures >= MAX_ARCHIVE_FAILURES
-                && outcome == Status::Completed
-            {
-                outcome = Status::Failed;
-                reason = Some("runner_archive_failed".into());
-            }
             if !run.archived && run.archive_failures < MAX_ARCHIVE_FAILURES {
                 let state = self.world(Method::GET, &root, token, None).await?;
                 if state.status().is_success() {
@@ -1372,7 +1390,7 @@ impl Broker {
                             report_id
                         }
                     };
-                    let response = self
+                    let mut response = self
                         .world(
                             Method::GET,
                             &format!("{root}/catalog/{report_id}"),
@@ -1383,8 +1401,14 @@ impl Broker {
                     if !response.status().is_success() {
                         return Err(invalid_world_response());
                     }
-                    let bytes = response.bytes().await.map_err(world_response_error)?;
-                    if bytes.len() > 50 * 1024 * 1024 || hex_digest(&bytes) != report_id {
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = response.chunk().await.map_err(world_response_error)? {
+                        if bytes.len() + chunk.len() > 50 * 1024 * 1024 {
+                            return Err(invalid_world_response());
+                        }
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    if hex_digest(&bytes) != report_id {
                         return Err(invalid_world_response());
                     }
                     tokio::task::spawn_blocking(move || atomic_write(&path, &bytes))
@@ -1404,10 +1428,6 @@ impl Broker {
                     return Err(invalid_world_response());
                 } else {
                     replay_error = Some("runner_world_unavailable".into());
-                    if outcome == Status::Completed {
-                        outcome = Status::Failed;
-                        reason = replay_error.clone();
-                    }
                 }
             }
             let response = self.world(Method::DELETE, &root, token, None).await?;

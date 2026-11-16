@@ -6,7 +6,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from ipaddress import ip_address
 from statistics import mean, stdev
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 from box_agent import AgentClient
@@ -219,6 +221,13 @@ def main():
         except (OSError, ValueError, UnicodeDecodeError) as error:
             parser.error(f'invalid scene file: {error}')
     AgentClient('_', '_', '_', args.url)
+    hostname = urlsplit(args.url).hostname
+    try:
+        loopback = ip_address(hostname).is_loopback
+    except ValueError:
+        loopback = hostname == 'localhost'
+    if not loopback:
+        raise ValueError('policy comparisons require a loopback world URL')
     server_runtime = runtime(args.url)
     policies = {'baseline': args.baseline.resolve(), 'candidate': args.candidate.resolve()}
     hashes = {name: digest(path) for name, path in policies.items()}

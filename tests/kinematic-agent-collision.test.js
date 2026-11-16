@@ -33,4 +33,10 @@ assert(E.assign(touching,'survey','worker-1').ok);
 E.step(touching);
 assert(escaping.x<28.4,'a touching body can move away on its first step');
 assert(!touching.events.some(e=>e.kind==='collision_contact'));
-console.log('Kinematic agent collision: same-layer bodies stop at the 1.6-unit proxy diameter, replan around parked devices, and can move away from contact');
+
+const patrol=E.create(42,'nearest',E.scene,{physicsMode:'kinematic',dispatchMode:'external'});
+assert(E.submitAction(patrol,'drone-1',{requestId:'patrol-move',type:'move',target:{x:35,y:50},targetTick:1,expiresTick:40}).ok);
+for(let i=0;i<40&&['pending','accepted'].includes(patrol.actions[0].status);i++)E.step(patrol);
+assert.equal(patrol.actions[0].status,'completed','standalone moves must replan around crowded targets');
+assert(patrol.events.some(e=>e.kind==='collision_replan'&&e.agentId==='drone-1'));
+console.log('Kinematic agent collision: same-layer bodies stop at the 1.6-unit proxy diameter, replan around parked devices, standalone moves replan too, and touching bodies can move away from contact');

@@ -12,6 +12,8 @@ try{
  fs.copyFileSync('scripts/build-image.sh',script);
  fs.copyFileSync('deploy/compose.runtime.yaml',path.join(root,'deploy/compose.runtime.yaml'));
  fs.copyFileSync('deploy/README.md',path.join(root,'deploy/README.md'));
+ fs.copyFileSync('deploy/write-deployment-info.py',path.join(root,'deploy/write-deployment-info.py'));
+ fs.writeFileSync(path.join(root,'deployment-info.json'),'{"commits":[]}\n');
  fs.writeFileSync(path.join(root,'Dockerfile'),'FROM scratch\n');
  execFileSync('git',['init','-q',root]);
  execFileSync('git',['-C',root,'-c','user.name=Build Test','-c','user.email=build-test@example.invalid','-c','commit.gpgsign=false','-c','core.hooksPath=/dev/null','commit','--allow-empty','-qm','fixture']);
@@ -76,7 +78,7 @@ exec "$BUILD_TEST_REAL_GZIP" "$@"
   }
   assert.equal(zlib.gunzipSync(fs.readFileSync(path.join(bundle,'image.tar.gz'))).toString(),'fake Docker image stream\n');
   const settings=Object.fromEntries(fs.readFileSync(path.join(bundle,'.env'),'utf8').trim().split('\n').map(line=>line.split('=')));
-  assert.equal(settings.BOX_IMAGE,saved[4]);assert.equal(settings.BOX_PLATFORM,saved[2]);assert.equal(settings.BOX_HTTP_BIND,'0.0.0.0');
+  assert.equal(settings.BOX_IMAGE,saved[4]);assert.equal(settings.BOX_PLATFORM,saved[2]);assert.equal(settings.BOX_HTTP_BIND,'127.0.0.1');
   assert.match(settings.BOX_RUNNER_OPERATOR_TOKEN, /^[0-9a-f]{64}$/);
   const compose=YAML.parse(fs.readFileSync(path.join(bundle,'compose.yaml'),'utf8'));
   const services=['world','control','console','runner'];

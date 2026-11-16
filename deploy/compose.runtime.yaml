@@ -45,18 +45,22 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 1g
+    cpus: "1.0"
   console:
     image: ${BOX_CONSOLE_IMAGE:?Set BOX_CONSOLE_IMAGE to the loaded Console image}
     platform: ${BOX_PLATFORM:-linux/amd64}
     pull_policy: never
     ports:
-      - "${BOX_HTTP_BIND:-0.0.0.0}:${BOX_HTTP_PORT:-8787}:8787"
+      - "${BOX_HTTP_BIND:-127.0.0.1}:${BOX_HTTP_PORT:-8787}:8787"
     depends_on:
       control:
         condition: service_healthy
     environment:
       BOX_CONTROL_URL: http://control:8789
       BOX_WORLD_URL: http://world:8787
+      BOX_ALLOWED_HOSTS: ${BOX_ALLOWED_HOSTS:-}
     init: true
     restart: unless-stopped
     read_only: true
