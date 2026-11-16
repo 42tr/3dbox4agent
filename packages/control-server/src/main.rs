@@ -16,11 +16,8 @@ use rmcp::{
     handler::server::wrapper::Parameters,
     model::{CallToolResult, ContentBlock},
     schemars, tool,
-    transport::{
-        streamable_http_server::{
-            session::local::LocalSessionManager, tower::StreamableHttpService,
-        },
-        StreamableHttpServerConfig,
+    transport::streamable_http_server::{
+        session::local::LocalSessionManager, tower::StreamableHttpService,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -374,7 +371,7 @@ async fn main() -> anyhow::Result<()> {
     let mcp_service = StreamableHttpService::new(
         move || Ok(tools.clone()),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default(),
+        task_mcp::http_server_config(),
     );
     let mcp_router =
         Router::new()

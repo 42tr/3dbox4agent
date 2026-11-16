@@ -13,6 +13,21 @@ use rmcp::{
 };
 use serde_json::{json, Value};
 
+pub fn http_server_config() -> StreamableHttpServerConfig {
+    let mut config = StreamableHttpServerConfig::default();
+    // RMCP validates Host independently of the HTTP authorization middleware.
+    // Preserve loopback defaults and add the explicitly configured public hosts.
+    config.allowed_hosts.extend(
+        std::env::var("BOX_ALLOWED_HOSTS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|host| !host.is_empty())
+            .map(str::to_ascii_lowercase),
+    );
+    config
+}
+
 #[derive(Clone)]
 pub enum TaskTools {
     Local(RunService),
@@ -100,7 +115,7 @@ pub fn router<S: Clone + Send + Sync + 'static>(svc: RunService) -> Router<S> {
     let service = StreamableHttpService::new(
         move || Ok(tools.clone()),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default(),
+        http_server_config(),
     );
     Router::new()
         .nest_service("/mcp/control", service)

@@ -13,6 +13,7 @@ const {unwrapArchive} = require('../../packages/world/src/replay');
 const root = path.resolve(__dirname, '../..');
 const target = process.env.CARGO_TARGET_DIR || path.join(root, 'packages/control-server/target');
 const operator = 'task-run-test-operator';
+process.env.BOX_ALLOWED_HOSTS = 'threebox.example';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function start(world, dir) {
@@ -33,16 +34,29 @@ async function http(base, route, token, body, expected = 200, method = body === 
   const res = await fetch(base + route, {method, headers: {'content-type': 'application/json', ...(token ? {authorization: 'Bearer ' + token} : {})}, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20000)});
   const value = await res.json(); assert.equal(res.status, expected, `${method} ${route}: ${JSON.stringify(value)}`); return value;
 }
-function mcp(base, token, modern = false) {
+async function requestWithHost(url, options, host) {
+  if (!host) return fetch(url, options);
+  return new Promise((resolve, reject) => {
+    const request = httpServer.request(url, {method: options.method, headers: {...options.headers, host, origin: 'https://' + host}}, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('error', reject);
+      response.on('end', () => resolve(new Response(Buffer.concat(chunks), {status: response.statusCode, headers: response.headers})));
+    });
+    request.setTimeout(20000, () => request.destroy(Error('Public-host MCP request timed out')));
+    request.on('error', reject); request.end(options.body);
+  });
+}
+function mcp(base, token, modern = false, host) {
   let session, sequence = 0;
   async function rpc(method, params = {}, notification = false) {
     const id = ++sequence;
     if (modern) params._meta = {'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientInfo': {name: 'task-test', version: '1'}, 'io.modelcontextprotocol/clientCapabilities': {}};
-    const response = await fetch(base + '/mcp/control', {method: 'POST', headers: {
+    const response = await requestWithHost(base + '/mcp/control', {method: 'POST', headers: {
       authorization: 'Bearer ' + token, 'content-type': 'application/json', accept: 'application/json, text/event-stream',
       ...(session ? {'mcp-session-id': session, 'mcp-protocol-version': '2025-11-25'} : {}),
       ...(modern ? {'mcp-protocol-version': '2026-07-28', 'mcp-method': method, ...(params.name ? {'mcp-name': params.name} : {})} : {})
-    }, body: JSON.stringify({jsonrpc: '2.0', ...(notification ? {} : {id}), method, params}), signal: AbortSignal.timeout(20000)});
+    }, body: JSON.stringify({jsonrpc: '2.0', ...(notification ? {} : {id}), method, params}), signal: AbortSignal.timeout(20000)}, host);
     session = response.headers.get('mcp-session-id') || session;
     const body = await response.text(); assert.equal(response.status, notification ? 202 : 200, body);
     if (notification) return;
@@ -73,7 +87,7 @@ async function stdio(base, token) {
       rejectNextCreation = false; req.resume();
       res.writeHead(429, {'content-type':'application/json'}); res.end(JSON.stringify({error:'session_limit'})); return;
     }
-    const upstream = httpServer.request(worldUrl + req.url, {method: req.method, headers: {...req.headers, host: new URL(worldUrl).host}}, response => {
+    const upstream = httpServer.request(worldUrl + req.url, {method: req.method, headers: {...req.headers}}, response => {
       if (dropNextStep && req.url.endsWith('/step')) {dropNextStep = false; response.resume(); response.on('end', () => res.destroy());}
       else if (dropNextCreation && req.method === 'POST' && req.url === '/sessions') {dropNextCreation = false; response.resume(); response.on('end', () => res.destroy());}
       else {res.writeHead(response.statusCode, response.headers); response.pipe(res);}
@@ -109,10 +123,20 @@ async function stdio(base, token) {
     const enrollment = await http(base, '/runs/v1/integrations', operator, {label: 'Integration test'});
     await http(base, '/runs/v1/integrations', operator, {label: 'Invalid limit', max_concurrency: '2'}, 409);
     const token = enrollment.token;
+    const publicHealth = await requestWithHost(base + '/world/health', {method: 'GET', headers: {}}, 'threebox.example');
+    assert.equal(publicHealth.status, 200, await publicHealth.clone().text());
+    assert.equal((await publicHealth.json()).ok, true);
     const legacy = mcp(base, token); await legacy.initialize();
     assert((await legacy.rpc('tools/list')).tools.some(t => t.name === 'box_advance'));
     const modern = mcp(base, token, true); await modern.initialize();
     assert((await modern.call('get_capabilities', {})).scenes[0].tasks.length === 5);
+    for (const host of ['threebox.example', 'threebox.example:8443']) {
+      for (const protocol2026 of [false, true]) {
+        const publicClient = mcp(base, token, protocol2026, host);
+        await publicClient.initialize();
+        assert((await publicClient.call('get_capabilities', {})).scenes[0].tasks.length === 5);
+      }
+    }
     bridge = await stdio(base, token);
     assert((await bridge.rpc('tools/list', {})).tools.some(t => t.name === 'box_create_run'));
     const caps = await bridge.rpc('tools/call', {name: 'box_get_capabilities', arguments: {}}); assert.equal(caps.isError, false);

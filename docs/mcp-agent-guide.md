@@ -16,6 +16,8 @@ cargo run --locked --manifest-path packages/control-server/Cargo.toml
 
 Compose 的 Console 默认地址为 `http://127.0.0.1:8787`。修改外部地址时同步设置 `BOX_CONSOLE_URL`，保证工具返回的运行链接可访问；使用域名时同步配置 `BOX_ALLOWED_HOSTS`。远程部署须经过 HTTPS 和认证入口，不公开 World 或无认证的会话创建路由。
 
+Compose 会将公网白名单传给 Console、Control 和 World，并保留服务间访问需要的 `control`、`world` 主机名。MCP SDK 的 Host 校验也读取此白名单。修改部署环境后需重新创建相关容器，单纯重启不会更新环境变量。
+
 在 Console 左侧打开 **Agent 任务**，输入管理令牌并连接。在 **Agent 接入配置** 中为 Agent 签发接入凭据。管理令牌用于 Console 管理；接入令牌用于外部 Agent，绑定该接入身份创建的运行，不应混用。当前接入凭据有效期 30 天，默认最多两个并发运行、单次运行 30 分钟；撤销接入同时停止该身份的活动运行。
 
 接入令牌只在签发后显示一次。不要把令牌写进用户目标、计划摘要、URL 或版本库。

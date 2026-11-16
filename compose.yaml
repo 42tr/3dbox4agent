@@ -9,6 +9,7 @@ services:
     environment:
       BOX_REPLAY_JOURNAL: ${BOX_REPLAY_JOURNAL:-1}
       BOX_WORLD_WORKERS: ${BOX_WORLD_WORKERS:-4}
+      BOX_ALLOWED_HOSTS: world,${BOX_ALLOWED_HOSTS:-}
     volumes:
       - world-data:/app/.3dbox
     read_only: true
@@ -34,7 +35,7 @@ services:
     environment:
       WORLD_URL: http://world:8787
       BOX_CONSOLE_URL: ${BOX_CONSOLE_URL:-http://127.0.0.1:8787}
-      BOX_ALLOWED_HOSTS: ${BOX_ALLOWED_HOSTS:-}
+      BOX_ALLOWED_HOSTS: control,${BOX_ALLOWED_HOSTS:-}
       BOX_RUNNER_DATA_DIR: /var/lib/3dbox-control
       BOX_RUNNER_BOOTSTRAP_FILE: /var/lib/3dbox-runner-auth/builtin.token
       BOX_RUNNER_OPERATOR_TOKEN: ${BOX_RUNNER_OPERATOR_TOKEN:-}
