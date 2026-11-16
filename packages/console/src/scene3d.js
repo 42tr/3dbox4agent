@@ -34,7 +34,7 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   const camera = new THREE.PerspectiveCamera(42, 1, 2, 500);
   const viewCamera=camera.clone();
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping=true;controls.dampingFactor=.08;controls.minDistance=18;controls.maxDistance=210;
+  controls.enableDamping=true;controls.dampingFactor=.08;controls.minDistance=18;controls.maxDistance=210;controls.zoomToCursor=true;
   controls.maxPolarAngle=Math.PI*.49;controls.target.set(0,0,0);
   let lunarCamera=false,industrial=false,modern=false,center=50,cameraFocus=null,overviewCamera=null;
   let followRadius=Infinity,lastRequestedRadius=Infinity;
