@@ -28,6 +28,7 @@ use serde_json::{json, Value};
 use tokio::net::TcpListener;
 
 mod runner;
+use threebox_control_server::{task_mcp, task_runs};
 
 #[derive(Clone)]
 struct AppState {
@@ -326,7 +327,10 @@ fn env_or(name: &str, fallback: &str) -> String {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(env_or("RUST_LOG", "threebox_control_server=info"))
-        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()) && env::var_os("NO_COLOR").is_none())
+        .with_ansi(
+            std::io::IsTerminal::is_terminal(&std::io::stdout())
+                && env::var_os("NO_COLOR").is_none(),
+        )
         .init();
 
     let world_origin = reqwest::Url::parse(&env_or("WORLD_URL", "http://127.0.0.1:8787"))
@@ -358,6 +362,9 @@ async fn main() -> anyhow::Result<()> {
         world_url: Arc::<str>::from(world_url.clone()),
     };
     let has_default_token = default_token.is_some();
+    let run_service = task_runs::RunService::open(client.clone(), state.world_url.clone())?;
+    run_service.recover().await?;
+    run_service.start_sweeper();
     let tools = ControlTools {
         client,
         world_url: Arc::<str>::from(world_url.clone()),
@@ -379,7 +386,12 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .merge(mcp_router)
-        .merge(runner::router::<AppState>(state.client.clone(), state.world_url.clone())?)
+        .merge(task_mcp::router(run_service.clone()))
+        .merge(task_runs::router(run_service))
+        .merge(runner::router::<AppState>(
+            state.client.clone(),
+            state.world_url.clone(),
+        )?)
         .fallback(proxy)
         .layer(DefaultBodyLimit::max(50 * 1024 * 1024 + 64 * 1024))
         .with_state(state);

@@ -1,5 +1,7 @@
 # 架构与运行边界
 
+外部 Agent 的任务级 MCP 已提供首期实现，配置与当前范围见[接入指南](mcp-agent-guide.md)，总体演进见[实现方案](mcp-agent-execution-design.md)。
+
 | 目录 | 职责 |
 | --- | --- |
 | [packages/world](../packages/world) | 仿真内核、会话、物理、HTTP/WebSocket、日志、实验目录与回放。Supervisor 为每个会话启动独立 Worker。 |
@@ -15,6 +17,7 @@
 
 - 在线 Console 将同源 `/control/*` 发给 Control，将 `/stream` 的 WebSocket 升级转发给 World。在 Docker 中，宿主机的 8787 由 Console 提供，World 使用内部服务地址。
 - 内置和外部 Runner 都通过 Control 领取运行。Control 创建独立会话并保管管理员凭据，Runner 按租约推进仿真，设备和协调器用各自的凭据提交操作。World 校验并执行动作。停止或失联时，Control 先冻结写入，再归档保留历史并关闭会话。
+- 外部 Agent 通过 `/mcp/control` 或 stdio 创建独立任务运行，按观察、分配、动作与有界推进循环完成目标。Control 保存幂等命令和验收结果；Console 使用 World WebSocket 显示三维状态，使用 `/runs/v1` 的 SSE 显示执行事件。接入令牌与 World 内部凭据分离。
 - 管理员负责配置、推进和签发凭据。观察者读取授权的全局快照与实时流，设备和协调器使用各自范围的观察和操作。导入回放时，Console 使用本地文件中的快照。
 - JS 策略实现 `policy.decide(observation, context)`。LLM 适配器通过注入的 `complete()` 获取 `{actions: [...]}`，再检查输出大小、超时和动作数量。具体动作仍由 World 校验。
 - 仿真摄像头由 World 根据场景中的设备 `camera` 配置生成确定性的 SVG 帧。帧作为会话的派生旁路数据随状态、历史和实时流传给 Console，每个摄像头默认每 10 个仿真步（2 FPS）更新一次；它们不进入权威世界摘要或事件日志哈希。`GET /sessions/:id/agents/:agentId/camera` 支持带凭据读取当前或保留版本，并可用 `yaw`、`pitch` 调整视角。导出会话历史时附带已生成帧，读取持久日志时按快照重新生成，不依赖浏览器 WebGL。
@@ -35,6 +38,6 @@ BOX_PHYSICS_BACKEND=rust BOX_TASK_BACKEND=rust BOX_COMM_BACKEND=rust BOX_NAV_BAC
 
 ## 数据与回放
 
-活动会话和凭据存在内存中，服务重启会结束这些会话。Compose 将事件日志和实验目录 SQLite 存在 `world-data` 卷中，Runner 运行记录和回放存放在 `control-data` 卷。源码 Compose 可用 `BOX_REPLAY_JOURNAL=0` 只写事件。本地运行 World 时可用 `BOX_EVENT_JOURNAL_DIR` 启用日志，再设置 `BOX_REPLAY_JOURNAL=1` 保存可分支的快照。
+World 活动会话和凭据存在内存中，World 重启会结束这些会话。Control 使用 `control.sqlite3` 持久化 Runner 状态、外部 Agent 运行、凭据哈希、命令回执及事件；Control 重启可重新连接仍存活的 World 会话。Compose 将事件日志和实验目录 SQLite 存在 `world-data` 卷中，Runner 运行记录和回放存放在 `control-data` 卷。源码 Compose 可用 `BOX_REPLAY_JOURNAL=0` 只写事件。本地运行 World 时可用 `BOX_EVENT_JOURNAL_DIR` 启用日志，再设置 `BOX_REPLAY_JOURNAL=1` 保存可分支的快照。
 
 导出报告保留服务仍持有的历史，可能从中途开始。新版可以读取受支持格式的旧回放。从持久快照创建可继续推进的分支时，World 会核对运行时指纹，包括源码、依赖和后端。升级后需要继续旧实验时，保留原镜像或对应的运行时版本及日志访问凭据。

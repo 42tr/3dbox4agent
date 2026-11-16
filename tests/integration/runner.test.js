@@ -213,7 +213,7 @@ async function api(base, route, {method = 'GET', token, data, status = 200} = {}
     control = await startControl();
     assert.equal((await api(control.base, prefix + root, {token: operator})).status, 'completed');
     assert.deepEqual(await api(control.base, prefix + root + '/report', {token: operator}), completed);
-    assert(!readFileSync(path.join(dir, 'runs', 'runner-state.json'), 'utf8').includes(external.runnerToken));
+    assert(!readFileSync(path.join(dir, 'runs', 'control.sqlite3'), 'utf8').includes(external.runnerToken));
 
     const unconfigured = await processAt(binary, [], {
       ...controlEnv, BOX_RUNNER_OPERATOR_TOKEN: '', BOX_RUNNER_DATA_DIR: path.join(dir, 'unconfigured-runs'),

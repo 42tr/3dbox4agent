@@ -1,0 +1,785 @@
+[
+  {
+    "name": "box_get_capabilities",
+    "description": "Discover supported scenes, task dependencies, action schemas, limits and the recommended execution loop.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "scene_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_create_run",
+    "description": "Create an isolated task run. Returns run_id and console_url. Use a stable request_id for retries; objective must be supported.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "scene_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "objective": {
+          "type": "object",
+          "properties": {
+            "instruction": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "all_tasks_done",
+                "scene_completed"
+              ]
+            },
+            "task_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[A-Za-z0-9_-]{1,64}$"
+              },
+              "minItems": 1,
+              "maxItems": 64
+            }
+          },
+          "required": [
+            "instruction",
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        "config": {
+          "type": "object",
+          "properties": {
+            "seed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "physics_mode": {
+              "type": "string",
+              "enum": [
+                "kinematic",
+                "rapier"
+              ]
+            },
+            "execution_mode": {
+              "type": "string",
+              "enum": [
+                "agent"
+              ]
+            },
+            "dispatch_mode": {
+              "type": "string",
+              "enum": [
+                "external"
+              ]
+            },
+            "max_ticks": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            },
+            "max_wall_seconds": {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 7200
+            },
+            "idle_timeout_seconds": {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 1800
+            },
+            "speed": {
+              "type": "integer",
+              "enum": [
+                1,
+                2,
+                5
+              ]
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "request_id",
+        "scene_id",
+        "objective"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_get_run",
+    "description": "Read run status and authoritative objective result without advancing simulation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_observe",
+    "description": "Read scoped coordinator or device observation. Coordinator observations contain ready tasks and eligible devices.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "coordinator",
+            "agent"
+          ]
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [
+        "run_id",
+        "view"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_assign_task",
+    "description": "Assign a ready task using coordinator authority. Then submit execute_task for the selected device before advancing.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [
+        "run_id",
+        "control_epoch",
+        "request_id",
+        "expected_revision",
+        "task_id",
+        "agent_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_submit_action",
+    "description": "Submit a device action. An accepted submission is not completion. Use action.requestId for retry and targetTick=current tick+1.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "targetTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "expiresTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10040
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "execute_task"
+                  ]
+                },
+                "taskId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                }
+              },
+              "required": [
+                "requestId",
+                "targetTick",
+                "expiresTick",
+                "type",
+                "taskId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "targetTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "expiresTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10040
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "move"
+                  ]
+                },
+                "target": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 256
+                    },
+                    "y": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 256
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "requestId",
+                "targetTick",
+                "expiresTick",
+                "type",
+                "target"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "targetTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "expiresTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10040
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "scan"
+                  ]
+                }
+              },
+              "required": [
+                "requestId",
+                "targetTick",
+                "expiresTick",
+                "type"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "targetTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "expiresTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10040
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "charge"
+                  ]
+                }
+              },
+              "required": [
+                "requestId",
+                "targetTick",
+                "expiresTick",
+                "type"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "run_id",
+        "control_epoch",
+        "agent_id",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_cancel_action",
+    "description": "Cancel a pending or accepted device action, preserving effects that already occurred.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "action_request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [
+        "run_id",
+        "control_epoch",
+        "request_id",
+        "agent_id",
+        "action_request_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_advance",
+    "description": "Advance up to max_ticks or 2 wall seconds, stopping on selected events. Repeat with a NEW request_id and returned revision to keep advancing. Never retry with a new ID after an uncertain outcome.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_ticks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "until": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "task_finished",
+              "action_finished",
+              "failure"
+            ]
+          },
+          "maxItems": 3
+        }
+      },
+      "required": [
+        "run_id",
+        "control_epoch",
+        "request_id",
+        "expected_revision",
+        "max_ticks"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_record_note",
+    "description": "Publish an optional plan or short decision summary in Console. Notes do not count as completion evidence.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "decision",
+            "progress"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "run_id",
+        "control_epoch",
+        "request_id",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_get_events",
+    "description": "Read durable events after a cursor without advancing simulation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "after_seq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_cancel_run",
+    "description": "Stop further writes, then archive the run. Poll get_run for final state.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "run_id",
+        "control_epoch",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_pause_run",
+    "description": "Pause a run at the next step boundary and invalidate outstanding write epochs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [
+        "run_id",
+        "control_epoch",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "box_resume_run",
+    "description": "Resume a paused run after confirming that its World session still exists. Returns a new control_epoch.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "control_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        }
+      },
+      "required": [
+        "run_id",
+        "control_epoch",
+        "request_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  }
+]

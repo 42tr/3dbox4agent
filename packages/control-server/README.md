@@ -32,6 +32,10 @@ Compose 部署启用版本化的 Runner 接口。Console 通过同源 `/control/
 
 ## MCP
 
+任务级入口为 `/mcp/control`，支持外部 Agent 创建运行、分配任务、提交动作、分段推进和查询验收结果。Console 的 **Agent 任务** 提供接入凭据、实时观察、执行记录、暂停/停止和回放。另提供 `threebox-mcp-stdio` 适配器，配置与工具循环见[任务接入指南](../../docs/mcp-agent-guide.md)。
+
+下面是继续保留的设备级入口：
+
 连接 `http://127.0.0.1:8789/mcp`，并携带 `Authorization: Bearer <agent-token>`。工具共有四个：
 
 - `observe_agent` 读取自身观察。

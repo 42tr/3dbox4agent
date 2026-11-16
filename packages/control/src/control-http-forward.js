@@ -5,8 +5,8 @@ const https = require('node:https');
 
 const CONTROL_HTTP_ORIGIN = 'http://127.0.0.1:8789';
 const prefix = '/control';
-const requestHeaders = ['authorization', 'content-type', 'content-length', 'accept', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'];
-const responseHeaders = ['content-type', 'content-length', 'cache-control', 'content-disposition', 'x-content-type-options', 'mcp-session-id'];
+const requestHeaders = ['authorization', 'content-type', 'content-length', 'accept', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id', 'mcp-method', 'mcp-name'];
+const responseHeaders = ['content-type', 'content-length', 'cache-control', 'content-disposition', 'x-content-type-options', 'mcp-session-id', 'www-authenticate', 'x-accel-buffering', 'mcp-protocol-version'];
 
 function selectHeaders(headers, names) {
   return Object.fromEntries(names.filter(name => headers[name] !== undefined).map(name => [name, headers[name]]));

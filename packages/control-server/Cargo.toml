@@ -3,6 +3,7 @@ name = "threebox-control-server"
 version = "0.1.0"
 edition = "2021"
 publish = false
+default-run = "threebox-control-server"
 description = "HTTP and MCP Control service for 3DBox"
 
 [workspace]
@@ -11,12 +12,15 @@ description = "HTTP and MCP Control service for 3DBox"
 anyhow = "1"
 axum = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
-rmcp = { version = "3.8", features = ["server", "macros", "transport-streamable-http-server"] }
+rmcp = { version = "3.9", features = ["server", "macros", "transport-streamable-http-server", "transport-io"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+async-stream = "0.3"
+tower-http = { version = "0.6", features = ["limit"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 subtle = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "io-std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2"

@@ -33,6 +33,8 @@ services:
     init: true
     environment:
       WORLD_URL: http://world:8787
+      BOX_CONSOLE_URL: ${BOX_CONSOLE_URL:-http://127.0.0.1:8787}
+      BOX_ALLOWED_HOSTS: ${BOX_ALLOWED_HOSTS:-}
       BOX_RUNNER_DATA_DIR: /var/lib/3dbox-control
       BOX_RUNNER_BOOTSTRAP_FILE: /var/lib/3dbox-runner-auth/builtin.token
       BOX_RUNNER_OPERATOR_TOKEN: ${BOX_RUNNER_OPERATOR_TOKEN:-}

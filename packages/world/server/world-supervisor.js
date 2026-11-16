@@ -3,11 +3,13 @@
 const http=require('node:http'),crypto=require('node:crypto'),path=require('node:path'),{fork}=require('node:child_process');
 const {WebSocket,WebSocketServer}=require('ws'),{createServer}=require('./world-server');
 const {requestOriginError}=require('./request-origin');
+const {createRegistry}=require('./creation-registry');
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,TOKEN=/^[A-Za-z0-9_-]{43}$/;
 function createSupervisor({maxWorkers=4,maxSessions=32,startTimeoutMs=10000,requestTimeoutMs=30000,failedSessionTtlMs=300000,worldOptions={},controlUrl}={}){
  for(const [name,n,max] of [['worker limit',maxWorkers,32],['session limit',maxSessions,32],['startup timeout',startTimeoutMs,60000],['request timeout',requestTimeoutMs,120000],['failed session TTL',failedSessionTtlMs,3600000]])if(!Number.isInteger(n)||n<1||n>max)throw Error('invalid '+name);
  const allowed=['maxHistoryBytes','catalogPath','physicsBackend','taskBackend','communicationBackend','navigationBackend','journalDir','replayJournal'];
  if(!worldOptions||typeof worldOptions!=='object'||Array.isArray(worldOptions)||Object.keys(worldOptions).some(k=>!allowed.includes(k)))throw Error('invalid worker options');
+ const creations=createRegistry();
  const options=structuredClone(worldOptions),control=createServer({...options,controlUrl}),routes=new Map(),workers=new Set();
  const wss=new WebSocketServer({noServer:true,maxPayload:8192,perMessageDeflate:false});let closing=false;
  function json(res,status,value){if(res.destroyed||res.writableEnded)return;res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(value))}
@@ -53,13 +55,17 @@ function createSupervisor({maxWorkers=4,maxSessions=32,startTimeoutMs=10000,requ
  })}
  async function createWorld(req,res,limit){
   const body=await readBody(req,limit);if(req.aborted||res.destroyed)return;
-  const {entry,ready}=launch();const cancel=()=>{if(!res.writableFinished)retire(entry)};res.once('close',cancel);
-  try{
-   await ready;if(entry.retiring||res.destroyed)return;
-   const result=await createRequest(req,entry,body);
-   if(result.status>=200&&result.status<300){let value;try{value=JSON.parse(result.body)}catch{}if(!value||!UUID.test(value.sessionId)||typeof value.adminToken!=='string'||!TOKEN.test(value.adminToken)||routes.has(value.sessionId)||entry.exited)throw Object.assign(Error('invalid_world_response'),{status:502});entry.sessionId=value.sessionId;entry.adminHash=crypto.createHash('sha256').update(value.adminToken).digest('hex');entry.state='active';routes.set(entry.sessionId,entry)}else retire(entry);
-   if(res.destroyed){retire(entry);return}res.writeHead(result.status,result.headers);res.end(result.body);
-  }catch(error){retire(entry);throw error}finally{if(res.writableFinished||entry.retiring)res.removeListener('close',cancel);else res.once('finish',()=>res.removeListener('close',cancel))}
+  let input;try{input=JSON.parse(body)}catch{throw Object.assign(Error('invalid_json'),{status:400})}
+  const result=await creations.run(input,async()=>{
+   const {entry,ready}=launch();const cancel=()=>{if(!input?.creationKey&&!res.writableFinished)retire(entry)};res.once('close',cancel);
+   try{
+    await ready;if(entry.retiring)throw Object.assign(Error('world_process_unavailable'),{status:503});
+    const result=await createRequest(req,entry,body);
+    if(result.status>=200&&result.status<300){let value;try{value=JSON.parse(result.body)}catch{}if(!value||!UUID.test(value.sessionId)||typeof value.adminToken!=='string'||!TOKEN.test(value.adminToken)||routes.has(value.sessionId)||entry.exited)throw Object.assign(Error('invalid_world_response'),{status:502});entry.sessionId=value.sessionId;entry.adminHash=crypto.createHash('sha256').update(value.adminToken).digest('hex');entry.state='active';routes.set(entry.sessionId,entry)}else retire(entry);
+    return result;
+   }catch(error){retire(entry);throw error}finally{res.removeListener('close',cancel)}
+  });
+  if(!res.destroyed){res.writeHead(result.status,result.headers);res.end(result.body)}
  }
  function proxy(req,res,entry){
   let deadline=null,responded=false;const clearDeadline=()=>clearTimeout(deadline);

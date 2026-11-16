@@ -37,7 +37,8 @@
     "pretest": "npm run build && npm run build:rust-physics",
     "pretest:parallel": "npm run build && npm run build:rust-physics",
     "pretest:rust-physics": "npm run build:rust-physics",
-    "test:console-artifact": "npm run build && node tests/remote-access-ui.test.js packages/console/dist/index.html && node tests/integration/live-server.test.js"
+    "test:console-artifact": "npm run build && node tests/remote-access-ui.test.js packages/console/dist/index.html && node tests/integration/live-server.test.js",
+    "test:task-runs": "npm run build && cargo build --locked --manifest-path packages/control-server/Cargo.toml && node tests/integration/task-runs.test.js"
   },
   "keywords": [],
   "author": "",

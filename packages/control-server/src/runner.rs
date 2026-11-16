@@ -287,20 +287,39 @@ struct Storage {
     path: PathBuf,
     db: Database,
     last_write: u64,
+    durable: threebox_control_server::run_store::Store,
 }
 
 impl Storage {
     fn open(path: PathBuf) -> anyhow::Result<Self> {
         fs::create_dir_all(&path)?;
-        let db = match fs::read(path.join("runner-state.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes).context("decode runner state")?,
-            Err(error) if error.kind() == ErrorKind::NotFound => Database::default(),
-            Err(error) => return Err(error.into()),
+        let durable = threebox_control_server::run_store::Store::open(&path)?;
+        let db = match durable.get_meta("runner_state")? {
+            Some(raw) => serde_json::from_str(&raw).context("decode runner state")?,
+            None => {
+                let legacy = path.join("runner-state.json");
+                let data = match fs::read(&legacy) {
+                    Ok(bytes) => {
+                        let value: Database =
+                            serde_json::from_slice(&bytes).context("decode legacy runner state")?;
+                        fs::copy(&legacy, path.join("runner-state.json.migrated"))?;
+                        value
+                    }
+                    Err(error) if error.kind() == ErrorKind::NotFound => Database::default(),
+                    Err(error) => return Err(error.into()),
+                };
+                durable.set_meta("runner_state", &serde_json::to_string(&data)?)?;
+                if legacy.exists() {
+                    fs::remove_file(legacy)?;
+                }
+                data
+            }
         };
         Ok(Self {
             path,
             db,
             last_write: 0,
+            durable,
         })
     }
 
@@ -311,8 +330,10 @@ impl Storage {
     fn update<T>(&mut self, edit: impl FnOnce(&mut Database) -> Result<T>) -> Result<T> {
         let mut next = self.db.clone();
         let result = edit(&mut next)?;
-        let bytes = serde_json::to_vec(&next).expect("serializable runner state");
-        atomic_write(&self.path.join("runner-state.json"), &bytes).map_err(storage_error)?;
+        let body = serde_json::to_string(&next).expect("serializable runner state");
+        self.durable
+            .set_meta("runner_state", &body)
+            .map_err(|error| storage_error(std::io::Error::other(error.to_string())))?;
         self.db = next;
         self.last_write = now();
         Ok(result)
@@ -1294,7 +1315,9 @@ impl Broker {
                     .db
                     .runs
                     .values()
-                    .filter(|run| run.status == Status::Stopping && current >= run.archive_retry_after)
+                    .filter(|run| {
+                        run.status == Status::Stopping && current >= run.archive_retry_after
+                    })
                     .map(|run| run.id)
                     .collect::<Vec<_>>()
             };

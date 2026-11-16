@@ -19,6 +19,7 @@ const Delta=require('../src/delta');
 const StreamProtobuf=require('../src/stream-protobuf');
 const Journal=require('./event-journal');
 const Camera=require('./camera-renderer');
+const {createRegistry}=require('./creation-registry');
 const {WebSocketServer,WebSocket}=require('ws');
 const MAX_SESSIONS=32, MAX_BODY=16384, MAX_STEPS=1000, MAX_FRAMES=2000, MAX_HISTORY_BYTES=16*1024*1024, STEP_MS=50;
 function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTES,catalogPath=path.join(__dirname,'../../../.3dbox/experiment-catalog.sqlite3'),physicsBackend=process.env.BOX_PHYSICS_BACKEND||'wasm',taskBackend=process.env.BOX_TASK_BACKEND||'js',communicationBackend=process.env.BOX_COMM_BACKEND||'js',navigationBackend=process.env.BOX_NAV_BACKEND||'js',journalDir=process.env.BOX_EVENT_JOURNAL_DIR||null,replayJournal=process.env.BOX_REPLAY_JOURNAL==='1',sessionTtlMs=Number(process.env.BOX_SESSION_TTL_MS||3600000),journalRetentionMs=Number(process.env.BOX_JOURNAL_RETENTION_MS||7*24*3600000),journalApi=Journal,controlUrl}={}){
@@ -55,6 +56,7 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
  if(journalDir!==null&&(typeof journalDir!=='string'||!journalDir))throw Error('invalid journal directory');
  if(typeof replayJournal!=='boolean'||replayJournal&&!journalDir)throw Error('replay journal requires an event journal directory');
  if(!journalApi||typeof journalApi.create!=='function'||typeof journalApi.read!=='function'||replayJournal&&typeof journalApi.replay!=='function')throw Error('invalid journal API');
+ const creations=createRegistry();
  let catalogWorkers=0;const sessions=new Map(),wss=new WebSocketServer({noServer:true,maxPayload:8192,perMessageDeflate:false});
  // Diagnostic fingerprint, not an attestation: files can change after modules load.
  const runtimeFiles=['packages/world/scenes/industrial-park-v2.json','examples/scenes/shore-surface.json','examples/scenes/shore-sea-state.json','examples/scenes/shore-echelons.json','examples/scenes/shore-rescue.json','packages/world/src/echelons.js','packages/world/src/surface-domain.js','src/operating-power.js','packages/world/src/operating-power.js','src/rescue.js','packages/world/src/rescue.js','src/construction.js','packages/world/src/construction.js','src/relay.js','packages/world/src/relay.js','src/materials.js','packages/world/src/materials.js','src/thermal.js','packages/world/src/thermal.js','src/elevation.js','packages/world/src/elevation.js','src/engine.js','packages/world/src/world-core.js','packages/world/src/world-runtime.js','packages/world/src/control-api.js','packages/control/src/control-contracts.js','packages/control/schemas/action.v1.schema.json','src/recording-context.js','packages/world/src/recording-context.js','src/navigation.js','packages/world/src/navigation.js','src/sensors.js','packages/world/src/sensors.js','packages/world/src/scene-diagnostics.js','src/replay.js','packages/world/src/replay.js','src/stream-protobuf.js','packages/world/src/stream-protobuf.js','proto/stream.proto','server/physics.js','packages/world/server/physics.js','server/world-server.js','packages/world/server/world-server.js','packages/world/server/world-worker.js','packages/world/server/world-supervisor.js','packages/world/server/public-experiment-assets.js','packages/world/server/event-journal.js','packages/world/server/camera-renderer.js','packages/world/server/world-transaction.js','package-lock.json'],root=path.join(__dirname,'../../..');
@@ -120,7 +122,7 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
  function coordinatorObservation(session,coordinatorId){const view=session.frozenCoordinatorObservation?JSON.parse(JSON.stringify(session.frozenCoordinatorObservation)):E.coordinatorObservation(session.world);return {...view,...(coordinatorId?{coordinatorId}:{}),...(sessionError(session)?{sessionError:sessionError(session)}:{}),...(session.simulationError?{simulationError:session.simulationError}:{})}}
  function registerSession(world,scene,physics,forkedFrom=null){
   const cameraFrames=captureCameraFrames(world,{},true);const id=crypto.randomUUID(),adminToken=newToken(),initial=worldRuntime.snapshot(world),initialBytes=Buffer.byteLength(JSON.stringify(initial)),session={id,world,scene,physics,forkedFrom,cameraFrames,lastActivity:Date.now(),adminHash:digest(adminToken),journal:null,journalFailed:false,simulationError:null,coordinatorHash:null,rosterRevision:0,coordinatorTokens:new Map(),agentTokens:new Map(),agentMemory:new Map(),observationTransport:{version:1,agent:{httpResponses:0,httpBodyBytes:0,streamMessages:0,streamPayloadBytes:0},coordinator:{httpResponses:0,httpBodyBytes:0,streamMessages:0,streamPayloadBytes:0}},revision:0,statusRevision:0,running:false,speed:1,timer:null,clients:new Set(),historyBytes:initialBytes,frames:[{revision:0,world:initial,bytes:initialBytes,cameraFrames}]};
-  session.observerHash=null;session.recordingContext=Recording.capture(id,runtime,forkedFrom);
+  session.stepReceipts=new Map();session.observerHash=null;session.recordingContext=Recording.capture(id,runtime,forkedFrom);
   if(journalDir){try{session.journal=journalApi.create(journalDir,id,session.adminHash,{sceneId:world.sceneId,seed:world.seed,policy:world.policy,physicsMode:world.physicsMode,sensorModel:world.sensorModel??'geometry-v1',runtimeInstanceId:runtime.instanceId,runtime,...(forkedFrom?{forkedFrom}:{}),...(replayJournal?{scene}: {})},world.events,replayJournal?{initialWorld:initial}:{})}catch{physics?.free();worldRuntime.dispose(world);throw Object.assign(Error('journal_create_failed'),{status:503})}}
   sessions.set(id,session);return {session,adminToken};
  }
@@ -166,11 +168,14 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
     const scene=input.scene===undefined?E.getScene(input.sceneId):input.scene;return json(res,200,{version:1,...SceneDiagnostics.analyze(scene)});
    }
    if(req.method==='POST'&&url.pathname==='/sessions'){
-    const input=await body(req,65536);if(sessions.size>=maxSessions)return json(res,429,{error:'session_limit'});
-    if(input.scene!==undefined&&input.sceneId!==undefined&&input.scene?.id!==input.sceneId)return json(res,400,{error:'scene_id_mismatch'});const scene=E.withLinkProfile(input.scene===undefined?E.getScene(input.sceneId??E.scene.id):input.scene,input.linkProfile??'default');
-    if(input.sensorMode!==undefined&&!['geometry','rapier'].includes(input.sensorMode))return json(res,400,{error:'invalid_sensor_mode'});
-    if(input.sensorMode==='rapier'&&(physicsBackend!=='rust'||input.physicsMode!=='rapier'))return json(res,400,{error:'ray_sensor_backend_unavailable'});
-    const world=worldRuntime.create(input.seed??42,input.policy??'nearest',scene,{dispatchMode:input.dispatchMode??'rule',physicsMode:input.physicsMode??'kinematic',executionMode:input.executionMode??'auto'},NativeInitialization?.create);if(Navigation)E.bindNavigation(world,Navigation);if(TaskRules)E.bindTaskRules(world,TaskRules);if(CommunicationRules)E.bindCommunicationRules(world,CommunicationRules);if(world.physicsMode==='rapier'){await Physics.initialize();if(sessions.size>=maxSessions)return json(res,429,{error:'session_limit'})}const physics=world.physicsMode==='rapier'?Physics.createPhysics(world):null;try{if(input.sensorMode==='rapier'){if(NativeInitialization)NativeInitialization.finishRay(world,physics);E.bindRaySensors(world,physics,!!NativeInitialization)}bindNativeWorld(world,physics)}catch(error){physics?.free();worldRuntime.dispose(world);throw error}const {session,adminToken}=registerSession(world,scene,physics);return json(res,201,{...state(session),scene,recordingContext:session.recordingContext,adminToken});
+    const input=await body(req,65536);
+    const created=await creations.run(input,async()=>{
+    if(sessions.size>=maxSessions)throw Object.assign(Error('session_limit'),{status:429});
+    if(input.scene!==undefined&&input.sceneId!==undefined&&input.scene?.id!==input.sceneId)throw Object.assign(Error('scene_id_mismatch'),{status:400});const scene=E.withLinkProfile(input.scene===undefined?E.getScene(input.sceneId??E.scene.id):input.scene,input.linkProfile??'default');
+    if(input.sensorMode!==undefined&&!['geometry','rapier'].includes(input.sensorMode))throw Object.assign(Error('invalid_sensor_mode'),{status:400});
+    if(input.sensorMode==='rapier'&&(physicsBackend!=='rust'||input.physicsMode!=='rapier'))throw Object.assign(Error('ray_sensor_backend_unavailable'),{status:400});
+    const world=worldRuntime.create(input.seed??42,input.policy??'nearest',scene,{dispatchMode:input.dispatchMode??'rule',physicsMode:input.physicsMode??'kinematic',executionMode:input.executionMode??'auto'},NativeInitialization?.create);if(Navigation)E.bindNavigation(world,Navigation);if(TaskRules)E.bindTaskRules(world,TaskRules);if(CommunicationRules)E.bindCommunicationRules(world,CommunicationRules);if(world.physicsMode==='rapier'){await Physics.initialize();if(sessions.size>=maxSessions)throw Object.assign(Error('session_limit'),{status:429})}const physics=world.physicsMode==='rapier'?Physics.createPhysics(world):null;try{if(input.sensorMode==='rapier'){if(NativeInitialization)NativeInitialization.finishRay(world,physics);E.bindRaySensors(world,physics,!!NativeInitialization)}bindNativeWorld(world,physics)}catch(error){physics?.free();worldRuntime.dispose(world);throw error}const {session,adminToken}=registerSession(world,scene,physics);return {...state(session),scene,recordingContext:session.recordingContext,adminToken};
+    });return json(res,201,created);
    }
    // Fork a new paused session from an authenticated, validated journal snapshot.
    if(req.method==='POST'&&parts.length===3&&parts[0]==='event-journals'&&parts[2]==='fork'){
@@ -301,6 +306,7 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
     }
    }
    if(identity.role==='coordinator')return json(res,403,{error:'forbidden'});
+   if(req.method==='GET'&&parts.length===4&&parts[2]==='step-receipts'){const receipt=session.stepReceipts.get(parts[3]);return json(res,receipt?200:404,receipt||{error:'step_receipt_not_found'})}
    if(parts.length===4&&parts[2]==='observer'&&parts[3]==='credentials'&&['POST','DELETE'].includes(req.method)){
     if(req.method==='POST')await body(req);if(!stillAuthorized())return json(res,401,{error:'unauthorized'});
     if(req.method==='DELETE'){session.observerHash=null;revokeChanged(session);return json(res,200,{revoked:true})}
@@ -363,8 +369,20 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
    if(req.method==='POST'&&parts.length===3){
     const input=await body(req);if(!stillAuthorized())return json(res,401,{error:'unauthorized'});
     if(parts[2]==='step'){
-     if(session.running)return json(res,409,{error:'session_running'});const count=input.count??1;if(!Number.isInteger(count)||count<1||count>MAX_STEPS)return json(res,400,{error:'invalid_step_count'});
-     let executed=0;while(executed<count&&advance(session))executed++;return json(res,200,{...state(session),executed});
+     const count=input.count??1,key=input.requestId;
+     if(!Number.isInteger(count)||count<1||count>MAX_STEPS)return json(res,400,{error:'invalid_step_count'});
+     if(key!==undefined){
+      if(typeof key!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(key)||count!==1||!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<0)return json(res,400,{error:'invalid_step_request'});
+      const prior=session.stepReceipts.get(key);
+      if(prior){if(prior.expectedRevision!==input.expectedRevision)return json(res,409,{error:'step_request_conflict'});return json(res,200,{...state(session),executed:prior.executed,receipt:prior,duplicate:true})}
+      if(session.stepReceipts.size>=10000)return json(res,429,{error:'step_receipt_limit'});
+     }
+     if(input.expectedRevision!==undefined&&input.expectedRevision!==session.revision)return json(res,409,{error:'world_revision_changed',revision:session.revision});
+     if(session.running)return json(res,409,{error:'session_running'});
+     let executed=0;while(executed<count&&advance(session))executed++;
+     const receipt=key===undefined?null:{requestId:key,expectedRevision:input.expectedRevision,revision:session.revision,tick:session.world.tick,executed};
+     if(receipt)session.stepReceipts.set(key,receipt);
+     return json(res,200,{...state(session),executed,...(receipt?{receipt,duplicate:false}:{})});
     }
     if(parts[2]==='run'){
      if(session.world.done)return json(res,409,{error:'world_finished'});const speed=input.speed??1;if(![1,2,5].includes(speed))return json(res,400,{error:'invalid_speed'});stop(session);session.speed=speed;session.running=true;
@@ -403,7 +421,7 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
   else if(identity.role==='coordinator')safeSend(client,{type:'observation',revision:session.revision,statusRevision:session.statusRevision,running:session.running,speed:session.speed,observation:coordinatorObservation(session,identity.coordinator)});
  })});
  const closeServer=server.close.bind(server);server.close=function(callback){clearInterval(heartbeat);clearInterval(sessionSweeper);clearInterval(journalSweeper);for(const client of wss.clients)client.terminate();return closeServer(callback)};
- server.on('close',()=>{for(const s of sessions.values()){stop(s);s.journal?.close(s.revision,'server_shutdown');if(s.physics)s.physics.free();worldRuntime.dispose(s.world)}sessions.clear();wss.close()});server.diagnostics=()=>({protocol:3,features:{observerAccess:1,decisionPreconditions:1,worldLedger:NativeLedger?1:0,worldMotion:NativeMotion?1:0,worldTasks:NativeTasks?1:0,worldExecution:NativeMotion?1:0,worldActions:NativeActions?1:0,worldPeer:NativePeer?1:0,worldReports:NativeReports?1:0,worldDispatch:NativeDispatch?1:0,worldResources:NativeResources?1:0,worldPerceptions:NativePerceptions?1:0,worldEnvironment:NativeEnvironment?1:0,worldRequests:NativeRequests?1:0,worldControl:NativeControl?1:0},runtime:structuredClone(runtime)});return server;
+ server.on('close',()=>{for(const s of sessions.values()){stop(s);s.journal?.close(s.revision,'server_shutdown');if(s.physics)s.physics.free();worldRuntime.dispose(s.world)}sessions.clear();wss.close()});server.diagnostics=()=>({protocol:3,features:{idempotentCreation:1,idempotentStep:1,observerAccess:1,decisionPreconditions:1,worldLedger:NativeLedger?1:0,worldMotion:NativeMotion?1:0,worldTasks:NativeTasks?1:0,worldExecution:NativeMotion?1:0,worldActions:NativeActions?1:0,worldPeer:NativePeer?1:0,worldReports:NativeReports?1:0,worldDispatch:NativeDispatch?1:0,worldResources:NativeResources?1:0,worldPerceptions:NativePerceptions?1:0,worldEnvironment:NativeEnvironment?1:0,worldRequests:NativeRequests?1:0,worldControl:NativeControl?1:0},runtime:structuredClone(runtime)});return server;
 }
 function run(){
  const port=Number(process.env.WORLD_PORT||8787),bind=process.env.WORLD_BIND||'127.0.0.1';
