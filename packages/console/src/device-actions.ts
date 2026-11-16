@@ -2,8 +2,8 @@ import type {DeviceConnection} from './device-credentials';
 import type {ReportData} from './device-reports';
 /** User intentions are queued; only the world decides execution outcomes. */
 export type RescueContact={faultGeneration:number;id:string;role:string;x:number;y:number;observedTick:number};
-export type Device={operatingEnergyPerTick?:number;operatingState?:{energySpent:number;tick:number};rescueWorkTicks?:number;id:string;name:string;x:number;y:number;battery:number;disabled:boolean;status:string;mobility?:string};
-export type DeviceTask={id:string;name:string;status:string;waypoint?:number[]|null;approachPoint?:number[]|null;withinReach?:boolean};
+export type Device={operatingEnergyPerTick?:number;operatingState?:{energySpent:number;tick:number};rescueWorkTicks?:number;capabilities?:string[];id:string;name:string;x:number;y:number;battery:number;disabled:boolean;status:string;mobility?:string};
+export type DeviceTask={id:string;name:string;status:string;capability?:string;behavior?:string;assignee?:string;waypoint?:number[]|null;approachPoint?:number[]|null;withinReach?:boolean};
 export type DeviceAction={agentId:string;requestId:string;type:string;status:string;targetTick:number;expiresTick:number;submittedTick:number;updatedTick?:number;taskId?:string;reason?:string;phase?:string;progress?:number;energyAdded?:number};
 export type DeviceContext={worldSize?:number;key:string;observer:boolean;imported:boolean;latest:boolean;failed:boolean;done:boolean;busy:boolean;running:boolean;remote:boolean;connection?:DeviceConnection;speed?:number;tick:number;mode:string;selected:string;rescueContacts?:RescueContact[];agents:Device[];tasks:DeviceTask[];actions:DeviceAction[];reports?:ReportData};
 export type DeviceDraft={type:'move';x:string;y:string}|{type:'scan'|'charge'}|{type:'execute_task'|'work_task';taskId:string}|{type:'rescue';targetAgentId:string;observedTick:number;faultGeneration:number}|{type:'cancel';requestId:string};
