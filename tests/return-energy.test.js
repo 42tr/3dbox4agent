@@ -2,11 +2,11 @@
 const assert=require('node:assert/strict');
 const E=require('../src/engine');
 const s=E.create(42,'nearest',E.getScene('lunar-terrain-v1'),{dispatchMode:'external'}),rover=s.agents.find(a=>a.role==='rover');
-rover.x=60;rover.y=50;assert(E.injectLowEnergy(s,rover.id,5).ok);const start=rover.battery;const estimate=E.observe(s,rover.id).self.returnEnergyEstimate;
+for(const other of s.agents.filter(a=>a.id!==rover.id)){other.x=90;other.y=90}rover.x=60;rover.y=50;assert(E.injectLowEnergy(s,rover.id,5).ok);const start=rover.battery;const estimate=E.observe(s,rover.id).self.returnEnergyEstimate;
 assert(estimate>30*.045,'ground estimate includes soft terrain');
 assert(E.submitAction(s,rover.id,{requestId:'estimate-check',type:'charge',targetTick:1,expiresTick:50}).ok);
 for(let i=0;i<150&&s.actions[0].phase!=='charging';i++)E.step(s);
-const action=s.actions[0];assert.equal(action.phase,'charging');assert(Math.abs(start-(rover.battery-action.energyAdded)-estimate)<1e-7,'estimated cost agrees with actual travel');
+const action=s.actions[0];assert.equal(action.phase,'charging');assert(Math.hypot(rover.x-s.chargingStation[0],rover.y-s.chargingStation[1])<=3);const remaining=E.observe(s,rover.id).self.returnEnergyEstimate;assert(Math.abs(start-(rover.battery-action.energyAdded)+remaining-estimate)<1e-7,'travel plus the remaining static route agrees with the original estimate');
 const droneWorld=E.create(42,'nearest',E.scene,{dispatchMode:'external'}),drone=droneWorld.agents[0];drone.x=1;drone.y=99;assert(Math.abs(E.observe(droneWorld,drone.id).self.returnEnergyEstimate-Math.hypot(35,49)*.045)<1e-9);
 const blocked=E.getScene('lunar-base-v1');blocked.obstacles=[{id:'wall',x:45,y:0,w:10,h:100,height:10}];const w=E.create(42,'nearest',blocked,{dispatchMode:'external'}),a=w.agents.find(x=>x.role==='rover');a.x=60;a.y=50;assert.equal(E.observe(w,a.id).self.returnEnergyEstimate,null);
 const old=E.snapshot(w);delete old.chargingStation;assert.equal(E.observe(old,a.id).self.returnEnergyEstimate,null);

@@ -44,6 +44,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 1g
+    cpus: "1.0"
   console:
     build:
       context: .
@@ -57,6 +60,7 @@ services:
     environment:
       BOX_CONTROL_URL: http://control:8789
       BOX_WORLD_URL: http://world:8787
+      BOX_ALLOWED_HOSTS: ${BOX_ALLOWED_HOSTS:-}
     init: true
     read_only: true
     cap_drop:

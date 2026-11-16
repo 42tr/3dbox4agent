@@ -46,12 +46,14 @@ function parseModelOutput(value, maxActions) {
   return normalizeDecision(value.actions);
 }
 
-function createLlmPolicy({complete, instructions = '', timeoutMs = 10_000, maxActions = 4, maxOutputBytes = 64 * 1024} = {}) {
+function createLlmPolicy({complete, instructions = '', timeoutMs = 10_000, maxActions = 4, maxInputBytes = 256 * 1024, maxOutputBytes = 64 * 1024} = {}) {
   if (typeof complete !== 'function') throw new TypeError('LLM policy requires complete');
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) throw new TypeError('invalid LLM timeout');
   if (!Number.isSafeInteger(maxActions) || maxActions < 0 || maxActions > 4) throw new TypeError('invalid LLM action limit');
+  if (!Number.isSafeInteger(maxInputBytes) || maxInputBytes < 1 || maxInputBytes > 2 * 1024 * 1024) throw new TypeError('invalid LLM input limit');
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 1 || maxOutputBytes > 1024 * 1024) throw new TypeError('invalid LLM output limit');
   return createPolicy(async (observation, context) => {
+    if (byteLength(observation) + byteLength(context) + byteLength(instructions) > maxInputBytes) throw new Error('llm_input_too_large');
     const controller = new AbortController();
     let timer;
     try {

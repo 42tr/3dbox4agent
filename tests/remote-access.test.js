@@ -1,4 +1,5 @@
 'use strict';
+process.env.BOX_ALLOWED_HOSTS='3dbox.42tr.cn';
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),http=require('node:http');
 const WebSocket=require('ws');
@@ -45,6 +46,7 @@ async function rejectStream(base,host,origin){
  for(const host of [undefined,'','bad@host','3dbox.42tr.cn/path','3dbox.42tr.cn\\path','3dbox.42tr.cn:99999','3dbox.42tr.cn evil.example'])assert.equal(requestOriginError({headers:{host}}),'invalid_host');
  for(const origin of ['null','','https://evil.example','https://3dbox.42tr.cn.evil.example','https://3dbox.42tr.cn:8443','https://3dbox.42tr.cn/path','ftp://3dbox.42tr.cn'])assert.equal(requestOriginError({headers:{host:'3dbox.42tr.cn',origin}}),'invalid_origin');
  assert.equal(requestOriginError({headers:{host:'127.0.0.1:8787',origin:'https://3dbox.42tr.cn','x-forwarded-host':'3dbox.42tr.cn'}}),'invalid_origin');
+ for(const headers of [{host:'evil.example'},{host:'evil.example',origin:'http://evil.example'}])assert.equal(requestOriginError({headers}),'invalid_host','DNS rebinding host must be rejected');
 
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'3dbox-remote-'));
  try{

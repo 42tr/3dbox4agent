@@ -5,7 +5,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('nod
  async function request(route,method='GET',data,token){const r=await fetch(base+route,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},...(data===undefined?{}:{body:JSON.stringify(data)})});return {status:r.status,value:await r.json()}}
  async function ok(...args){const r=await request(...args);assert(r.status>=200&&r.status<300,JSON.stringify(r));return r.value}const root=s=>'/sessions/'+s.sessionId;
  try{
-  const health=await ok('/health');assert.equal(health.runtime.sourceSha256['src/elevation.js'],crypto.createHash('sha256').update(fs.readFileSync('src/elevation.js')).digest('hex'));assert(health.runtime.sourceSha256['rust/physics/src/heightfield.rs']);
+  const health=await ok('/health');assert.equal(health.runtime.sourceSha256['src/elevation.js'],crypto.createHash('sha256').update(fs.readFileSync('packages/world/src/elevation.js')).digest('hex'));assert(health.runtime.sourceSha256['rust/physics/src/heightfield.rs']);
   for(const sensorMode of ['geometry','rapier']){
    const s=await ok('/sessions','POST',{sceneId:'lunar-heightfield-v1',seed:42,physicsMode:'rapier',sensorMode});owned.push(s);assert.deepEqual(s.world.heightfield,E.normalizeScene(E.getScene('lunar-heightfield-v1')).heightfield);
    const id=s.world.agents[0].id,credential=await ok(root(s)+'/agents/'+id+'/credentials','POST',{},s.adminToken),o=await ok(root(s)+'/observations/'+id,'GET',undefined,credential.agentToken);assert.equal(o.self.elevation,H.height(s.world.heightfield,o.self.x,o.self.y));assert(!Object.hasOwn(o,'heightfield'));assert.equal((await request(root(s)+'/state','GET',undefined,credential.agentToken)).status,403);

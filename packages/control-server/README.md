@@ -6,6 +6,8 @@ Control 以 Axum 提供 HTTP 接口，以 RMCP 提供 Streamable HTTP MCP。两�
 
 本地默认地址为 `http://127.0.0.1:8789`。`CONTROL_BIND` 配置监听地址，`WORLD_URL` 配置上游，默认 `http://127.0.0.1:8787`。设置 `RUST_LOG` 可调整日志级别。启动命令见[项目 README](../../README.md#本地开发)。
 
+`POST /sessions` 是面向本机/受信内部网络的接口，本身不签发调用方身份认证，并会返回 World 管理员令牌。不要把 Control 或该路径直接暴露到不受信网络；发布版 Console 默认仅监听 `127.0.0.1`，远程访问应经过认证和 HTTPS 代理。Control fallback 的请求超时为 35 秒，请求体上限约为 50 MiB；Runner 路由保持 16 KiB 上限。
+
 | 请求 | 用途 |
 | --- | --- |
 | `GET /health` | 检查 Control 进程。 |

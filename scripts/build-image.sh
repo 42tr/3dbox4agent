@@ -49,7 +49,7 @@ case "$build_network" in
   *) printf '不支持的网络模式：%s\n' "$build_network" >&2; exit 2 ;;
 esac
 
-for build_command in docker git tar gzip mktemp od tr; do
+for build_command in docker git tar gzip mktemp od tr python3; do
   if ! command -v "$build_command" >/dev/null 2>&1; then
     printf '缺少命令：%s\n' "$build_command" >&2
     exit 1
@@ -126,23 +126,34 @@ release_image_id_for() {
   docker image inspect --format '{{.Id}}' "$image"
 }
 
+build_stage=''
+build_env_tmp=''
+deployment_info_backup=''
+cleanup() {
+  if [[ -n "$build_stage" ]]; then rm -rf -- "$build_stage"; fi
+  if [[ -n "$build_env_tmp" ]]; then rm -f -- "$build_env_tmp"; fi
+  if [[ -n "$deployment_info_backup" ]]; then
+    cp "$deployment_info_backup" "$build_root/deployment-info.json"
+    rm -f -- "$deployment_info_backup"
+  fi
+}
+trap cleanup EXIT
+
 printf '目标平台：%s\n构建网络：%s\n' "$release_platform" "$build_network"
 build_release_image "$release_image" packages/world/Dockerfile --target world-rust
 release_image_id="$(release_image_id_for "$release_image")"
 build_release_image "$release_control_image" packages/control-server/Dockerfile
 release_control_id="$(release_image_id_for "$release_control_image")"
+deployment_info_backup="$(mktemp "$build_root/.3dbox-deployment-info.XXXXXX")"
+cp "$build_root/deployment-info.json" "$deployment_info_backup"
+python3 "$build_root/deploy/write-deployment-info.py" \
+  --repository "$build_root" --commit "$source_commit" \
+  --branch "$(git rev-parse --abbrev-ref HEAD)" \
+  --output "$build_root/deployment-info.json"
 build_release_image "$release_console_image" packages/console/Dockerfile
 release_console_id="$(release_image_id_for "$release_console_image")"
 build_release_image "$release_agent_image" packages/agent/Dockerfile
 release_agent_id="$(release_image_id_for "$release_agent_image")"
-
-build_stage=''
-build_env_tmp=''
-cleanup() {
-  if [[ -n "$build_stage" ]]; then rm -rf -- "$build_stage"; fi
-  if [[ -n "$build_env_tmp" ]]; then rm -f -- "$build_env_tmp"; fi
-}
-trap cleanup EXIT
 
 mkdir -p "$build_root/.3dbox/releases"
 build_stage="$(mktemp -d "$build_root/.3dbox/releases/.package.XXXXXX")"
@@ -158,7 +169,7 @@ BOX_CONTROL_IMAGE=$release_control_image
 BOX_CONSOLE_IMAGE=$release_console_image
 BOX_AGENT_IMAGE=$release_agent_image
 BOX_PLATFORM=$release_platform
-BOX_HTTP_BIND=0.0.0.0
+BOX_HTTP_BIND=127.0.0.1
 BOX_HTTP_PORT=8787
 BOX_WORLD_WORKERS=2
 BOX_RUNNER_OPERATOR_TOKEN=$runner_operator_token

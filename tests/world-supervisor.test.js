@@ -5,7 +5,7 @@ const {createSupervisor}=require('../server/world-supervisor'),Replay=require('.
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'3dbox-process-worlds-')),native=process.argv.includes('--native'),clients=[],pids=[];
  const worldOptions={journalDir:path.join(dir,'journals'),replayJournal:true,catalogPath:path.join(dir,'catalog.sqlite3'),...(native?{physicsBackend:'rust',taskBackend:'rust',communicationBackend:'rust',navigationBackend:'rust'}:{})};
  let server,base;
- async function start(){server=createSupervisor({maxWorkers:2,requestTimeoutMs:1200,worldOptions});await new Promise(r=>server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${server.address().port}`}
+ async function start(){server=createSupervisor({maxWorkers:2,maxSessions:2,requestTimeoutMs:1200,worldOptions});await new Promise(r=>server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${server.address().port}`}
  async function waitFor(test){const end=Date.now()+7000;while(!test()){if(Date.now()>end)throw Error('worker state deadline');await new Promise(r=>setTimeout(r,15))}}
  async function stop(){const list=server.inspectWorkers();pids.push(...list.map(x=>x.pid));await new Promise(r=>server.close(r));for(const worker of list)assert.throws(()=>process.kill(worker.pid,0),{code:'ESRCH'})}
  async function req(route,method='GET',body,token,extra={}){const r=await fetch(base+route,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{}),...extra},body:body===undefined?undefined:JSON.stringify(body)});return [r.status,await r.json()]}
@@ -39,6 +39,7 @@ const {createSupervisor}=require('../server/world-supervisor'),Replay=require('.
   assert.equal(await adminStream.closed,1011);assert.equal(await viewStream.closed,1011);assert.equal((await req(aroot,'GET',undefined,a.adminToken))[1].error,'world_process_exited');
   assert.equal((await ok(broot+'/step','POST',{count:2},b.adminToken)).world.tick,9);assert.equal((await ok('/health')).worldProcesses.failed,1);
   const old=await ok('/event-journals/'+a.sessionId+'/replay?after=-1&limit=10','GET',undefined,a.adminToken);assert(!old.active);assert(!old.closed);assert.equal(old.metadata.runtime.instanceId,a.recordingContext.runtime.instanceId);assert.equal(old.frames.at(-1).revision,5);
+  const replacement=await ok('/sessions','POST',{seed:44});await ok('/sessions/'+replacement.sessionId,'DELETE',undefined,replacement.adminToken);await waitFor(()=>!server.inspectWorkers().some(w=>w.sessionId===replacement.sessionId));
   assert.equal((await req(aroot,'DELETE',undefined,observer))[0],401);await ok(aroot,'DELETE',undefined,a.adminToken);
   const fork=await ok('/event-journals/'+a.sessionId+'/fork','POST',{revision:5},a.adminToken),froot='/sessions/'+fork.sessionId;
   assert.equal(fork.recordingContext.forkedFrom.sessionId,a.sessionId);assert.notEqual(fork.recordingContext.runtime.instanceId,a.recordingContext.runtime.instanceId);assert.deepEqual(await ok(froot+'/catalog/'+saved.report.id,'GET',undefined,fork.adminToken),archive);

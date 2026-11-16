@@ -30,10 +30,11 @@ CAPABILITIES = {
 
 
 class Worker:
-    def __init__(self, control, runner_id, token, stop):
+    def __init__(self, control, runner_id, token, stop, token_file=None):
         self.control = control
         self.route = '/runners/' + quote(runner_id, safe='')
         self.token = token
+        self.token_file = token_file
         self.stop = stop
         self.lock = Lock()
         self.state = {'registered': False, 'runId': None, 'protocolVersion': 1}
@@ -46,9 +47,14 @@ class Worker:
         with self.lock:
             return dict(self.state)
 
+    def reload_token(self):
+        if self.token_file:
+            self.token = Path(self.token_file).read_text().strip()
+
     def serve(self):
         while not self.stop.is_set():
             try:
+                self.reload_token()
                 self.control.request(self.route + '/register', body={
                     'protocolVersion': 1, 'capabilities': CAPABILITIES,
                 }, token=self.token)
@@ -119,9 +125,9 @@ class Worker:
             process.stdout.close()
 
 
-def serve(control, runner_id, token, host, port):
+def serve(control, runner_id, token, host, port, token_file=None):
     stop = Event()
-    worker = Worker(control, runner_id, token, stop)
+    worker = Worker(control, runner_id, token, stop, token_file)
 
     class HealthHandler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -183,15 +189,17 @@ def main():
             status, reason = 'failed', 'runner_experiment_error'
         print(json.dumps({'status': status, 'reason': reason}), flush=True)
         return 0
+    token_file = os.environ.get('BOX_RUNNER_TOKEN_FILE')
     token = os.environ.get('BOX_RUNNER_TOKEN')
+    if token:
+        token_file = None
     if not token:
-        token_file = os.environ.get('BOX_RUNNER_TOKEN_FILE')
         if token_file:
             token = Path(token_file).read_text().strip()
     if not token:
         parser.error('set BOX_RUNNER_TOKEN or BOX_RUNNER_TOKEN_FILE')
     serve(control, os.environ.get('BOX_RUNNER_ID', 'builtin'), token,
-          os.environ.get('BOX_RUNNER_BIND', '127.0.0.1'), int(os.environ.get('BOX_RUNNER_PORT', '8790')))
+          os.environ.get('BOX_RUNNER_BIND', '127.0.0.1'), int(os.environ.get('BOX_RUNNER_PORT', '8790')), token_file)
     return 0
 
 

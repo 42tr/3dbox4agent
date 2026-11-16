@@ -1,5 +1,5 @@
 'use strict';
-const fs=require('node:fs'),path=require('node:path');
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const NAME=/^policy-acceptance-codex-[A-Za-z0-9-]+\.json$/;
 const MAX=50*1024*1024;
 function serve(req,res,url,root=path.join(__dirname,'../../../examples/experiments')){
@@ -10,8 +10,12 @@ function serve(req,res,url,root=path.join(__dirname,'../../../examples/experimen
   const files=JSON.parse(fs.readFileSync(manifest,'utf8')).files,ref=files&&Object.hasOwn(files,name)?files[name]:null;
   if(!ref||!Number.isSafeInteger(ref.bytes)||ref.bytes<1||ref.bytes>MAX||typeof ref.sha256!=='string'||!/^[a-f0-9]{64}$/.test(ref.sha256))throw Error();
   const file=path.join(root,name),stat=fs.lstatSync(file);if(!stat.isFile()||stat.size!==ref.bytes)throw Error();
+  const cacheKey=file+':'+stat.size+':'+stat.mtimeMs;let actual=serve.hashes.get(cacheKey);
+  if(!actual){actual=crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');if(serve.hashes.size>=32)serve.hashes.clear();serve.hashes.set(cacheKey,actual)}
+  if(actual!==ref.sha256)throw Error();
   res.writeHead(200,{'content-type':'application/json; charset=utf-8','content-length':stat.size,'cache-control':'no-store','x-content-type-options':'nosniff'});
   if(req.method==='HEAD')res.end();else fs.createReadStream(file).on('error',unavailable).pipe(res);
  }catch{unavailable()}return true;
 }
 module.exports={serve};
+serve.hashes=new Map();

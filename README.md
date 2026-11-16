@@ -7,10 +7,13 @@
 有 Docker Engine 和 Docker Compose 时，从仓库根目录运行：
 
 ```sh
+export BOX_RUNNER_OPERATOR_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 docker compose up --build --wait
 ```
 
-打开 `http://127.0.0.1:8787/`，点击 **连接世界服务**。在左侧打开 **Runner 实验** 可以配置、启动、停止实验和打开回放。Control 的 HTTP 和 MCP 入口在 `127.0.0.1:8789`。用 `BOX_HTTP_PORT` 或 `BOX_CONTROL_PORT` 调整宿主机端口。
+保存上面生成的 operator token，在 **Runner 实验 → 管理令牌与外部 Runner** 中填入。未配置 token 时，Control 会拒绝所有 operator 管理请求，不会影响普通的本地世界预览。
+
+打开 `http://127.0.0.1:8787/`，点击 **连接世界服务**。在左侧打开 **Runner 实验** 可以配置、启动、停止实验和打开回放。Control 的 HTTP 和 MCP 入口在 `127.0.0.1:8789`。用 `BOX_HTTP_PORT` 或 `BOX_CONTROL_PORT` 调整宿主机端口。服务默认仅监听回环地址；使用域名访问时还需设置逗号分隔的 `BOX_ALLOWED_HOSTS`，详见[部署指南](deploy/README.md#端口与-https)。
 
 默认 World 使用 JavaScript 规则，选择 Rapier 物理时使用 WASM。需要原生 Rust 后端时运行 `BOX_IMAGE_TARGET=world-rust docker compose up --build --wait`。
 
@@ -48,7 +51,7 @@ npm run test:container        # Docker 集成验收
 npm run test:container-rust   # Docker 原生后端验收
 ```
 
-运行 `npm test` 可执行主回归套件。涉及原生后端时先执行 `npm run build:rust-physics`，涉及 Python 实时流时安装 `./sdk/python[grpc-stream]`。
+运行 `npm test` 会构建原生后端并执行 `tests/default.suite` 中的主回归清单，结束后汇总所有失败命令。`npm run test:parallel` 使用 4 个 worker 并行执行同一清单，也可用 `node scripts/run-tests.js tests/default.suite --jobs N` 调整并行度。涉及 Python 实时流时安装 `./sdk/python[grpc-stream]`。
 
 ## 指南
 
