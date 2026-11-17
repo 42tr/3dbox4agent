@@ -177,6 +177,7 @@ node tests/visual-motion.test.js
 node tests/vehicle-heading.test.js
 node tests/route-geometry.test.js
 node tests/render-quality.test.js
+node tests/tree-model.test.mjs
 node tests/agent-visual.test.js
 node tests/fault-recovery.test.js
 node tests/resilience-experiments.test.js

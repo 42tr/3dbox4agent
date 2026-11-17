@@ -10,6 +10,7 @@ import graphics from './graphics-state.js';
 import {createLunarEnvironment} from './lunar-environment.js';
 import {createIndustrialPark,industrialCampusLayout,isIndustrialPark} from './industrial-park.mjs';
 import {createSurfacePresentation} from './surface-presentation.js';
+import {createTreeModel} from './tree-model.mjs';
 import surfaceDomain from '@42tr/3dbox4agent-world/surface-domain';
 
 // Visuals consume snapshots only; geometry is illustrative, not collision geometry.
@@ -154,27 +155,10 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   function surfacePatch(rect,material,offset){if(!lastState?.heightfield)return box(scene,rect.w,.06,rect.h,material,rect.x+rect.w/2-center,offset,rect.y+rect.h/2-center);const object=new THREE.Mesh(surfaceGeometry(rect,offset),material);scene.add(object);return object}
   const terrainMaterial=new THREE.MeshStandardMaterial({color:0xbd9666,transparent:true,opacity:.54,roughness:1,depthWrite:false}),hazardMaterial=new THREE.MeshStandardMaterial({color:0xc75b3a,transparent:true,opacity:.66,roughness:1,depthWrite:false});let terrainKey=null,terrainMeshes=[];function updateTerrain(zones,effects){const key=JSON.stringify([zones,effects,lastState?.heightfield]);if(key===terrainKey)return;terrainKey=key;for(const mesh of terrainMeshes){scene.remove(mesh);mesh.geometry.dispose()}terrainMeshes=zones.map(z=>surfacePatch(z,effects.some(e=>e.zoneId===z.id)?hazardMaterial:terrainMaterial,.07))}
   const roadblockMaterial=mat(0xc45237);let roadblockKey='',roadblockMeshes=[];function updateRoadblocks(blocks,visible){const key=JSON.stringify([visible?blocks:[],lastState?.heightfield]);if(key===roadblockKey)return;roadblockKey=key;for(const mesh of roadblockMeshes){scene.remove(mesh);mesh.geometry.dispose()}roadblockMeshes=(visible?blocks:[]).map(b=>(()=>{const p=elevation.prism(lastState?.heightfield,b),base=p.base||0;return box(scene,b.w,p.height-base,b.h,roadblockMaterial,b.x+b.w/2-center,(base+p.height)/2,b.y+b.h/2-center)})())}
-  // Peripheral equipment and trees communicate scale while remaining low-poly.
-  // Static foliage is batched into instanced trunks and two-tone crown layers.
-  const trees=new THREE.Group();scene.add(trees);
+  // Layered broadleaf trees add a natural silhouette without per-tree draw calls.
   const treeLocations=[[-45,-10],[-40,12],[-8,-36],[42,-8],[40,12],[-6,39]];
-  const treeDummy=new THREE.Object3D();
-  const treeTrunks=new THREE.InstancedMesh(new THREE.CylinderGeometry(.38,.52,1,6),dark,treeLocations.length);
-  treeTrunks.castShadow=true;treeTrunks.receiveShadow=true;
-  treeLocations.forEach(([x,z],index)=>{treeDummy.position.set(x,1.5,z);treeDummy.scale.set(1,3,1);treeDummy.rotation.set(0,0,0);treeDummy.updateMatrix();treeTrunks.setMatrixAt(index,treeDummy.matrix)});
-  treeTrunks.instanceMatrix.needsUpdate=true;treeTrunks.computeBoundingSphere();trees.add(treeTrunks);
-  const treeCrownA=mat(0x5e896c,{roughness:1}),treeCrownB=mat(0x78a88a,{roughness:1});
-  const crownGeometry=new THREE.ConeGeometry(1,1,7);
-  const lowerCrowns=new THREE.InstancedMesh(crownGeometry,treeCrownA,treeLocations.length);
-  const upperCrowns=new THREE.InstancedMesh(crownGeometry,treeCrownB,treeLocations.length);
-  lowerCrowns.castShadow=upperCrowns.castShadow=true;lowerCrowns.receiveShadow=upperCrowns.receiveShadow=true;
-  treeLocations.forEach(([x,z],index)=>{
-    treeDummy.position.set(x,4.25,z);treeDummy.scale.set(2.5,3.4,2.5);treeDummy.updateMatrix();lowerCrowns.setMatrixAt(index,treeDummy.matrix);
-    treeDummy.position.set(x,5.85,z);treeDummy.scale.set(1.85,2.65,1.85);treeDummy.updateMatrix();upperCrowns.setMatrixAt(index,treeDummy.matrix);
-  });
-  lowerCrowns.instanceMatrix.needsUpdate=true;upperCrowns.instanceMatrix.needsUpdate=true;
-  lowerCrowns.computeBoundingSphere();upperCrowns.computeBoundingSphere();
-  trees.add(lowerCrowns,upperCrowns);
+  const trees=createTreeModel(treeLocations,{scale:1.06,seed:7});
+  scene.add(trees);
   const fixedSensorMaterial=new THREE.MeshStandardMaterial({color:0x5f63ad,roughness:.5});let fixedSensorKey=null,fixedSensorMarkers=[];function updateFixedSensors(sensors,visible){const key=JSON.stringify([sensors,lastState?.heightfield]);if(key!==fixedSensorKey){fixedSensorKey=key;for(const g of fixedSensorMarkers){scene.remove(g);g.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()})}fixedSensorMarkers=sensors.map(f=>{const g=new THREE.Group(),pole=new THREE.Mesh(new THREE.CylinderGeometry(.18,.18,Math.max(f.height,.2),8),fixedSensorMaterial),head=new THREE.Mesh(new THREE.SphereGeometry(.7,12,8),fixedSensorMaterial);pole.position.y=Math.max(f.height,.2)/2;head.position.y=f.height;g.add(pole,head);g.position.set(f.x-center,floor(f.x,f.y),f.y-center);scene.add(g);return g})}for(const g of fixedSensorMarkers)g.visible=visible}
   const markers=new Map();function createMarker(){const marker=new THREE.Group();const ring=new THREE.Mesh(new THREE.TorusGeometry(2.6,.25,8,32),red);ring.rotation.x=Math.PI/2;ring.position.y=.3;marker.add(ring);const pillar=new THREE.Mesh(new THREE.ConeGeometry(1,3.4,5),red);pillar.position.y=4;pillar.rotation.z=Math.PI;marker.add(pillar);scene.add(marker);return marker}
   const sampleMarkers=new Map(),sampleMaterial=new THREE.MeshBasicMaterial({color:0x9252bd});function createSampleMarker(){const marker=new THREE.Group(),ring=new THREE.Mesh(new THREE.TorusGeometry(3.2,.3,8,24),sampleMaterial),crystal=new THREE.Mesh(new THREE.OctahedronGeometry(1.25),sampleMaterial);ring.rotation.x=Math.PI/2;ring.position.y=.4;crystal.position.y=3.2;marker.add(ring,crystal);scene.add(marker);return marker}

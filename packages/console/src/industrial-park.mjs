@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import layout from '../../world/scenes/industrial-park-v2-layout.json' with {type:'json'};
 import campusScene from '../../world/scenes/industrial-park-v2.json' with {type:'json'};
+import {createTreeModel} from './tree-model.mjs';
 
 function gate(axis, beforeId, afterId, label) {
   const before = campusScene.obstacles.find(o => o.id === beforeId);
@@ -197,22 +198,15 @@ export function createIndustrialPark(scene, {modern=false}={}) {
     const {box, build} = model(spaces);
     const paving = 0xb2aaa0;
     const lawn = 0x658b73;
-    const canopy = 0x4a7358;
-    const crown = new THREE.IcosahedronGeometry(.5, 1);
+    const treeLocations = [];
     for (const side of [-1, 1]) {
       box(paving, 22, .06, 16, side * 20, -.031, 91);
       for (const x of [14, 29]) box(lawn, 4, .07, 10, side * x, .02, 91);
       box(paving, 4.4, .03, 38.5, side * 9.2, -.027, 78.75);
-      for (const z of [66, 75, 84, 94]) {
-        const x = side * 10.9;
-        box(steel, .62, 2.8, .62, x, 1.4, z);
-        box(canopy, 3.5, 4.3, 3.5, x, 3.65, z, false, 0, crown);
-      }
-      for (const x of [14, 29]) {
-        box(steel, .6, 2.5, .6, side * x, 1.25, 91);
-        box(canopy, 4.7, 4.6, 4.7, side * x, 3.72, 91, false, 0, crown);
-      }
+      for (const z of [66, 75, 84, 94]) treeLocations.push([side * 10.9, z]);
+      for (const x of [14, 29]) treeLocations.push([side * x, 91]);
     }
+    spaces.add(createTreeModel(treeLocations, {seed: 19}));
     box(paving, 2.1, .07, 25, 0, .025, 82);
     for (const z of [72, 78, 84, 90]) {
       box(lawn, 1.44, .1, 3.9, 0, .075, z);
@@ -372,11 +366,7 @@ export function createIndustrialPark(scene, {modern=false}={}) {
       for(const shift of [-2.1,2.1])box(yellow,.17,.015,8,x+shift-center,.006,z-center);
       box(yellow,4.2,.015,.17,x-center,.006,z+4-center);
     }
-    const crown=new THREE.IcosahedronGeometry(.5,1);
-    for(const [x,z] of campus.trees){
-      box(0x736657,.55,2.6,.55,x-center,1.3,z-center);
-      box(0x527959,4.3,5.0,4.3,x-center,3.7,z-center,false,0,crown);
-    }
+    streets.add(createTreeModel(campus.trees.map(([x,z])=>[x-center,z-center]),{scale:.96,seed:29}));
     for(const gate of campus.gates){
       const east=gate.axis==='x',x=gate.x-center,z=gate.y-center;
       box(blue,east?1.05:gate.width,1.4,east?gate.width:1.05,x,5.7,z);
