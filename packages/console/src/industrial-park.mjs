@@ -63,7 +63,9 @@ export const industrialEntrances = [
 
 export function createIndustrialPark(scene, {modern=false}={}) {
   const center = modern ? campusScene.worldSize / 2 : 50;
-  const groundGeometry = new THREE.PlaneGeometry(industrialGroundSize, industrialGroundSize, 160, 160);
+  // The relief is only a distant backdrop. 96 segments keep the horizon soft
+  // while cutting the background mesh to roughly one third of its old cost.
+  const groundGeometry = new THREE.PlaneGeometry(industrialGroundSize, industrialGroundSize, 96, 96);
   groundGeometry.rotateX(-Math.PI / 2);
   const positions = groundGeometry.attributes.position;
   const colors = new Float32Array(positions.count * 3);
@@ -389,6 +391,66 @@ export function createIndustrialPark(scene, {modern=false}={}) {
     build();
   }
 
+  function buildModernDetails() {
+    const details = new THREE.Group();
+    details.name = 'Industrial campus details';
+    siteModels.add(details);
+    const {box, build} = model(details, {receiveShadow: false});
+    const lawn = 0x6f8a73;
+    const curb = 0x737d80;
+    const lamp = 0x384a55;
+    const lampGlow = 0xe7d6a5;
+    const safety = 0xe4ad42;
+    const wheelStop = 0x56636a;
+
+    // Planting strips frame the central pedestrian spine without changing the
+    // simulation walkable rectangles.  They also give the overhead view a
+    // clear north/south axis between the control and office buildings.
+    for (const x of [101.4, 130.6]) {
+      box(lawn, 2.4, .08, 33, x - center, -.055, 187 - center, true);
+      for (const z of [174, 184, 194, 204]) {
+        box(curb, 2.65, .08, .12, x - center, .01, z - center, true);
+      }
+    }
+
+    // Repeated street furniture is batched into a handful of instanced meshes.
+    // It is presentation-only and disappears with the low quality profile.
+    for (const [x, z] of [[102, 176], [102, 186], [102, 196], [102, 206],
+      [130, 176], [130, 186], [130, 196], [130, 206]]) {
+      box(lamp, .16, 4.6, .16, x - center, 2.3, z - center, true);
+      box(lamp, .78, .14, .14, x + .32 - center, 4.48, z - center, true);
+      box(lampGlow, .24, .12, .24, x + .67 - center, 4.39, z - center, true);
+    }
+
+    // Wheel stops and safety bollards make the loading apron read as a real
+    // service area while staying inside the existing truck-bay footprints.
+    for (const [x, z] of campus.truckBays) {
+      box(wheelStop, 3.3, .16, .28, x - center, .12, z - 3.2 - center, true);
+      for (const side of [-1, 1]) {
+        box(safety, .22, .9, .22, x + side * 2.15 - center, .45, z - 3.7 - center, true);
+      }
+    }
+
+    // Low curb islands break up the large asphalt fields around the gates.
+    for (const [x, z, w, d] of [[103, 157, 7, 2], [121, 157, 7, 2], [103, 213, 7, 1.2], [121, 213, 7, 1.2]]) {
+      box(curb, w, .12, d, x - center, .06, z - center, true);
+      box(lawn, Math.max(1, w - .5), .08, Math.max(.45, d - .35), x - center, .14, z - center, true);
+    }
+
+    // Small gate-side bollards improve scale at both vehicle entrances.
+    for (const gate of campus.gates) {
+      const east = gate.axis === 'x';
+      for (const side of [-1, 1]) {
+        const offset = side * (gate.width / 2 + 1.55);
+        box(safety, east ? .24 : .24, 1.05, east ? .24 : .24,
+          gate.x - center + (east ? 0 : offset), .525,
+          gate.y - center + (east ? offset : 0), true);
+      }
+    }
+    build();
+  }
+  if (modern) buildModernDetails();
+
   function building({id, x, y, w, h: d, height: h}) {
     const spec=modern?campus.buildings[id]:null;
     const kind=spec?.style??id;
@@ -446,6 +508,16 @@ export function createIndustrialPark(scene, {modern=false}={}) {
           box(kind === 'warehouse' ? concrete : blue, w * bayWidth*.69, .07, .14, door, h * row, front + .12, true);
         }
       }
+      if (modern) {
+        // One continuous canopy and a shallow dock give the loading facade a
+        // readable horizontal break without adding high-frequency geometry.
+        box(steel, w * .82, .12, .72, 0, h * .59, front + .34, true);
+        box(white, w * .80, .08, .18, 0, h * .605, front + .68, true);
+        box(concrete, w * .86, .16, .52, 0, .10, front + .22, true);
+        for (const fraction of [-.36, .36]) {
+          box(yellow, .22, .78, .22, w * fraction, h * .30, front + .30, true, 0, cylinder);
+        }
+      }
       box(glass, .2, h * .18, d * .74, side + .065, h * .69, 0);
       for (const f of [-.32, -.16, 0, .16, .32]) {
         box(white, .18, h * .18, .1, side + .09, h * .69, d * f, true);
@@ -498,6 +570,13 @@ export function createIndustrialPark(scene, {modern=false}={}) {
       }
       box(white, w * .15, h * .35, .14, w * .3, h * .175, front + .11);
       box(blue, w * .33, h * .075, d * .26, -w * .2, h * .96, -d * .16);
+      if (modern) {
+        box(steel, w * .38, .16, .9, 0, h * .38, front + .48, true);
+        box(glass, w * .28, .08, .12, 0, h * .42, front + .95, true);
+        for (const fraction of [-.16, .16]) {
+          box(steel, .18, h * .34, .18, w * fraction, h * .18, front + .47, true);
+        }
+      }
     }
     m.build();
     roofLabel(root, spec?.label??style.label, '#263641', w * (modern?.48:.75), 0, h * (modern&&kind==='workshop'?.983:.945), d * (modern?.27:.20));
