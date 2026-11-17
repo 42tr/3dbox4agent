@@ -11,6 +11,7 @@ const path = require('node:path');
 const {createInterface} = require('node:readline');
 const {createServer} = require('../../packages/world/server/world-server');
 const {createConsoleServer} = require('../../packages/console/server/console-server');
+const {hashPassword} = require('../../packages/console/server/console-auth');
 
 const root = path.resolve(__dirname, '../..');
 const target = process.env.CARGO_TARGET_DIR || path.join(root, 'packages/control-server/target');
@@ -40,7 +41,10 @@ const operator = 'browser-test-operator';
         if (match) {clearTimeout(timer); resolve('http://' + match[1]);}
       });
     });
-    consoleServer = createConsoleServer({controlUrl: base, worldUrl});
+    consoleServer = createConsoleServer({controlUrl: base, worldUrl, auth: {
+      username:'admin',passwordHash:await hashPassword('browser-test-password'),operatorToken:operator,
+      dataDir:path.join(dir,'console'),secure:false,
+    }});
     await once(consoleServer.listen(0, '127.0.0.1'), 'listening');
     const url = 'http://127.0.0.1:' + consoleServer.address().port;
     async function api(route, token, body) {
@@ -67,13 +71,29 @@ const operator = 'browser-test-operator';
       executablePath: process.env.BOX_CHROME_EXECUTABLE || undefined,
       headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
     });
-    const page = await browser.newPage({viewport: {width: 1440, height: 1000}});
+    const context = await browser.newContext({viewport: {width: 1440, height: 1000}});
+    const page = await context.newPage();
     const errors = [];
+    const browserRequests = [];
+    page.on('request',request=>{if(request.url().includes('/console-api/'))browserRequests.push(request);});
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(url + '/#run=' + run.run_id);
+    await page.waitForURL('**/login?**');
+    assert.equal(new URL(page.url()).searchParams.get('returnTo'),'/#run='+run.run_id);
+    await page.getByLabel('账号',{exact:true}).fill('admin');
+    await page.getByLabel('密码',{exact:true}).fill('wrong-password');
+    await page.getByRole('button',{name:'登录',exact:true}).click();
+    await page.getByRole('alert').getByText('账号或密码不正确。').waitFor();
+    await page.getByLabel('密码',{exact:true}).fill('browser-test-password');
+    await page.getByRole('button',{name:'登录',exact:true}).click();
+    await page.waitForURL(url + '/#run=' + run.run_id);
     const panel = page.locator('.mc-agent-panel');
-    await panel.getByLabel('管理令牌').fill(operator);
-    await panel.getByRole('button', {name: '连接', exact: true}).click();
+    await panel.getByText(note,{exact:true}).waitFor();
+    assert.equal(await page.getByLabel('管理令牌').count(),0);
+    await page.reload();
+    await panel.getByText(note,{exact:true}).waitFor();
+    assert.equal(new URL(page.url()).pathname,'/');
+    assert.equal(await page.evaluate(()=>document.cookie.includes('threebox_console_session')),false);
     await panel.getByRole('button', {name: '打开三维观察与执行记录'}).click();
     await page.waitForFunction(() => !document.querySelector('.mc-tool-dialog').open);
     await page.locator('.mc-feed').getByText(note, {exact: true}).waitFor();
@@ -93,9 +113,41 @@ const operator = 'browser-test-operator';
     if (process.env.BOX_BROWSER_SCREENSHOT) {
       await page.screenshot({path: process.env.BOX_BROWSER_SCREENSHOT, fullPage: true});
     }
-    assert.deepEqual(errors, []);
     await api('/tools/box_cancel_run', token, {...args, request_id: 'cleanup'});
-    console.log('Task browser: deep link, login, observer join, live notes and World progress passed.');
+    for(let i=0;i<40;i++){
+      const saved=await api('/runs/'+run.run_id,operator);
+      if(saved.archive_status==='ready')break;
+      await new Promise(resolve=>setTimeout(resolve,250));
+    }
+    // A saved run opens without credentials in a new tab of the same browser.
+    const replayPage=await page.context().newPage();
+    replayPage.on('pageerror',error=>errors.push(error.message));
+    await replayPage.goto(url+'/#run='+run.run_id);
+    await replayPage.locator('.mc-agent-panel').getByRole('button',{name:'打开回放',exact:true}).click();
+    await replayPage.waitForFunction(()=>!document.querySelector('.mc-tool-dialog').open);
+    await replayPage.locator('.mc-feed').getByText(note,{exact:true}).waitFor();
+    assert(await replayPage.locator('.mc-source').textContent().then(text=>text.includes('导入回放')));
+    const cookies=await page.context().cookies();
+    const sessionCookie=cookies.find(cookie=>cookie.name==='threebox_console_session');
+    assert(sessionCookie.httpOnly&&sessionCookie.sameSite==='Lax');
+    assert(browserRequests.length>0);
+    for(const request of browserRequests)assert.equal(request.headers().authorization,undefined);
+    await replayPage.getByRole('button',{name:'admin · 退出登录',exact:true}).click();
+    await replayPage.waitForURL('**/login?**');
+    // The original tab detects revocation while polling, and returns to login too.
+    await page.waitForURL('**/login?**');
+    const denied=await fetch(url+'/console-api/runs/v1/runs/'+run.run_id+'/report',{
+      headers:{cookie:'threebox_console_session='+sessionCookie.value},
+    });
+    assert.equal(denied.status,401);
+    // Login cannot redirect to a remote site, even with a crafted returnTo.
+    await replayPage.goto(url+'/login?returnTo='+encodeURIComponent('//attacker.example/'));
+    await replayPage.getByLabel('账号',{exact:true}).fill('admin');
+    await replayPage.getByLabel('密码',{exact:true}).fill('browser-test-password');
+    await replayPage.getByRole('button',{name:'登录',exact:true}).click();
+    await replayPage.waitForURL(url+'/');
+    assert.deepEqual(errors, []);
+    console.log('Task browser: login redirect/return, reload, observer, SSE, replay, logout and safe redirects passed.');
   } finally {
     if (browser) await browser.close();
     if (control) {control.kill(); await controlExit;}

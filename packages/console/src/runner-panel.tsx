@@ -1,4 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
+import {consoleFetch,useConsoleSession} from './console-session';
 import {DEFAULT_SCENE_ID} from './world-settings';
 
 type Capabilities = {
@@ -65,7 +66,7 @@ const optionLabels: Record<string, string> = {
 };
 
 const errors: Record<string, string> = {
-  runner_unauthorized: '请输入有效的 Runner 管理令牌。',
+  runner_unauthorized: '登录已过期，请重新登录。',
   runner_operator_token_required: '请先在 Control 中配置 Runner 管理令牌，再创建外部 Runner。',
   runner_offline: '所选 Runner 已离线。',
   runner_unsupported_config: '所选 Runner 不支持这组配置。',
@@ -115,9 +116,8 @@ export function RunnerPanel({
   const [runs, setRuns] = useState<Run[]>([]);
   const [runnerId, setRunnerId] = useState('');
   const [config, setConfig] = useState(defaults);
-  const [operator, setOperator] = useState('');
-  const [needsOperator, setNeedsOperator] = useState(false);
-  const [operatorDraft, setOperatorDraft] = useState('');
+  const session = useConsoleSession(active);
+  const authenticated = session.authenticated;
   const [label, setLabel] = useState('');
   const [revoking, setRevoking] = useState('');
   const [enrollment, setEnrollment] = useState<{runnerId: string; runnerToken: string}>();
@@ -130,24 +130,22 @@ export function RunnerPanel({
 
   async function request<T>(route: string, options: RequestInit = {}): Promise<T> {
     if (location.protocol === 'file:') throw Error('请通过在线 Console 使用 Runner。');
-    const response = await fetch('/control/runners/v1' + route, {
+    const response = await consoleFetch('/runners/v1' + route, {
       ...options, cache: 'no-store',
       headers: {
-        ...(operator ? {Authorization: 'Bearer ' + operator} : {}),
         ...(options.body ? {'Content-Type': 'application/json'} : {}),
       },
     });
     if (!response.ok) {
       const info = await response.json().catch(() => ({}));
       if (response.status === 404 && route === '/runners') throw Error('当前 Control 未启用 Runner。');
-      if (response.status === 401) setNeedsOperator(true);
       throw Error(info.error || 'Runner 请求失败（' + response.status + '）');
     }
     return response.json();
   }
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !authenticated) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
@@ -173,7 +171,7 @@ export function RunnerPanel({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [active, operator]);
+  }, [active, authenticated]);
 
   async function perform(task: () => Promise<void>) {
     setBusy(true);
@@ -247,6 +245,7 @@ export function RunnerPanel({
 
   const shown = caps && matchingConfig(config, caps);
   return <section className="mc-runner-panel" aria-label="Runner 实验">
+    {!authenticated&&<p role="status">{session.loading?'正在检查登录状态…':session.error||'请联系管理员配置 Console 登录账号。'}</p>}
     <form className="mc-runner-form" onSubmit={start}>
       <label>Runner<select value={runnerId} onChange={event => setRunnerId(event.target.value)} disabled={!runners.length}>
         {!runners.length && <option value="">暂无 Runner</option>}
@@ -297,24 +296,14 @@ export function RunnerPanel({
         </>}
       </div>
     </li>)}</ul>
-    <details key={String(needsOperator)} open={needsOperator || undefined}>
-      <summary>管理令牌与外部 Runner</summary>
-      <form className="mc-runner-form" onSubmit={event => {
-        event.preventDefault();
-        setOperator(operatorDraft.trim());
-        setOperatorDraft('');
-        setNeedsOperator(false);
-      }}>
-        <label>管理令牌<input type="password" autoComplete="off" value={operatorDraft}
-          onChange={event => setOperatorDraft(event.target.value)}/></label>
-        <button type="submit" className="mc-pill">应用令牌</button>
-      </form>
+    <details>
+      <summary>外部 Runner 接入</summary>
       <form className="mc-runner-form" onSubmit={enroll}>
         <label>Runner 名称<input required maxLength={60} value={label}
           onChange={event => setLabel(event.target.value)}/></label>
-        <button type="submit" className="mc-pill" disabled={busy || !operator}>签发接入凭据</button>
+        <button type="submit" className="mc-pill" disabled={busy || !authenticated}>签发接入凭据</button>
       </form>
-      {!!operator && runners.some(item => item.runnerId !== 'builtin') && <ul className="mc-runner-runs">
+      {!!authenticated && runners.some(item => item.runnerId !== 'builtin') && <ul className="mc-runner-runs">
         {runners.filter(item => item.runnerId !== 'builtin').map(item => <li key={item.runnerId}>
           <div><strong>{item.label}</strong><small>{item.online ? '在线' : '离线'}</small></div>
           {revoking === item.runnerId ? <div className="mc-runner-actions">

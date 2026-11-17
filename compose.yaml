@@ -64,6 +64,13 @@ services:
       BOX_CONTROL_URL: http://control:8789
       BOX_WORLD_URL: http://world:8787
       BOX_ALLOWED_HOSTS: ${BOX_ALLOWED_HOSTS:-}
+      BOX_CONSOLE_URL: ${BOX_CONSOLE_URL:-http://127.0.0.1:8787}
+      BOX_CONSOLE_USERNAME: ${BOX_CONSOLE_USERNAME:-}
+      BOX_CONSOLE_PASSWORD_HASH: ${BOX_CONSOLE_PASSWORD_HASH:-}
+      BOX_RUNNER_OPERATOR_TOKEN: ${BOX_RUNNER_OPERATOR_TOKEN:-}
+      BOX_CONSOLE_DATA_DIR: /var/lib/3dbox-console
+    volumes:
+      - console-data:/var/lib/3dbox-console
     init: true
     read_only: true
     cap_drop:
@@ -98,3 +105,4 @@ volumes:
   world-data:
   control-data:
   runner-auth:
+  console-data:

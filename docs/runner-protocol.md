@@ -4,7 +4,7 @@
 
 ## 注册和领取任务
 
-1. 部署管理员必须配置非空的 `BOX_RUNNER_OPERATOR_TOKEN`；未配置时所有 operator 接口统一返回 `runner_operator_token_required`。在 Console 的 **Runner 实验 → 管理令牌与外部 Runner** 应用令牌并签发 `runnerId` 和 `runnerToken`。
+1. 部署管理员必须配置非空的 `BOX_RUNNER_OPERATOR_TOKEN`；未配置时所有 operator 接口统一返回 `runner_operator_token_required`。按 [Console 登录指南](console-login.md) 配置账号并登录后，在 **Runner 实验 → 外部 Runner 接入** 签发 `runnerId` 和 `runnerToken`；浏览器不再输入管理令牌。
 2. 外部进程持 Runner Token 调用 `POST /runners/{runnerId}/register`，提交 `protocolVersion: 1` 和 `capabilities`。能力包括场景、物理模式、故障模式、策略标识、协调器上限和并发数。重连时重新注册。
 3. 调用 `POST /runners/{runnerId}/claim` 领取任务。无任务时返回 `{"job":null}`。有任务时返回 `job`，内含 `runId`、`leaseToken`、`leaseSeconds` 和 `config`。空闲 Runner 应定期领取以更新在线状态。内置 Runner 每 0.5 秒检查队列。
 4. 使用 Lease Token 调用 `POST /runs/{runId}/heartbeat` 续约。当前租约为 15 秒，建议每 2 秒续约。租约失效时停止本地执行，Control 会回收这次运行及会话。重新执行时由 Console 提交新的运行。

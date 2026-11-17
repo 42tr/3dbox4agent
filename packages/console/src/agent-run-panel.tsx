@@ -1,4 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
+import {consoleFetch,useConsoleSession} from './console-session';
 
 type Run = {run_id:string; owner_label:string; status:string; phase:string; control_epoch:number; tick:number; world_revision:number; objective:{instruction:string}; conditions?:{task_id:string;done:boolean}[]; archive_status:string; can_observe:boolean; result?:{success:boolean;reason:string}; reason?:string};
 type RunEvent = {seq:number;run_id:string;kind:string;tick:number;world_revision:number;occurred_at_ms:number;payload:Record<string,any>};
@@ -33,25 +34,26 @@ export function AgentRunTimeline({focusAgent}:{focusAgent?:(id:string)=>void}){
 }
 
 export function AgentRunPanel({active,canObserve,openObserver,openReplay}:{active:boolean;canObserve:boolean;openObserver:(access:Access)=>Promise<void>;openReplay:(load:()=>Promise<unknown>)=>Promise<void>}){
-  const [token,setToken]=useState(''),[draft,setDraft]=useState(''),[runs,setRuns]=useState<Run[]>([]),[selected,setSelected]=useState(fromHash),[integrations,setIntegrations]=useState<Integration[]>([]),[label,setLabel]=useState('我的 Agent'),[issued,setIssued]=useState<{token:string;integration:Integration}|null>(null),[error,setError]=useState(''),[actionError,setActionError]=useState(''),[busy,setBusy]=useState(false);
+  const [runs,setRuns]=useState<Run[]>([]),[selected,setSelected]=useState(fromHash),[integrations,setIntegrations]=useState<Integration[]>([]),[label,setLabel]=useState('我的 Agent'),[issued,setIssued]=useState<{token:string;integration:Integration}|null>(null),[error,setError]=useState(''),[actionError,setActionError]=useState(''),[busy,setBusy]=useState(false);
+  const session=useConsoleSession(active||!!selected),authenticated=session.authenticated;
   const current=runs.find(r=>r.run_id===selected);const selectedRef=useRef(selected);selectedRef.current=selected;
   const requests=useRef(new Map<string,string>());
   const endpoint=location.protocol==='file:'?'请从在线 Console 打开':location.origin+'/control/mcp/control';
   async function request<T>(route:string,options:RequestInit={}):Promise<T>{
-    const response=await fetch('/control/runs/v1'+route,{...options,headers:{authorization:'Bearer '+token,'content-type':'application/json',...options.headers}});
+    const response=await consoleFetch('/runs/v1'+route,options);
     const data=await response.json();if(!response.ok)throw Error(data.code||data.error||'请求失败');return data;
   }
   useEffect(()=>{const change=()=>{const id=fromHash();if(id)setSelected(id)};window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change)},[]);
   useEffect(()=>{
-    if(!token||!active&&!selected)return;const abort=new AbortController();let timer:ReturnType<typeof setTimeout>;
+    if(!authenticated||!active&&!selected)return;const abort=new AbortController();let timer:ReturnType<typeof setTimeout>;
     async function update(){try{const data=await request<{runs:Run[]}>('/runs',{signal:abort.signal});if(abort.signal.aborted)return;setRuns(data.runs);setError('');const chosen=data.runs.find(r=>r.run_id===selectedRef.current);if(chosen)publish({...view,run:chosen});}catch(e){if(!abort.signal.aborted)setError(e instanceof Error?e.message:'无法读取运行')}finally{if(!abort.signal.aborted)timer=setTimeout(update,1000)}}
     void update();return()=>{abort.abort();clearTimeout(timer)};
-  },[token,active,selected]);
+  },[authenticated,active,selected]);
   useEffect(()=>{
-    if(!token||!selected)return;const abort=new AbortController();let cursor=0,timer:ReturnType<typeof setTimeout>;
+    if(!authenticated||!selected)return;const abort=new AbortController();let cursor=0,timer:ReturnType<typeof setTimeout>;
     publish({run:runs.find(r=>r.run_id===selected)||null,events:[],connection:'连接记录流…'});
     async function connect(){try{
-      const response=await fetch(`/control/runs/v1/runs/${encodeURIComponent(selected)}/events/stream?after=${cursor}`,{headers:{authorization:'Bearer '+token},signal:abort.signal});
+      const response=await consoleFetch(`/runs/v1/runs/${encodeURIComponent(selected)}/events/stream?after=${cursor}`,{signal:abort.signal});
       if(abort.signal.aborted)return;if(!response.ok||!response.body)throw Error('执行记录连接失败');publish({...view,connection:'实时记录'});
       const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
       while(!abort.signal.aborted){const {value,done}=await reader.read();if(done||abort.signal.aborted)break;buffer+=decoder.decode(value,{stream:true});let boundary;
@@ -59,26 +61,26 @@ export function AgentRunPanel({active,canObserve,openObserver,openReplay}:{activ
       }
     }catch(e){if(!abort.signal.aborted)publish({...view,connection:'连接中断，正在补拉记录…'})}finally{if(!abort.signal.aborted)timer=setTimeout(connect,1000)}}
     void connect();return()=>{abort.abort();clearTimeout(timer)};
-  },[token,selected]);
-  useEffect(()=>{if(active&&token)void request<{integrations:Integration[]}>('/integrations').then(v=>setIntegrations(v.integrations)).catch(()=>setIntegrations([]))},[active,token]);
+  },[authenticated,selected]);
+  useEffect(()=>{if(active&&authenticated)void request<{integrations:Integration[]}>('/integrations').then(v=>setIntegrations(v.integrations)).catch(()=>setIntegrations([]))},[active,authenticated]);
   async function perform(fn:()=>Promise<void>){setBusy(true);setActionError('');try{await fn()}catch(e){setActionError(e instanceof Error?e.message:'操作失败')}finally{setBusy(false)}}
   async function command(name:string){if(!current)return;const key=current.run_id+':'+name+':'+current.control_epoch;let id=requests.current.get(key);if(!id){id=crypto.randomUUID();requests.current.set(key,id)}const next=await request<Run>(`/runs/${current.run_id}/commands/${name}`,{method:'POST',body:JSON.stringify({control_epoch:current.control_epoch,request_id:id})});requests.current.delete(key);setRuns(rows=>rows.map(r=>r.run_id===next.run_id?next:r));publish({...view,run:next});}
   return <section className="mc-runner-panel mc-agent-panel" aria-label="Agent 任务">
     <p>将 Control 配置为 MCP 服务，在外部 Agent 中提出任务。这里查看同一次运行的三维状态、工具记录和验收结果。</p>
-    <form className="mc-runner-form" onSubmit={e=>{e.preventDefault();setRuns([]);setIntegrations([]);setIssued(null);setActionError('');publish({run:null,events:[],connection:''});setToken(draft.trim())}}><label>管理令牌<input type="password" autoComplete="off" value={draft} onChange={e=>setDraft(e.target.value)} placeholder="BOX_RUNNER_OPERATOR_TOKEN"/></label><button className="mc-pill violet" disabled={!draft.trim()}>连接</button></form>
-    {!!(error||actionError)&&<p role="alert">{error==='unauthorized'?'令牌无效或已撤销，请重新连接。':error||actionError}</p>}
+    {!authenticated&&<p role="status">{session.loading?'正在检查登录状态…':session.error||'请联系管理员配置 Console 登录账号。'}</p>}
+    {!!(error||actionError)&&<p role="alert">{error||actionError}</p>}
     <h2>任务运行</h2>
     <ul className="mc-runner-runs">{runs.map(run=><li key={run.run_id} className={selected===run.run_id?'mc-agent-selected':''}><div><b>{run.objective.instruction}</b><small>{run.owner_label} · {run.run_id.slice(0,8)}</small><small>{terminal(run)?labels[run.status]:labels[run.phase]||run.phase} · T+{run.tick}</small></div><button className="mc-pill" onClick={()=>setSelected(run.run_id)}>选择运行</button></li>)}</ul>
-    {token&&!runs.length&&<p>暂无运行。签发接入凭据后，让外部 Agent 创建任务。</p>}
-    {selected&&!current&&token&&<p>正在查找链接中的运行；需要有权查看该运行的令牌。</p>}
+    {authenticated&&!runs.length&&<p>暂无运行。签发接入凭据后，让外部 Agent 创建任务。</p>}
+    {selected&&!current&&authenticated&&<p>正在查找链接中的运行。</p>}
     {current&&<div className="mc-agent-detail"><h2>{current.objective.instruction}</h2><div className="mc-runner-actions">
       <button className="mc-pill violet" disabled={busy||!current.can_observe||!canObserve} onClick={()=>void perform(async()=>openObserver(await request<Access>(`/runs/${selected}/observer`,{method:'POST',body:'{}'})))}>打开三维观察与执行记录</button>
       <button className="mc-pill" disabled={busy||current.archive_status!=='ready'} onClick={()=>void perform(()=>openReplay(()=>request(`/runs/${selected}/report`)))}>打开回放</button>
       <button className="mc-pill" disabled={busy||terminal(current)||current.status==='stopping'} onClick={()=>void perform(()=>command(current.phase==='paused'?'resume_run':'pause_run'))}>{current.phase==='paused'?'恢复':'暂停'}</button>
       <button className="mc-pill" disabled={busy||terminal(current)||current.status==='stopping'} onClick={()=>void perform(()=>command('cancel_run'))}>停止运行</button>
     </div><AgentRunTimeline/></div>}
-    <details><summary>Agent 接入配置</summary><label>MCP 地址<input readOnly value={endpoint}/></label><p>支持 Streamable HTTP，认证头为 Authorization: Bearer &lt;接入令牌&gt;。接入令牌与管理令牌分开使用。</p>
-      <form className="mc-runner-form" onSubmit={e=>{e.preventDefault();void perform(async()=>{const value=await request<{token:string;integration:Integration}>('/integrations',{method:'POST',body:JSON.stringify({label})});setIssued(value);setIntegrations(rows=>[...rows,value.integration])})}}><label>Agent 名称<input value={label} maxLength={100} onChange={e=>setLabel(e.target.value)}/></label><button className="mc-pill violet" disabled={busy||!token||!label.trim()}>签发接入凭据</button></form>
+    <details><summary>Agent 接入配置</summary><label>MCP 地址<input readOnly value={endpoint}/></label><p>支持 Streamable HTTP，认证头为 Authorization: Bearer &lt;接入令牌&gt;。外部 Agent 使用独立接入凭据。</p>
+      <form className="mc-runner-form" onSubmit={e=>{e.preventDefault();void perform(async()=>{const value=await request<{token:string;integration:Integration}>('/integrations',{method:'POST',body:JSON.stringify({label})});setIssued(value);setIntegrations(rows=>[...rows,value.integration])})}}><label>Agent 名称<input value={label} maxLength={100} onChange={e=>setLabel(e.target.value)}/></label><button className="mc-pill violet" disabled={busy||!authenticated||!label.trim()}>签发接入凭据</button></form>
       {issued&&<div><p>令牌仅在本次签发后显示，请保存到 Agent 的凭据配置。</p><label>接入令牌<input readOnly type="password" value={issued.token}/></label><button className="mc-pill" onClick={()=>void perform(()=>navigator.clipboard.writeText(issued.token))}>复制令牌</button><details><summary>stdio 配置示例</summary><pre>{JSON.stringify({mcpServers:{'3dbox':{command:'/absolute/path/threebox-mcp-stdio',env:{BOX_CONTROL_URL:location.origin+'/control',BOX_CONTROL_TOKEN:'<接入令牌>'}}}},null,2)}</pre></details></div>}
       <ul className="mc-runner-runs">{integrations.map(i=><li key={i.id}><div>{i.label}<small>{i.revoked?'已撤销':'有效至 '+new Date(i.expires_at*1000).toLocaleDateString()}</small></div><button className="mc-pill" disabled={busy||i.revoked} onClick={()=>void perform(async()=>{await request('/integrations/'+i.id,{method:'DELETE'});setIntegrations(rows=>rows.map(r=>r.id===i.id?{...r,revoked:true}:r));if(issued?.integration.id===i.id)setIssued(null)})}>撤销接入</button></li>)}</ul>
     </details>

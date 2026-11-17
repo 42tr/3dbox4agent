@@ -8,6 +8,8 @@ const zlib = require('node:zlib');
 const {createControlProxy} = require('@42tr/3dbox4agent-control/http-forward');
 const {requestOriginError} = require('@42tr/3dbox4agent-control/request-origin');
 const {loadDeploymentInfo, renderDeploymentPage} = require('./deployment-info');
+const {createConsoleAuth, browserWriteAllowed, json} = require('./console-auth');
+const {serveLogin} = require('./login-page');
 
 const streamHeaders = ['host', 'origin', 'connection', 'upgrade', 'sec-websocket-key',
   'sec-websocket-version', 'sec-websocket-protocol', 'sec-websocket-extensions'];
@@ -44,6 +46,7 @@ function proxyStream(origin, req, socket, head) {
 
 function createConsoleServer({
   controlUrl,
+  auth: authOptions,
   worldUrl = process.env.BOX_WORLD_URL || 'http://127.0.0.1:8787',
   htmlPath = path.join(__dirname, '../dist/index.html'),
   deploymentInfoPath = process.env.BOX_DEPLOYMENT_INFO || path.join(__dirname, '../../../deployment-info.json')
@@ -53,6 +56,7 @@ function createConsoleServer({
     throw new Error('BOX_WORLD_URL must be an HTTP or HTTPS origin');
   }
   const proxy = createControlProxy(controlUrl, {preserveOrigin: true});
+  const auth = createConsoleAuth(authOptions);
   const html = fs.readFileSync(htmlPath);
   const htmlGzip = zlib.gzipSync(html, {level: 6});
   const deploymentInfo = loadDeploymentInfo(deploymentInfoPath);
@@ -65,6 +69,26 @@ function createConsoleServer({
       return res.end(JSON.stringify({error}));
     }
     const pathname = req.url.split('?', 1)[0];
+    if (pathname === '/login' && ['GET', 'HEAD'].includes(req.method)) return serveLogin(req, res);
+    if (pathname.startsWith('/auth/')) {
+      return auth.handle(req, res, pathname).catch(() => {
+        if (!res.headersSent && !res.destroyed) json(res, 500, {error: 'login_unavailable'});
+      });
+    }
+    if (pathname.startsWith('/console-api/')) {
+      const session = auth.session(req);
+      if (!session) return json(res, 401, {error: 'login_required'});
+      const target = req.url.slice('/console-api'.length);
+      // Only browser management routes may borrow the operator identity.
+      const taskRoute = /^\/runs\/v1\/(?:integrations(?:\/[a-zA-Z0-9-]+)?|runs(?:\/[a-zA-Z0-9-]+(?:\/(?:report|observer|events(?:\/stream)?|commands\/(?:pause_run|resume_run|cancel_run)))?)?)$/;
+      const runnerRoute = /^\/runners\/v1\/(?:runners(?:\/[a-zA-Z0-9-]+)?|runs(?:\/[a-zA-Z0-9-]+(?:\/(?:report|observer|cancel))?)?)$/;
+      const route = target.split('?', 1)[0];
+      if (!taskRoute.test(route) && !runnerRoute.test(route)) return json(res, 404, {error: 'not_found'});
+      if (!['GET', 'HEAD'].includes(req.method) && !browserWriteAllowed(req)) return json(res, 403, {error: 'invalid_origin'});
+      req.headers.authorization = 'Bearer ' + auth.operatorToken;
+      auth.bindResponse(session, res);
+      return proxy(req, res, target);
+    }
     if (pathname === '/deployment.json' && ['GET', 'HEAD'].includes(req.method)) {
       res.writeHead(200, {'content-type': 'application/json; charset=utf-8', 'content-length': deploymentJson.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff'});
       return res.end(req.method === 'HEAD' ? undefined : deploymentJson);

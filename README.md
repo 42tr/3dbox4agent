@@ -8,10 +8,12 @@
 
 ```sh
 export BOX_RUNNER_OPERATOR_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+export BOX_CONSOLE_USERNAME=admin
+export BOX_CONSOLE_PASSWORD_HASH="$(python3 -c 'import getpass,sys; sys.stdout.write(getpass.getpass("Console password: "))' | node packages/console/server/hash-password.js)"
 docker compose up --build --wait
 ```
 
-保存上面生成的 operator token，在 **Runner 实验 → 管理令牌与外部 Runner** 中填入。未配置 token 时，Control 会拒绝所有 operator 管理请求，不会影响普通的本地世界预览。
+保存这些配置到服务器私有的 `.env`（权限 `0600`）；密码至少 12 位，服务器只保存 scrypt 哈希。Console 与 Control 使用同一份 operator token，浏览器通过账号密码登录，不再输入管理令牌。未配置登录账号时管理页面不可用，普通本地世界预览仍可使用。已有部署的登录配置见[Console 登录指南](docs/console-login.md)。
 
 打开 `http://127.0.0.1:8787/`，点击 **连接世界服务**。在左侧打开 **Runner 实验** 可以配置、启动、停止实验和打开回放。Control 的 HTTP 和 MCP 入口在 `127.0.0.1:8789`。用 `BOX_HTTP_PORT` 或 `BOX_CONTROL_PORT` 调整宿主机端口。服务默认仅监听回环地址；使用域名访问时还需设置逗号分隔的 `BOX_ALLOWED_HOSTS`，详见[部署指南](deploy/README.md#端口与-https)。
 

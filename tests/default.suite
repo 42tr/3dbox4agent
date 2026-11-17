@@ -1,4 +1,5 @@
 node tests/integration/build-image.test.js
+node packages/console/tests/console-auth.test.js
 node tests/industrial-park-domain.test.js
 node tests/camera-server.test.js
 node tests/session-lifecycle.test.js

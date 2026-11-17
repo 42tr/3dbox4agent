@@ -218,7 +218,11 @@ function mcpClient(base, token) {
     assert(report.archive.frames.at(-1).done);
     assert.deepEqual(await http(base, '/sessions/' + report.sourceSessionId, {status: 404}), {error: 'session_not_found'});
 
-    await new Promise(resolve => world.close(resolve));
+    // Simulate an upstream outage, including pooled Control connections.
+    // Node's close() can otherwise wait indefinitely for those connections.
+    const worldClosed = new Promise(resolve => world.close(resolve));
+    world.closeAllConnections();
+    await worldClosed;
     assert.deepEqual(await http(base, '/world/health', {status: 502}), {error: 'world_unreachable'});
     assert.deepEqual(await mcp.call('observe_agent', target), {isError: true, value: {error: 'world_unreachable', status: 502}});
     await control.close();
