@@ -4,6 +4,7 @@ import vehicleHeading from './vehicle-heading.js';
 import {updateRouteGeometry} from './route-geometry.mjs';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import motion from './visual-motion.js';
 import quality from './render-quality.js';
 import graphics from './graphics-state.js';
@@ -84,6 +85,7 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   const ground=mat(0xc7dbd1),road=mat(0x9db5aa),building=mat(0xf4f7f3),roof=mat(0xb1c9bf),dark=mat(0x587d70),windowMat=mat(0x86afa4),accent=mat(0x098b83),orange=mat(0xd8904d),violet=mat(0x7585ad),red=mat(0xcf6650);
   const agentMetal=mat(0xc2c8c5,{roughness:.48,metalness:.18});
   const agentPanel=mat(0x263d46,{roughness:.5,metalness:.12});
+  const agentGlass=mat(0x648d99,{roughness:.2,metalness:.28});
   const agentLamp=mat(0xffe0a1,{roughness:.3,emissive:0x4a3210,emissiveIntensity:.22});
   function box(parent,w,h,d,material,x,y,z){const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;parent.add(mesh);return mesh}
   // Device silhouettes are rebuilt often as snapshots change. Shared unit
@@ -91,9 +93,10 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   // rover and robot while preserving per-device materials and transforms.
   function sharedGeometry(geometry){geometry.userData.sharedAgentAsset=true;return geometry}
   const agentGeometry={
-    box:sharedGeometry(new THREE.BoxGeometry(1,1,1)),
-    cylinder:sharedGeometry(new THREE.CylinderGeometry(.5,.5,1,10)),
-    sphere:sharedGeometry(new THREE.SphereGeometry(.5,8,6)),
+    box:sharedGeometry(new RoundedBoxGeometry(1,1,1,2,.065)),
+    cylinder:sharedGeometry(new THREE.CylinderGeometry(.5,.5,1,12)),
+    sphere:sharedGeometry(new THREE.SphereGeometry(.5,12,8)),
+    rotor:sharedGeometry(new THREE.TorusGeometry(.68,.055,6,20)),
   };
   function agentMesh(parent,geometry,material,x,y,z,sx=1,sy=1,sz=1,rx=0,ry=0,rz=0){
     const mesh=new THREE.Mesh(geometry,material);
@@ -173,15 +176,38 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   function createAgent(a){const g=new THREE.Group();g.userData.agentId=a.id;const visual=new THREE.Group();g.add(visual);
     const hex=window.SandboxAgentVisual.color(a.role),model=window.SandboxAgentVisual.model(a,window.SandboxSensors.isAir(a));let color=agentMaterials.get(hex);if(!color){color=mat(hex);agentMaterials.set(hex,color)}
     if(model==='air'){
-      box(visual,2.6,.7,2.6,color,0,0,0);box(visual,5,.18,.3,dark,0,0,0);box(visual,.3,.18,5,dark,0,0,0);
-      for(const [x,z] of [[-2.2,-2.2],[-2.2,2.2],[2.2,-2.2],[2.2,2.2]]){const rotor=new THREE.Mesh(new THREE.TorusGeometry(.65,.08,6,16),dark);rotor.rotation.x=Math.PI/2;rotor.position.set(x,.25,z);visual.add(rotor)}
+      // Streamlined quad-rotor: enclosed battery, connected diagonal arms,
+      // protected rotors, navigation lights, landing skids and a camera gimbal.
+      agentMesh(visual,agentGeometry.sphere,color,0,.03,0,2.35,.74,1.9);
+      agentMesh(visual,agentGeometry.box,agentPanel,-.15,-.34,0,1.48,.30,1.28);
+      agentMesh(visual,agentGeometry.sphere,agentGlass,.72,.30,0,1.08,.38,1.12);
+      agentMesh(visual,agentGeometry.box,agentMetal,-.43,.38,0,.88,.10,1.04);
+      for(const [x,z] of [[-2.2,-2.2],[-2.2,2.2],[2.2,-2.2],[2.2,2.2]]){
+        const length=Math.hypot(x,z)*.9,yaw=-Math.atan2(z,x);
+        agentMesh(visual,agentGeometry.box,agentMetal,x*.5,0,z*.5,length,.16,.20,0,yaw);
+        agentMesh(visual,agentGeometry.cylinder,agentPanel,x,.16,z,.38,.34,.38);
+        agentMesh(visual,agentGeometry.rotor,dark,x,.35,z,1,1,1,Math.PI/2);
+        agentMesh(visual,agentGeometry.box,agentMetal,x,.35,z,1.15,.025,.09,0,x*z>0?Math.PI/4:-Math.PI/4);
+        agentMesh(visual,agentGeometry.sphere,agentLamp,x,.39,z,.14,.12,.14);
+        agentMesh(visual,agentGeometry.sphere,x>0?accent:red,x,.25,z,.13,.13,.13);
+      }
+      for(const z of [-.72,.72]){
+        agentMesh(visual,agentGeometry.box,agentMetal,0,-.82,z,1.8,.09,.10);
+        for(const x of [-.55,.55])agentMesh(visual,agentGeometry.box,agentMetal,x,-.52,z,.08,.55,.08);
+      }
+      agentMesh(visual,agentGeometry.sphere,agentPanel,.91,-.49,0,.46,.46,.46);
+      agentMesh(visual,agentGeometry.cylinder,agentGlass,1.13,-.49,0,.25,.16,.25,0,0,Math.PI/2);
     } else if(model==='water'){g.userData.releaseSurface=surfacePresentation.boat(visual,hex);} else if(model==='wheeled'){
       // Compact transport rover: lower chassis, protected cab, cargo deck,
       // four shared low-poly wheels, and small front/rear lights.
       agentMesh(visual,agentGeometry.box,dark,0,.58,0,4.15,.34,2.45);
       agentMesh(visual,agentGeometry.box,color,0,1.08,0,3.75,1.02,2.25);
       agentMesh(visual,agentGeometry.box,building,1.02,1.82,0,1.28,1.22,1.92);
-      agentMesh(visual,agentGeometry.box,windowMat,1.66,1.88,0,.08,.62,1.52);
+      agentMesh(visual,agentGeometry.box,agentGlass,1.66,1.88,0,.08,.62,1.52);
+      for(const z of [-.97,.97]){
+        agentMesh(visual,agentGeometry.box,agentGlass,1.03,1.89,z,.82,.54,.04);
+        agentMesh(visual,agentGeometry.box,agentMetal,-.95,1.66,z*1.16,1.56,.10,.08);
+      }
       agentMesh(visual,agentGeometry.box,agentPanel,-.94,1.58,0,1.35,.55,1.92);
       agentMesh(visual,agentGeometry.box,agentMetal,-1.02,1.92,0,1.46,.10,2.02);
       for(const [x,z] of [[-1.25,-1.28],[-1.25,1.28],[1.25,-1.28],[1.25,1.28]]){
@@ -193,15 +219,25 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
         agentMesh(visual,agentGeometry.box,red, -1.88,1.02,z,.08,.18,.22);
       }
       for(const z of [-1.18,1.18])agentMesh(visual,agentGeometry.box,dark,1.12,2.42,z,.28,.12,.08);
+      agentMesh(visual,agentGeometry.box,agentMetal,2.04,.62,0,.18,.24,2.34);
+      agentMesh(visual,agentGeometry.box,agentMetal,-2.04,.62,0,.18,.24,2.34);
+      agentMesh(visual,agentGeometry.cylinder,agentPanel,1.0,2.57,0,.14,.28,.14);
+      agentMesh(visual,agentGeometry.sphere,accent,1.0,2.76,0,.22,.16,.22);
     }else{
       // Service robot: weighted base, reinforced body, sensor head, side arms
       // and a front tool plate. All parts use shared primitives.
       agentMesh(visual,agentGeometry.box,dark,0,.22,0,1.95,.34,1.65);
+      for(const x of [-.58,.58])for(const z of [-.86,.86]){
+        agentMesh(visual,agentGeometry.cylinder,agentPanel,x,.28,z,.56,.24,.56,Math.PI/2);
+        agentMesh(visual,agentGeometry.cylinder,agentMetal,x,.28,z*1.15,.24,.26,.24,Math.PI/2);
+      }
       agentMesh(visual,agentGeometry.box,color,0,1.02,0,1.78,1.38,1.52);
       agentMesh(visual,agentGeometry.box,agentPanel,.88,1.12,0,.08,.58,.82);
+      agentMesh(visual,agentGeometry.box,accent,.932,1.24,0,.025,.07,.48);
       agentMesh(visual,agentGeometry.box,orange,.94,.77,0,.08,.14,.58);
+      agentMesh(visual,agentGeometry.box,agentPanel,-.94,1.06,0,.18,.82,1.08);
       agentMesh(visual,agentGeometry.sphere,building,0,2.22,0,.72,.62,.68);
-      agentMesh(visual,agentGeometry.box,windowMat,.58,2.24,0,.10,.30,.48);
+      agentMesh(visual,agentGeometry.box,agentGlass,.58,2.24,0,.10,.30,.48);
       agentMesh(visual,agentGeometry.cylinder,dark,0,2.86,0,.12,.34,.12);
       agentMesh(visual,agentGeometry.sphere,orange,0,3.22,0,.18,.18,.18);
       for(const z of [-.98,.98]){
