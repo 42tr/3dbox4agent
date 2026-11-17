@@ -81,7 +81,24 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   const sun=new THREE.DirectionalLight(0xfff2df,3.6);sun.position.set(-50,60,-40);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-110,right:110,top:110,bottom:-110,near:1,far:250});sun.shadow.bias=-.0004;sun.shadow.normalBias=.12;scene.add(sun);const lunarEnvironment=createLunarEnvironment(scene,renderer);
   const mat=(color,options={})=>new THREE.MeshStandardMaterial({color,roughness:.82,...options});
   const ground=mat(0xc7dbd1),road=mat(0x9db5aa),building=mat(0xf4f7f3),roof=mat(0xb1c9bf),dark=mat(0x587d70),windowMat=mat(0x86afa4),accent=mat(0x098b83),orange=mat(0xd8904d),violet=mat(0x7585ad),red=mat(0xcf6650);
+  const agentMetal=mat(0xc2c8c5,{roughness:.48,metalness:.18});
+  const agentPanel=mat(0x263d46,{roughness:.5,metalness:.12});
+  const agentLamp=mat(0xffe0a1,{roughness:.3,emissive:0x4a3210,emissiveIntensity:.22});
   function box(parent,w,h,d,material,x,y,z){const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);mesh.position.set(x,y,z);mesh.castShadow=true;mesh.receiveShadow=true;parent.add(mesh);return mesh}
+  // Device silhouettes are rebuilt often as snapshots change. Shared unit
+  // geometry avoids allocating and disposing the same primitives for every
+  // rover and robot while preserving per-device materials and transforms.
+  function sharedGeometry(geometry){geometry.userData.sharedAgentAsset=true;return geometry}
+  const agentGeometry={
+    box:sharedGeometry(new THREE.BoxGeometry(1,1,1)),
+    cylinder:sharedGeometry(new THREE.CylinderGeometry(.5,.5,1,10)),
+    sphere:sharedGeometry(new THREE.SphereGeometry(.5,8,6)),
+  };
+  function agentMesh(parent,geometry,material,x,y,z,sx=1,sy=1,sz=1,rx=0,ry=0,rz=0){
+    const mesh=new THREE.Mesh(geometry,material);
+    mesh.position.set(x,y,z);mesh.scale.set(sx,sy,sz);mesh.rotation.set(rx,ry,rz);
+    mesh.castShadow=true;mesh.receiveShadow=true;parent.add(mesh);return mesh;
+  }
   const surfacePresentation=createSurfacePresentation(scene);
   const legacyPark=createIndustrialPark(scene);
   const modernPark=createIndustrialPark(scene,{modern:true});
@@ -138,7 +155,26 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   const terrainMaterial=new THREE.MeshStandardMaterial({color:0xbd9666,transparent:true,opacity:.54,roughness:1,depthWrite:false}),hazardMaterial=new THREE.MeshStandardMaterial({color:0xc75b3a,transparent:true,opacity:.66,roughness:1,depthWrite:false});let terrainKey=null,terrainMeshes=[];function updateTerrain(zones,effects){const key=JSON.stringify([zones,effects,lastState?.heightfield]);if(key===terrainKey)return;terrainKey=key;for(const mesh of terrainMeshes){scene.remove(mesh);mesh.geometry.dispose()}terrainMeshes=zones.map(z=>surfacePatch(z,effects.some(e=>e.zoneId===z.id)?hazardMaterial:terrainMaterial,.07))}
   const roadblockMaterial=mat(0xc45237);let roadblockKey='',roadblockMeshes=[];function updateRoadblocks(blocks,visible){const key=JSON.stringify([visible?blocks:[],lastState?.heightfield]);if(key===roadblockKey)return;roadblockKey=key;for(const mesh of roadblockMeshes){scene.remove(mesh);mesh.geometry.dispose()}roadblockMeshes=(visible?blocks:[]).map(b=>(()=>{const p=elevation.prism(lastState?.heightfield,b),base=p.base||0;return box(scene,b.w,p.height-base,b.h,roadblockMaterial,b.x+b.w/2-center,(base+p.height)/2,b.y+b.h/2-center)})())}
   // Peripheral equipment and trees communicate scale while remaining low-poly.
-  const trees=new THREE.Group();scene.add(trees);for(const [x,z] of [[-45,-10],[-40,12],[-8,-36],[42,-8],[40,12],[-6,39]]){box(trees,1,3,1,dark,x,1.5,z);const crown=new THREE.Mesh(new THREE.ConeGeometry(2.5,5,6),mat(0x74a891));crown.position.set(x,5,z);trees.add(crown)}
+  // Static foliage is batched into instanced trunks and two-tone crown layers.
+  const trees=new THREE.Group();scene.add(trees);
+  const treeLocations=[[-45,-10],[-40,12],[-8,-36],[42,-8],[40,12],[-6,39]];
+  const treeDummy=new THREE.Object3D();
+  const treeTrunks=new THREE.InstancedMesh(new THREE.CylinderGeometry(.38,.52,1,6),dark,treeLocations.length);
+  treeTrunks.castShadow=true;treeTrunks.receiveShadow=true;
+  treeLocations.forEach(([x,z],index)=>{treeDummy.position.set(x,1.5,z);treeDummy.scale.set(1,3,1);treeDummy.rotation.set(0,0,0);treeDummy.updateMatrix();treeTrunks.setMatrixAt(index,treeDummy.matrix)});
+  treeTrunks.instanceMatrix.needsUpdate=true;treeTrunks.computeBoundingSphere();trees.add(treeTrunks);
+  const treeCrownA=mat(0x5e896c,{roughness:1}),treeCrownB=mat(0x78a88a,{roughness:1});
+  const crownGeometry=new THREE.ConeGeometry(1,1,7);
+  const lowerCrowns=new THREE.InstancedMesh(crownGeometry,treeCrownA,treeLocations.length);
+  const upperCrowns=new THREE.InstancedMesh(crownGeometry,treeCrownB,treeLocations.length);
+  lowerCrowns.castShadow=upperCrowns.castShadow=true;lowerCrowns.receiveShadow=upperCrowns.receiveShadow=true;
+  treeLocations.forEach(([x,z],index)=>{
+    treeDummy.position.set(x,4.25,z);treeDummy.scale.set(2.5,3.4,2.5);treeDummy.updateMatrix();lowerCrowns.setMatrixAt(index,treeDummy.matrix);
+    treeDummy.position.set(x,5.85,z);treeDummy.scale.set(1.85,2.65,1.85);treeDummy.updateMatrix();upperCrowns.setMatrixAt(index,treeDummy.matrix);
+  });
+  lowerCrowns.instanceMatrix.needsUpdate=true;upperCrowns.instanceMatrix.needsUpdate=true;
+  lowerCrowns.computeBoundingSphere();upperCrowns.computeBoundingSphere();
+  trees.add(lowerCrowns,upperCrowns);
   const fixedSensorMaterial=new THREE.MeshStandardMaterial({color:0x5f63ad,roughness:.5});let fixedSensorKey=null,fixedSensorMarkers=[];function updateFixedSensors(sensors,visible){const key=JSON.stringify([sensors,lastState?.heightfield]);if(key!==fixedSensorKey){fixedSensorKey=key;for(const g of fixedSensorMarkers){scene.remove(g);g.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()})}fixedSensorMarkers=sensors.map(f=>{const g=new THREE.Group(),pole=new THREE.Mesh(new THREE.CylinderGeometry(.18,.18,Math.max(f.height,.2),8),fixedSensorMaterial),head=new THREE.Mesh(new THREE.SphereGeometry(.7,12,8),fixedSensorMaterial);pole.position.y=Math.max(f.height,.2)/2;head.position.y=f.height;g.add(pole,head);g.position.set(f.x-center,floor(f.x,f.y),f.y-center);scene.add(g);return g})}for(const g of fixedSensorMarkers)g.visible=visible}
   const markers=new Map();function createMarker(){const marker=new THREE.Group();const ring=new THREE.Mesh(new THREE.TorusGeometry(2.6,.25,8,32),red);ring.rotation.x=Math.PI/2;ring.position.y=.3;marker.add(ring);const pillar=new THREE.Mesh(new THREE.ConeGeometry(1,3.4,5),red);pillar.position.y=4;pillar.rotation.z=Math.PI;marker.add(pillar);scene.add(marker);return marker}
   const sampleMarkers=new Map(),sampleMaterial=new THREE.MeshBasicMaterial({color:0x9252bd});function createSampleMarker(){const marker=new THREE.Group(),ring=new THREE.Mesh(new THREE.TorusGeometry(3.2,.3,8,24),sampleMaterial),crystal=new THREE.Mesh(new THREE.OctahedronGeometry(1.25),sampleMaterial);ring.rotation.x=Math.PI/2;ring.position.y=.4;crystal.position.y=3.2;marker.add(ring,crystal);scene.add(marker);return marker}
@@ -156,9 +192,40 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
       box(visual,2.6,.7,2.6,color,0,0,0);box(visual,5,.18,.3,dark,0,0,0);box(visual,.3,.18,5,dark,0,0,0);
       for(const [x,z] of [[-2.2,-2.2],[-2.2,2.2],[2.2,-2.2],[2.2,2.2]]){const rotor=new THREE.Mesh(new THREE.TorusGeometry(.65,.08,6,16),dark);rotor.rotation.x=Math.PI/2;rotor.position.set(x,.25,z);visual.add(rotor)}
     } else if(model==='water'){g.userData.releaseSurface=surfacePresentation.boat(visual,hex);} else if(model==='wheeled'){
-      box(visual,4,1.5,2.5,color,0,1,0);box(visual,1.3,1.2,2.1,building,-1,2,0);
-      for(const [x,z] of [[-1.3,-1.3],[-1.3,1.3],[1.3,-1.3],[1.3,1.3]]){const wheel=new THREE.Mesh(new THREE.CylinderGeometry(.55,.55,.45,12),dark);wheel.rotation.x=Math.PI/2;wheel.position.set(x,.55,z);visual.add(wheel)}
-    }else{box(visual,2,1.7,2,color,0,1,0);box(visual,1,1.6,1,building,0,2.6,0);box(visual,2.7,.35,.35,dark,0,3.6,0)}
+      // Compact transport rover: lower chassis, protected cab, cargo deck,
+      // four shared low-poly wheels, and small front/rear lights.
+      agentMesh(visual,agentGeometry.box,dark,0,.58,0,4.15,.34,2.45);
+      agentMesh(visual,agentGeometry.box,color,0,1.08,0,3.75,1.02,2.25);
+      agentMesh(visual,agentGeometry.box,building,1.02,1.82,0,1.28,1.22,1.92);
+      agentMesh(visual,agentGeometry.box,windowMat,1.66,1.88,0,.08,.62,1.52);
+      agentMesh(visual,agentGeometry.box,agentPanel,-.94,1.58,0,1.35,.55,1.92);
+      agentMesh(visual,agentGeometry.box,agentMetal,-1.02,1.92,0,1.46,.10,2.02);
+      for(const [x,z] of [[-1.25,-1.28],[-1.25,1.28],[1.25,-1.28],[1.25,1.28]]){
+        agentMesh(visual,agentGeometry.cylinder,dark,x,.56,z,1.08,.46,1.08,Math.PI/2);
+        agentMesh(visual,agentGeometry.cylinder,agentMetal,x,.56,z, .42,.48,.42,Math.PI/2);
+      }
+      for(const z of [-.72,.72]){
+        agentMesh(visual,agentGeometry.box,agentLamp,1.88,1.03,z,.08,.22,.24);
+        agentMesh(visual,agentGeometry.box,red, -1.88,1.02,z,.08,.18,.22);
+      }
+      for(const z of [-1.18,1.18])agentMesh(visual,agentGeometry.box,dark,1.12,2.42,z,.28,.12,.08);
+    }else{
+      // Service robot: weighted base, reinforced body, sensor head, side arms
+      // and a front tool plate. All parts use shared primitives.
+      agentMesh(visual,agentGeometry.box,dark,0,.22,0,1.95,.34,1.65);
+      agentMesh(visual,agentGeometry.box,color,0,1.02,0,1.78,1.38,1.52);
+      agentMesh(visual,agentGeometry.box,agentPanel,.88,1.12,0,.08,.58,.82);
+      agentMesh(visual,agentGeometry.box,orange,.94,.77,0,.08,.14,.58);
+      agentMesh(visual,agentGeometry.sphere,building,0,2.22,0,.72,.62,.68);
+      agentMesh(visual,agentGeometry.box,windowMat,.58,2.24,0,.10,.30,.48);
+      agentMesh(visual,agentGeometry.cylinder,dark,0,2.86,0,.12,.34,.12);
+      agentMesh(visual,agentGeometry.sphere,orange,0,3.22,0,.18,.18,.18);
+      for(const z of [-.98,.98]){
+        agentMesh(visual,agentGeometry.sphere,agentMetal,0,1.38,z,.22,.22,.22);
+        agentMesh(visual,agentGeometry.cylinder,color,0,1.12,z, .16,.72,.16,Math.PI/2);
+        agentMesh(visual,agentGeometry.box,agentMetal,.05,1.12,z*1.28,.28,.22,.18);
+      }
+    }
     const hit=new THREE.Mesh(new THREE.BoxGeometry(5,5,5),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));hit.position.y=window.SandboxSensors.isAir(a)?0:2;hit.userData.agentId=a.id;g.add(hit);pickables.push(hit);scene.add(g);if(lastState?.sceneId?.startsWith('lunar')&&model!=='air')lunarEnvironment.agentModel(visual,a.role);agents.set(a.id,{group:g,hit,visualKey:a.role+'|'+model+'|'+(lastState?.sceneId?.startsWith('lunar')?'lunar':'other')});if(!lastState?.sceneId?.startsWith('lunar'))fitAgentVisual(visual,hit);
   }
   function focusTerrainEffects(state,selected){return state.agents.some(a=>a.id===selected)?[]:state.terrainEffects||[]}
@@ -177,8 +244,8 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
       park.setDetail(park.yard,quality.profile(qualityName).detail);
     }
     lunarEnvironment.root.visible=lunar;parkGround.visible=!industrial&&!lunar&&!state.heightfield;parkGround.scale.set((state.worldSize??100)/100,1,(state.worldSize??100)/100);updateField(state,lunar);if(lunar)lunarEnvironment.mount(state.obstacles,state.heightfield);roads.visible=!industrial&&!lunar&&!shore&&!state.heightfield&&center===50;trees.visible=!industrial&&!lunar&&!shore&&quality.profile(qualityName).detail;shoreWater.visible=shore&&!state.surfaceDomain;surfacePresentation.update(state.surfaceDomain,state.terrain||[],focusTerrainEffects(state,selected));ground.color.setHex(lunar?0x8b8985:shore?0xd8c9a5:0xc7dbd1);building.color.setHex(lunar?0xbcbcb6:shore?0xc4b89b:0xf4f7f3);roof.color.setHex(lunar?0x8b8f8c:shore?0x938f7d:0xb1c9bf);const backdrop=lunar?0x756754:industrial?0x758a94:0xdce9e4;renderer.setClearColor(backdrop);scene.fog.color.setHex(backdrop);updateBuildings(lunar&&state.obstacles.some(o=>o.id==='habitat')?[]:state.obstacles);scene.fog.near=lunar?160:modern?475:industrial?345:230;scene.fog.far=lunar?330:modern?610:industrial?485:400;const focus=state.agents.find(a=>a.id===selected);updateFixedSensors(state.fixedSensors||[],!focus);updateRoadblocks(state.roadblocks||[],!focus);updateRisk(focus?[]:state.riskZones||[]);updateTerrain(lunar?[]:(state.terrain||[]).filter(z=>!state.surfaceDomain||surfaceDomain.regionKind(state.surfaceDomain,z)!=='water'),focus?[]:state.terrainEffects||[]);const observation=focus?window.SandboxEngine.observe(state,focus.id):null,visibleIds=new Set(observation?.nearby.map(a=>a.id)||[]);updateConstruction(state,window.SandboxConstruction.visualPlan(state.construction,!!focus));updateLinks(focus?[]:window.SandboxLinks.activeHops(state),!focus&&showLinks);
-    for(const a of state.agents){const old=agents.get(a.id),model=window.SandboxAgentVisual.model(a,window.SandboxSensors.isAir(a)),key=a.role+'|'+model+'|'+(lastState?.sceneId?.startsWith('lunar')?'lunar':'other');if(old&&old.visualKey!==key){old.group.userData.releaseSurface?.();scene.remove(old.group);pickables.splice(pickables.indexOf(old.hit),1);old.group.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()});old.hit.material.dispose();agents.delete(a.id)}if(!agents.has(a.id))createAgent(a);const {group}=agents.get(a.id),wasVisible=group.visible,visible=!focus||a.id===focus.id||visibleIds.has(a.id),height=window.SandboxSensors.isAir(a)?16:floor(a.x,a.y),target={x:a.x-center,y:a.y-center};if(smooth&&old&&old.visualKey===key&&wasVisible&&visible){transitions.set(a.id,{from:{x:group.position.x,y:group.position.z},to:target,start:now,duration:options.duration||50});group.position.y=height}else if(!same||!options.running){transitions.delete(a.id);group.position.set(target.x,height,target.y)}group.visible=visible;if((lunar||modern)&&model!=='air'){const previous=previousDisplay&&state.tick===previousDisplay.tick+1&&state.sceneId===previousDisplay.sceneId?previousDisplay.agents.find(p=>p.id===a.id):null;group.rotation.y=vehicleHeading.yaw(a,previous,group.rotation.y)}else group.rotation.y=model==='wheeled'?Math.PI/2:0;group.traverse(o=>{if(o.isMesh&&o!==agents.get(a.id).hit)o.material=a.disabled?disabledMaterial(o.material):restoreMaterial(o.material)});}
-    const ids=new Set(state.agents.map(a=>a.id));for(const [id,v] of agents)if(!ids.has(id)){v.group.userData.releaseSurface?.();scene.remove(v.group);v.group.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()});v.hit.material.dispose();pickables.splice(pickables.indexOf(v.hit),1);agents.delete(id);transitions.delete(id)}
+    for(const a of state.agents){const old=agents.get(a.id),model=window.SandboxAgentVisual.model(a,window.SandboxSensors.isAir(a)),key=a.role+'|'+model+'|'+(lastState?.sceneId?.startsWith('lunar')?'lunar':'other');if(old&&old.visualKey!==key){old.group.userData.releaseSurface?.();scene.remove(old.group);pickables.splice(pickables.indexOf(old.hit),1);old.group.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedAgentAsset&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()});old.hit.material.dispose();agents.delete(a.id)}if(!agents.has(a.id))createAgent(a);const {group}=agents.get(a.id),wasVisible=group.visible,visible=!focus||a.id===focus.id||visibleIds.has(a.id),height=window.SandboxSensors.isAir(a)?16:floor(a.x,a.y),target={x:a.x-center,y:a.y-center};if(smooth&&old&&old.visualKey===key&&wasVisible&&visible){transitions.set(a.id,{from:{x:group.position.x,y:group.position.z},to:target,start:now,duration:options.duration||50});group.position.y=height}else if(!same||!options.running){transitions.delete(a.id);group.position.set(target.x,height,target.y)}group.visible=visible;if((lunar||modern)&&model!=='air'){const previous=previousDisplay&&state.tick===previousDisplay.tick+1&&state.sceneId===previousDisplay.sceneId?previousDisplay.agents.find(p=>p.id===a.id):null;group.rotation.y=vehicleHeading.yaw(a,previous,group.rotation.y)}else group.rotation.y=model==='wheeled'?Math.PI/2:0;group.traverse(o=>{if(o.isMesh&&o!==agents.get(a.id).hit)o.material=a.disabled?disabledMaterial(o.material):restoreMaterial(o.material)});}
+    const ids=new Set(state.agents.map(a=>a.id));for(const [id,v] of agents)if(!ids.has(id)){v.group.userData.releaseSurface?.();scene.remove(v.group);v.group.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedAgentAsset&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()});v.hit.material.dispose();pickables.splice(pickables.indexOf(v.hit),1);agents.delete(id);transitions.delete(id)}
     const nextFocus=focus?.id||null;
     if(sceneChanged||cameraFocus!==nextFocus){
       if(!sceneChanged&&!cameraFocus&&nextFocus){
