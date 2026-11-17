@@ -59,6 +59,7 @@ npm run test:container-rust   # Docker 原生后端验收
 - [场景、实验与回放](docs/scenarios.md)
 - [Runner 接入协议](docs/runner-protocol.md)
 - [外部 Agent 的任务级 MCP 接入与 Console 观测](docs/mcp-agent-guide.md)
+- [现代工业园区领域层、对象目录与任务 API](docs/industrial-park-domain.md)
 - [Control HTTP、MCP 和 gRPC 网关](packages/control-server/README.md)
 - [Python SDK](sdk/python/SDK-README.md)
 - [构建部署包、远程访问和代理配置](deploy/README.md)

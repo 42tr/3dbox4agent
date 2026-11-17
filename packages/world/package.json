@@ -17,6 +17,7 @@
     "./stream-protobuf": "./src/stream-protobuf.js",
     "./surface-domain": "./src/surface-domain.js",
     "./task-graph": "./src/task-graph.js",
+    "./industrial-park-domain": "./src/industrial-park-domain.js",
     "./control-events": "./src/reports/control-events.js",
     "./scheduled-plan": "./src/scheduled-plan.js"
   },

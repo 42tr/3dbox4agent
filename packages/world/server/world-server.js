@@ -15,6 +15,7 @@ const PublicExperimentAssets=require('./public-experiment-assets');
 const {requestOriginError}=require('./request-origin');
 const {createControlForwarder}=require('@42tr/3dbox4agent-control/http-forward');
 const SceneDiagnostics=require('../src/scene-diagnostics');
+const IndustrialParkDomain=require('../src/industrial-park-domain');
 const Delta=require('../src/delta');
 const StreamProtobuf=require('../src/stream-protobuf');
 const Journal=require('./event-journal');
@@ -163,6 +164,17 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
     return res.end(html)
    }
    if(req.method==='GET'&&url.pathname==='/health')return json(res,200,{ok:true,...server.diagnostics()});
+   if(req.method==='GET'&&url.pathname==='/industrial-park/catalog'){
+    const sceneId=url.searchParams.get('sceneId')||IndustrialParkDomain.DEFAULT_SCENE_ID;
+    if(sceneId!==IndustrialParkDomain.DEFAULT_SCENE_ID)return json(res,404,{error:'industrial_park_scene_not_found'});
+    return json(res,200,IndustrialParkDomain.createCatalog(E.getScene(sceneId)));
+   }
+   if(req.method==='GET'&&url.pathname==='/industrial-park/tasks'){
+    const sceneId=url.searchParams.get('sceneId')||IndustrialParkDomain.DEFAULT_SCENE_ID;
+    if(sceneId!==IndustrialParkDomain.DEFAULT_SCENE_ID)return json(res,404,{error:'industrial_park_scene_not_found'});
+    const domain=IndustrialParkDomain.createIndustrialParkDomain(E.getScene(sceneId));
+    return json(res,200,{version:1,sceneId,templates:domain.listTaskTemplates()});
+   }
    if(req.method==='POST'&&url.pathname==='/scene-diagnostics'){
     const input=await body(req,65536);if(!input||typeof input!=='object'||Array.isArray(input)||(input.scene===undefined)===(input.sceneId===undefined))throw Error('provide exactly one scene or sceneId');
     const scene=input.scene===undefined?E.getScene(input.sceneId):input.scene;return json(res,200,{version:1,...SceneDiagnostics.analyze(scene)});

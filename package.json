@@ -17,6 +17,7 @@
     "test:grpc-stream": "node tests/grpc-supervisor.test.js && node tests/grpc-stream.test.js && node tests/grpc-world-failure.test.js && node tests/journal-observation-failure.test.js && node tests/grpc-event-history.test.js && node tests/grpc-live-events.test.js && BOX_GRPC_STREAM_TEST=1 node tests/grpc-multiprocess.test.js",
     "test:build-image": "node tests/integration/build-image.test.js",
     "test:industrial-park": "node tests/integration/industrial-park-v2.test.js",
+    "test:industrial-park-domain": "node tests/industrial-park-domain.test.js",
     "test:layers": "node tests/layer-contracts.test.js",
     "test:world-core": "node tests/world-core-compat.test.js",
     "test:agent-http": "node tests/agent-runtime-http.test.js",
