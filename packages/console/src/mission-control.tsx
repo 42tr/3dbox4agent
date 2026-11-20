@@ -1,5 +1,5 @@
 import {RunnerPanel} from './runner-panel';
-import {AgentRunPanel,AgentRunTimeline} from './agent-run-panel';
+import {AgentRunLink,AgentRunPanel,AgentRunTimeline,readRunLink} from './agent-run-panel';
 import {ConsoleAccount} from './console-session';
 import {createPlanReviewController,type PlanView} from './plan-review';
 import {PlanReviewControls} from './plan-review-panel';
@@ -64,7 +64,7 @@ const legacyToolAnchors = new Map([
 function readToolRoute() {
  let hash: string;
  try {hash=decodeURIComponent(location.hash.slice(1))} catch {return null}
- const title=toolAnchors.get(hash)??legacyToolAnchors.get(hash)??(/^run=[a-f0-9-]{36}$/.test(hash)?'Agent 任务':null)
+ const title=toolAnchors.get(hash)??legacyToolAnchors.get(hash)
   ?? (/^section-directory-\d+$/.test(hash)&&hash!=='section-directory-1'?'实验与世界设置':null);
  return title?{hash,title}:null;
 }
@@ -84,6 +84,19 @@ const toolSections = new Map([
 const subscribe=(fn:()=>void)=>{subscribers.add(fn);return()=>{subscribers.delete(fn)}};
 const act=(id:string)=>actions.click?.(id);
 const select=(id:string,value:string)=>actions.select?.(id,value);
+async function openLinkedRun(kind:'observer'|'report',load:()=>Promise<unknown>,signal:AbortSignal){
+ if(snapshot.remoteSession&&!snapshot.observer)throw Error('请先断开当前世界会话，或在新标签页打开观察链接。');
+ if(kind==='observer'){
+  const access=await load();
+  if(signal.aborted)return;
+  await actions.openRunnerObserver(access,signal);
+ }else{
+  await actions.openRunnerReplay(load,signal);
+ }
+ if(signal.aborted)return;
+ if(snapshot.selected!=='global')select('view','global');
+ if(snapshot.available3d&&!snapshot.is3d)act('viewmode');
+}
 const statusName:Record<string,string>={deployed:'中继驻留',idle:'就绪',working:'工作中',assigned:'已分配',manual:'执行指令',charging:'充电中',returning:'返航中',disabled:'已退出'};
 type AssignmentRequest={key:string;taskId:string;serial:number};
 function ManualAssignment({context,mode,requested}:{context?:AssignmentContext;mode?:string;requested:AssignmentRequest|null}){
@@ -166,7 +179,8 @@ function ExecutionCard({item,dispatchLabel,onSelect}:{item:TaskAttempt;dispatchL
  </article>
 }
 function App(){
- const s=useSyncExternalStore(subscribe,()=>snapshot),[tab,setTab]=useState('devices'),[trace,setTrace]=useState('trace'),[command,setCommand]=useState(''),[response,setResponse]=useState(''),[toolRoute,setToolRoute]=useState(readToolRoute),[viewTools,setViewTools]=useState(false),[assignmentRequest,setAssignmentRequest]=useState<AssignmentRequest|null>(null);
+ const [linkedRun,setLinkedRun]=useState(readRunLink);
+ const s=useSyncExternalStore(subscribe,()=>snapshot),[tab,setTab]=useState('devices'),[trace,setTrace]=useState(linkedRun?'agent':'trace'),[command,setCommand]=useState(''),[response,setResponse]=useState(''),[toolRoute,setToolRoute]=useState(readToolRoute),[viewTools,setViewTools]=useState(false),[assignmentRequest,setAssignmentRequest]=useState<AssignmentRequest|null>(null);
  const ready=s.frames>0,toolsOpen=!!toolRoute,toolTitle=toolRoute?.title??'实验与世界设置';
  const stage=useRef<HTMLDivElement>(null),legacy=useRef<HTMLDivElement>(null),dialog=useRef<HTMLDialogElement>(null),feed=useRef<HTMLDivElement>(null);
  const positionedTool=useRef<string|null>(null);
@@ -198,9 +212,14 @@ function App(){
   }
  };
  useLayoutEffect(()=>{
-  window.addEventListener('popstate',navigateTools);
-  window.addEventListener('hashchange',navigateTools);
-  return()=>{window.removeEventListener('popstate',navigateTools);window.removeEventListener('hashchange',navigateTools)};
+  const navigate=()=>{
+   navigateTools();
+   const run=readRunLink();
+   if(run){setLinkedRun(run);setTrace('agent')}
+  };
+  window.addEventListener('popstate',navigate);
+  window.addEventListener('hashchange',navigate);
+  return()=>{window.removeEventListener('popstate',navigate);window.removeEventListener('hashchange',navigate)};
  },[]);
  useLayoutEffect(()=>{
   if(ready)document.getElementById('mission-ui-root')?.setAttribute('data-ready','');
@@ -256,7 +275,7 @@ function App(){
    <section className="mc-console" aria-label="任务执行轨迹"><div className="mc-tabs"><button className={trace==='trace'?'selected':''} onClick={()=>setTrace('trace')}>执行轨迹</button><button className={trace==='agent'?'selected':''} onClick={()=>setTrace('agent')}>Agent 过程</button><button className={trace==='tasks'?'selected':''} onClick={()=>setTrace('tasks')}>任务链 <span>{complete}/{s.tasks.length}</span></button><button className={trace==='nodes'?'selected':''} aria-pressed={trace==='nodes'} onClick={()=>setTrace('nodes')}>指挥节点</button><button className={trace==='replay'?'selected':''} onClick={()=>setTrace('replay')}>事件回放</button><span className="mc-tabs-spacer"/><span className="mc-console-context">{focused?'设备有限观察':dispatchLabel} <span>·</span> {s.source==='浏览器仿真'?'local':'snapshot'}</span><IconButton label="设备操作" onClick={()=>openTools('设备操作')}><Robot size={13}/></IconButton><IconButton label="打开设备通信" onClick={()=>openTools('设备通信')}><ChatCircleDots size={13}/></IconButton><IconButton label="扰动控制" onClick={()=>openTools('扰动控制')}><Pulse size={13}/></IconButton><IconButton label="任务计划审阅" onClick={()=>openTools('计划审阅')}><Compass size={13}/></IconButton><IconButton label="任务指挥与调整" onClick={()=>openTools('任务指挥')}><Compass size={13}/></IconButton><IconButton label="人工分配任务" disabled={s.observer||s.source==='导入回放'} onClick={()=>openTools('人工任务分配')}><Crosshair size={13}/></IconButton><IconButton label="打开完整记录与回放" onClick={()=>openTools('完整记录与回放')}><ClockCounterClockwise size={13}/></IconButton></div>
     {trace==='trace'&&currentDevice&&<div className="mc-execution-state" aria-label="任务设备当前快照"><div><small title={currentDevice.id+' · T+'+s.tick}>{currentDevice.id} 电量 · T+{s.tick}</small><b>{currentDevice.battery.toFixed(0)} <em>%</em></b><div className="mc-battery"><i style={{width:Math.max(0,Math.min(100,currentDevice.battery))+'%'}}/></div></div><div><small>mode</small><code>{currentDevice.disabled?'offline':currentDevice.status}</code></div><div><small>position</small><b>{currentDevice.x.toFixed(1)} / {currentDevice.y.toFixed(1)}</b></div><div><small>任务状态</small><b>{currentAttempt?.status==='completed'?'已完成':currentAttempt?.status==='interrupted'?'已中断':currentAttempt?.status==='running'?'执行中':currentAttempt?.status==='assigned'?'已分配':'活动中'}</b></div></div>}
     {trace==='trace'&&currentDevice&&<><ThermalStatus agent={currentDevice}/><RelayStatus agent={currentDevice}/></>}
-    <div className="mc-feed" ref={feed}>{trace==='agent'?<AgentRunTimeline focusAgent={id=>select('view',id)}/>:trace==='nodes'?<CommandNodesPanel view={s.commandNodes} manage={!s.observer&&s.selected==='global'&&s.source!=='导入回放'&&s.frame===s.frames-1?()=>openTools('指挥节点'):undefined}/>:trace==='tasks'?<TaskChainPanel key={(s.manual?.key||s.sceneId)+':'+s.selected} view={s.chain} history={s.frame<s.frames-1||s.source==='导入回放'} source={s.source} assignment={s.manual} assign={openTaskAssignment} observe={id=>select('view',id)}/>:trace==='replay'?<EventReplayPanel key={(s.replay?.key||s.sceneId)+':'+s.selected} view={s.replay} navigate={(request:ReplayRequest)=>actions.navigateReplay?.(request)} diagnostics={()=>openTools('实验报告与回放')} importFile={()=>actions.replayFile?.('import',s.replay?.key,s.replay?.base)} exportFile={()=>actions.replayFile?.('export',s.replay?.key,s.replay?.base)}/>:<><div className="mc-feed-intro"><div className="mc-agent-icon"><Planet size={14}/></div><div><b>{s.done?'任务运行已结束':s.running?'任务正在执行':'任务已就绪'}</b><p>{focused?'仅显示所选设备的任务与观察。':s.sceneId.startsWith('lunar')?'勘察、采样、运输与维修设备协同执行任务。启动后在此查看真实世界事件。':'巡检、运输与作业设备协同执行任务。启动后在此查看真实世界事件。'}</p></div></div>{s.events.filter(e=>!e.taskId||e.type==='warning').slice(-3).map((event,i)=><div className={'mc-log '+event.type} key={event.seq??i}><span className="mc-log-time">T+{String(event.tick).padStart(3,'0')}</span><div><span className="mc-log-kind">{event.type==='warning'?'注意':'世界事件'}</span><span>{event.message}</span></div></div>)}
+    <div className="mc-feed" ref={feed}><AgentRunLink runId={linkedRun} open={openLinkedRun}/>{trace==='agent'?<AgentRunTimeline showEmpty={!linkedRun} focusAgent={id=>select('view',id)}/>:trace==='nodes'?<CommandNodesPanel view={s.commandNodes} manage={!s.observer&&s.selected==='global'&&s.source!=='导入回放'&&s.frame===s.frames-1?()=>openTools('指挥节点'):undefined}/>:trace==='tasks'?<TaskChainPanel key={(s.manual?.key||s.sceneId)+':'+s.selected} view={s.chain} history={s.frame<s.frames-1||s.source==='导入回放'} source={s.source} assignment={s.manual} assign={openTaskAssignment} observe={id=>select('view',id)}/>:trace==='replay'?<EventReplayPanel key={(s.replay?.key||s.sceneId)+':'+s.selected} view={s.replay} navigate={(request:ReplayRequest)=>actions.navigateReplay?.(request)} diagnostics={()=>openTools('实验报告与回放')} importFile={()=>actions.replayFile?.('import',s.replay?.key,s.replay?.base)} exportFile={()=>actions.replayFile?.('export',s.replay?.key,s.replay?.base)}/>:<><div className="mc-feed-intro"><div className="mc-agent-icon"><Planet size={14}/></div><div><b>{s.done?'任务运行已结束':s.running?'任务正在执行':'任务已就绪'}</b><p>{focused?'仅显示所选设备的任务与观察。':s.sceneId.startsWith('lunar')?'勘察、采样、运输与维修设备协同执行任务。启动后在此查看真实世界事件。':'巡检、运输与作业设备协同执行任务。启动后在此查看真实世界事件。'}</p></div></div>{s.events.filter(e=>!e.taskId||e.type==='warning').slice(-3).map((event,i)=><div className={'mc-log '+event.type} key={event.seq??i}><span className="mc-log-time">T+{String(event.tick).padStart(3,'0')}</span><div><span className="mc-log-kind">{event.type==='warning'?'注意':'世界事件'}</span><span>{event.message}</span></div></div>)}
      {recentAttempts.map(item=><ExecutionCard key={item.key} item={item} dispatchLabel={dispatchLabel} onSelect={id=>select('view',id)}/>)}
      {!s.events.length&&!recentAttempts.length&&<div className="mc-ready"><Check size={12}/><span>场景载入完成</span><code>{s.agents.length} devices</code><span>等待运行指令</span></div>}</>}{response&&<div className="mc-command-response">{response}</div>}</div>
     {trace==='trace'&&<form className="mc-composer" onSubmit={commandSubmit}><input aria-label="控制指令" placeholder="输入指令：开始、暂停，或设备 ID…" value={command} onChange={e=>setCommand(e.target.value)} autoComplete="off"/><div className="mc-composer-bottom"><button type="button" className="mc-pill violet" onClick={()=>openTools('调度策略与智能体')}><Robot size={12}/> {dispatchLabel} <CaretDown size={10}/></button><button type="button" className="mc-pill" onClick={()=>openTools('场景与世界设置')}><Cube size={11}/> workspace <CaretDown size={10}/></button><span/><span className="mc-composer-note">确定性控制指令</span><IconButton label="导入回放" onClick={()=>act('importReplay')}><Paperclip size={15}/></IconButton><button className="mc-submit" aria-label="执行控制指令" disabled={!command.trim()}><ArrowUp size={16}/></button></div></form>}

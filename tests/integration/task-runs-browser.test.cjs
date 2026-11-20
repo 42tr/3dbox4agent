@@ -72,6 +72,10 @@ async function dragCamera(page, camera) {
       request_id: 'browser-demo', scene_id: 'industrial-park-v2',
       objective: {type: 'scene_completed', instruction: '完成园区巡检、备件运输、维修和复核'},
     });
+    const observationLink = new URL(run.console_url);
+    const observationPath = '/#run=' + run.run_id;
+    assert.equal(observationLink.pathname + observationLink.search + observationLink.hash, observationPath);
+    const observationUrl = new URL(observationPath, url).href;
     const args = {run_id: run.run_id, control_epoch: run.control_epoch};
     const note = '先由无人机巡检北侧设备区，再安排备件运输和维修，最后复核设备状态。';
     await api('/tools/box_record_note', token, {...args, request_id: 'plan', kind: 'plan', text: note});
@@ -86,25 +90,25 @@ async function dragCamera(page, camera) {
     const browserRequests = [];
     page.on('request',request=>{if(request.url().includes('/console-api/'))browserRequests.push(request);});
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto(url + '/#run=' + run.run_id);
+    await page.goto(observationUrl);
     await page.waitForURL('**/login?**');
-    assert.equal(new URL(page.url()).searchParams.get('returnTo'),'/#run='+run.run_id);
+    assert.equal(new URL(page.url()).searchParams.get('returnTo'),observationPath);
     await page.getByLabel('账号',{exact:true}).fill('admin');
     await page.getByLabel('密码',{exact:true}).fill('wrong-password');
     await page.getByRole('button',{name:'登录',exact:true}).click();
     await page.getByRole('alert').getByText('账号或密码不正确。').waitFor();
     await page.getByLabel('密码',{exact:true}).fill('browser-test-password');
     await page.getByRole('button',{name:'登录',exact:true}).click();
-    await page.waitForURL(url + '/#run=' + run.run_id);
-    const panel = page.locator('.mc-agent-panel');
-    await panel.getByText(note,{exact:true}).waitFor();
+    await page.waitForURL(observationUrl);
+    const liveSource = page.locator('.mc-source').filter({hasText: /^只读世界服务$/});
+    await liveSource.waitFor({state:'attached'});
+    await page.locator('#map3d').waitFor();
+    assert.equal(await page.locator('.mc-tool-dialog').evaluate(dialog => dialog.open), false);
     assert.equal(await page.getByLabel('管理令牌').count(),0);
     await page.reload();
-    await panel.getByText(note,{exact:true}).waitFor();
-    assert.equal(new URL(page.url()).pathname,'/');
+    await liveSource.waitFor({state:'attached'});
+    assert.equal(page.url(),observationUrl);
     assert.equal(await page.evaluate(()=>document.cookie.includes('threebox_console_session')),false);
-    await panel.getByRole('button', {name: '打开三维观察与执行记录'}).click();
-    await page.waitForFunction(() => !document.querySelector('.mc-tool-dialog').open);
     await page.locator('.mc-feed').getByText(note, {exact: true}).waitFor();
     const camera = page.locator(cameraSelector);
     await page.locator(`${cameraSelector}[data-rendered-tick="0"]`).waitFor();
@@ -144,6 +148,19 @@ async function dragCamera(page, camera) {
     await page.getByRole('button', {name: '返回实时'}).click();
     await page.locator(latestCamera).waitFor();
 
+    const other = await api('/tools/box_create_run', token, {
+      request_id: 'browser-other-run', scene_id: 'industrial-park-v2',
+      objective: {type: 'scene_completed', instruction: '查看另一轮园区运行'},
+    });
+    await page.goto(new URL(new URL(other.console_url).hash, url).href);
+    await page.locator('.mc-feed').getByText(other.objective.instruction,{exact:true}).waitFor();
+    await page.locator(`${cameraSelector}[data-rendered-tick="0"]`).waitFor();
+    await page.goto(observationUrl);
+    await page.locator(latestCamera).waitFor();
+    await api('/tools/box_cancel_run', token, {
+      run_id: other.run_id, control_epoch: other.control_epoch, request_id: 'cleanup-other',
+    });
+
     const fallback = await context.newPage();
     fallback.on('pageerror', error => errors.push(error.message));
     await fallback.addInitScript(() => {
@@ -152,8 +169,7 @@ async function dragCamera(page, camera) {
         return type === 'webgl2' ? null : getContext.call(this, type, ...options);
       };
     });
-    await fallback.goto(url + '/#run=' + run.run_id);
-    await fallback.getByRole('button', {name: '打开三维观察与执行记录'}).click();
+    await fallback.goto(observationUrl);
     const fallbackImage = fallback.getByRole('img', {name: 'drone-1 仿真摄像头画面', exact: true});
     await fallbackImage.waitFor();
     assert.match(await fallbackImage.getAttribute('src'), /^data:image\/svg\+xml/);
@@ -172,14 +188,14 @@ async function dragCamera(page, camera) {
       if(saved.archive_status==='ready')break;
       await new Promise(resolve=>setTimeout(resolve,250));
     }
-    // A saved run opens without credentials in a new tab of the same browser.
+    // The same observation link opens the archived 3D replay in a signed-in tab.
     const replayPage=await page.context().newPage();
     replayPage.on('pageerror',error=>errors.push(error.message));
-    await replayPage.goto(url+'/#run='+run.run_id);
-    await replayPage.locator('.mc-agent-panel').getByRole('button',{name:'打开回放',exact:true}).click();
-    await replayPage.waitForFunction(()=>!document.querySelector('.mc-tool-dialog').open);
+    await replayPage.goto(observationUrl);
+    await replayPage.locator('.mc-source').filter({hasText: /^导入回放$/}).waitFor({state:'attached'});
+    await replayPage.locator('#map3d').waitFor();
+    assert.equal(await replayPage.locator('.mc-tool-dialog').evaluate(dialog => dialog.open), false);
     await replayPage.locator('.mc-feed').getByText(note,{exact:true}).waitFor();
-    assert(await replayPage.locator('.mc-source').textContent().then(text=>text.includes('导入回放')));
     await replayPage.setViewportSize({width:390,height:844});
     await replayPage.locator(cameraSelector).scrollIntoViewIfNeeded();
     await replayPage.locator(`${cameraSelector}[data-ready]`).waitFor();

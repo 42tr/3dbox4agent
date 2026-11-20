@@ -12,13 +12,68 @@ function publish(next:View){view=next;listeners.forEach(fn=>fn())}
 const labels:Record<string,string>={starting:'创建世界',running:'执行中',stopping:'正在归档',completed:'已完成',failed:'失败',cancelled:'已取消',timeout:'达到预算上限',waiting_for_agent:'等待 Agent 下一步',advancing:'世界正在推进',paused:'已暂停',reconciling:'正在确认上次操作',archiving:'正在归档',finished:'运行结束'};
 const kinds:Record<string,string>={'agent.note':'Agent 摘要','tool.started':'开始调用','tool.completed':'调用返回','tool.failed':'调用失败','tool.observed':'读取观察','world.updated':'World 变化','run.created':'创建运行','run.session_created':'世界已创建','run.recovered':'运行已恢复','run.recovery_unavailable':'等待连接 World','run.reconciling':'确认上次操作','run.idle_paused':'等待超时，已暂停','run.stopping':'准备结束运行','run.advancing':'推进世界','run.started':'运行就绪','objective.evaluated':'目标验收','run.finished':'运行结束','run.interrupted':'控制操作','run.advance_finished':'本段推进结束'};
 const terminal=(r:Run)=>['completed','failed','cancelled','timeout'].includes(r.status);
-function fromHash(){const match=/^#run=([a-f0-9-]{36})$/.exec(location.hash);return match?.[1]||''}
+export function readRunLink(){return /^#run=([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/.exec(location.hash)?.[1]||''}
 
-export function AgentRunTimeline({focusAgent}:{focusAgent?:(id:string)=>void}){
+async function request<T>(route:string,options:RequestInit={}):Promise<T>{
+  const response=await consoleFetch('/runs/v1'+route,options);
+  const data=await response.json();if(!response.ok)throw Error(data.code||data.error||'请求失败');return data;
+}
+
+type OpenRunLink = (kind:'observer'|'report',load:()=>Promise<unknown>,signal:AbortSignal)=>Promise<void>;
+
+export function AgentRunLink({runId,open}:{runId:string;open:OpenRunLink}){
+  const session=useConsoleSession(!!runId),{authenticated}=session;
+  const [notice,setNotice]=useState(''),[error,setError]=useState(false);
+  useEffect(()=>{
+    if(!runId||!authenticated)return;
+    const abort=new AbortController(),{signal}=abort;
+    const route='/runs/'+runId;
+    let timer:ReturnType<typeof setTimeout>;
+    setError(false);
+    setNotice('正在打开运行的三维观察…');
+    async function connect(){
+      try{
+        const run=await request<Run>(route,{signal});
+        if(signal.aborted)return;
+        if(run.archive_status==='ready'){
+          await open('report',()=>request(route+'/report',{signal}),signal);
+        }else if(run.status==='starting'||run.status==='stopping'&&run.archive_status==='pending'){
+          timer=setTimeout(connect,1000);
+          return;
+        }else if(run.can_observe&&run.status!=='stopping'){
+          try{
+            await open('observer',()=>request(route+'/observer',{method:'POST',body:'{}',signal}),signal);
+          }catch(e){
+            if(signal.aborted)return;
+            const latest=await request<Run>(route,{signal});
+            if(latest.status!=='stopping'&&!terminal(latest))throw e;
+            if(!signal.aborted)timer=setTimeout(connect,1000);
+            return;
+          }
+        }else{
+          throw Error('此运行没有可用的实时观察或回放。');
+        }
+        if(!signal.aborted)setNotice('');
+      }catch(e){
+        if(signal.aborted)return;
+        const message=e instanceof Error?e.message:'请求失败';
+        setError(true);
+        setNotice(message==='run_not_found'?'找不到此运行。':'无法打开三维观察：'+message);
+      }
+    }
+    void connect();
+    return()=>{abort.abort();clearTimeout(timer)};
+  },[authenticated,runId,open]);
+  if(!runId||session.loading)return null;
+  if(!authenticated&&!session.configured)return <p className="mc-agent-empty" role="alert">{session.error||'请通过已配置登录的 Console 打开观察链接。'}</p>;
+  return notice?<p className="mc-agent-empty" role={error?'alert':'status'}>{notice}</p>:null;
+}
+
+export function AgentRunTimeline({focusAgent,showEmpty=true}:{focusAgent?:(id:string)=>void;showEmpty?:boolean}){
   const [current,setCurrent]=useState(view);
   useEffect(()=>{const update=()=>setCurrent(view);listeners.add(update);update();return()=>{listeners.delete(update)}},[]);
   const {run,events,connection}=current;
-  if(!run)return <div className="mc-agent-empty">从左侧“Agent 任务”选择运行并打开实时观察，即可查看工具调用和任务进展。</div>;
+  if(!run)return showEmpty?<div className="mc-agent-empty">从左侧“Agent 任务”选择运行并打开实时观察，即可查看工具调用和任务进展。</div>:null;
   return <section className="mc-agent-timeline" aria-label="Agent 执行过程">
     <div className="mc-agent-run-heading"><b>{run.objective.instruction}</b><span>{terminal(run)?labels[run.status]:labels[run.phase]||run.phase} · T+{run.tick}</span></div>
     <p className="mc-agent-meta">{run.owner_label} · {run.conditions?.filter(c=>c.done).length||0}/{run.conditions?.length||0} 个目标完成 · {connection}</p>
@@ -34,16 +89,12 @@ export function AgentRunTimeline({focusAgent}:{focusAgent?:(id:string)=>void}){
 }
 
 export function AgentRunPanel({active,canObserve,openObserver,openReplay}:{active:boolean;canObserve:boolean;openObserver:(access:Access)=>Promise<void>;openReplay:(load:()=>Promise<unknown>)=>Promise<void>}){
-  const [runs,setRuns]=useState<Run[]>([]),[selected,setSelected]=useState(fromHash),[integrations,setIntegrations]=useState<Integration[]>([]),[label,setLabel]=useState('我的 Agent'),[issued,setIssued]=useState<{token:string;integration:Integration}|null>(null),[error,setError]=useState(''),[actionError,setActionError]=useState(''),[busy,setBusy]=useState(false);
+  const [runs,setRuns]=useState<Run[]>([]),[selected,setSelected]=useState(readRunLink),[integrations,setIntegrations]=useState<Integration[]>([]),[label,setLabel]=useState('我的 Agent'),[issued,setIssued]=useState<{token:string;integration:Integration}|null>(null),[error,setError]=useState(''),[actionError,setActionError]=useState(''),[busy,setBusy]=useState(false);
   const session=useConsoleSession(active||!!selected),authenticated=session.authenticated;
   const current=runs.find(r=>r.run_id===selected);const selectedRef=useRef(selected);selectedRef.current=selected;
   const requests=useRef(new Map<string,string>());
   const endpoint=location.protocol==='file:'?'请从在线 Console 打开':location.origin+'/control/mcp/control';
-  async function request<T>(route:string,options:RequestInit={}):Promise<T>{
-    const response=await consoleFetch('/runs/v1'+route,options);
-    const data=await response.json();if(!response.ok)throw Error(data.code||data.error||'请求失败');return data;
-  }
-  useEffect(()=>{const change=()=>{const id=fromHash();if(id)setSelected(id)};window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change)},[]);
+  useEffect(()=>{const change=()=>{const id=readRunLink();if(id)setSelected(id)};window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change)},[]);
   useEffect(()=>{
     if(!authenticated||!active&&!selected)return;const abort=new AbortController();let timer:ReturnType<typeof setTimeout>;
     async function update(){try{const data=await request<{runs:Run[]}>('/runs',{signal:abort.signal});if(abort.signal.aborted)return;setRuns(data.runs);setError('');const chosen=data.runs.find(r=>r.run_id===selectedRef.current);if(chosen)publish({...view,run:chosen});}catch(e){if(!abort.signal.aborted)setError(e instanceof Error?e.message:'无法读取运行')}finally{if(!abort.signal.aborted)timer=setTimeout(update,1000)}}
