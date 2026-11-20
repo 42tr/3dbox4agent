@@ -16,6 +16,15 @@ const {hashPassword} = require('../../packages/console/server/console-auth');
 const root = path.resolve(__dirname, '../..');
 const target = process.env.CARGO_TARGET_DIR || path.join(root, 'packages/control-server/target');
 const operator = 'browser-test-operator';
+const cameraSelector = '.mc-device-content canvas[data-device-camera="drone-1"]';
+
+async function dragCamera(page, camera) {
+  const {x, y, width, height} = await camera.boundingBox();
+  await page.mouse.move(x + width / 3, y + height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x + width * 2 / 3, y + height / 3, {steps: 5});
+  await page.mouse.up();
+}
 
 (async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'box-task-browser-'));
@@ -97,6 +106,8 @@ const operator = 'browser-test-operator';
     await panel.getByRole('button', {name: '打开三维观察与执行记录'}).click();
     await page.waitForFunction(() => !document.querySelector('.mc-tool-dialog').open);
     await page.locator('.mc-feed').getByText(note, {exact: true}).waitFor();
+    const camera = page.locator(cameraSelector);
+    await page.locator(`${cameraSelector}[data-rendered-tick="0"]`).waitFor();
 
     const view = await api('/tools/box_observe', token, {run_id: run.run_id, view: 'coordinator'});
     const task = view.observation.tasks.find(task => task.candidates.length);
@@ -106,13 +117,55 @@ const operator = 'browser-test-operator';
     const action = await api('/tools/box_submit_action', token, {...args, agent_id: agent.id,
       action: {requestId: 'execute', type: 'execute_task', taskId: task.id,
         targetTick: view.observation.tick + 1, expiresTick: view.observation.tick + 40}});
-    await api('/tools/box_advance', token, {...args, request_id: 'advance',
+    const advance = await api('/tools/box_advance', token, {...args, request_id: 'advance',
       expected_revision: action.world_revision, max_ticks: 20});
     await page.waitForFunction(() => document.querySelector('.mc-feed .mc-agent-meta')?.textContent.includes('1/5'));
     await page.locator('.mc-feed').getByText('World 变化', {exact: true}).first().waitFor();
+    const latestCamera = `${cameraSelector}[data-rendered-tick="${advance.end_tick}"]`;
+    await page.waitForFunction(selector => {
+      const card = document.querySelector(selector);
+      const inset = document.querySelector('.mc-scene-camera canvas');
+      return card && card.dataset.renderedTick === inset?.dataset.renderedTick && card.toDataURL() === inset.toDataURL();
+    }, latestCamera);
     if (process.env.BOX_BROWSER_SCREENSHOT) {
       await page.screenshot({path: process.env.BOX_BROWSER_SCREENSHOT, fullPage: true});
     }
+    const defaultImage = await camera.evaluate(canvas => canvas.toDataURL());
+    const cameraRequests = [];
+    page.on('request', request => {if (new URL(request.url()).pathname.endsWith('/camera')) cameraRequests.push(request);});
+    await dragCamera(page, camera);
+    await page.waitForFunction(({selector, before}) => {
+      const canvas = document.querySelector(selector);
+      return canvas?.dataset.cameraYaw && canvas.toDataURL() !== before;
+    }, {selector: latestCamera, before: defaultImage});
+    assert.equal(cameraRequests.length, 0);
+    await page.getByRole('slider', {name: '回放时间'}).fill('0');
+    await page.locator(`${cameraSelector}[data-rendered-tick="0"]`).waitFor();
+    await page.getByRole('button', {name: '返回实时'}).click();
+    await page.locator(latestCamera).waitFor();
+
+    const fallback = await context.newPage();
+    fallback.on('pageerror', error => errors.push(error.message));
+    await fallback.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (type, ...options) {
+        return type === 'webgl2' ? null : getContext.call(this, type, ...options);
+      };
+    });
+    await fallback.goto(url + '/#run=' + run.run_id);
+    await fallback.getByRole('button', {name: '打开三维观察与执行记录'}).click();
+    const fallbackImage = fallback.getByRole('img', {name: 'drone-1 仿真摄像头画面', exact: true});
+    await fallbackImage.waitFor();
+    assert.match(await fallbackImage.getAttribute('src'), /^data:image\/svg\+xml/);
+    assert.equal(await fallback.locator('.mc-camera > span').count(), 0);
+    const rotation = fallback.waitForResponse(response => new URL(response.url()).pathname.endsWith('/drone-1/camera'));
+    await dragCamera(fallback, fallbackImage);
+    assert((await rotation).ok());
+    await fallback.locator('.mc-camera img[alt="drone-1 仿真摄像头画面"][src^="blob:"]').waitFor();
+    await fallback.getByRole('slider', {name: '回放时间'}).fill('0');
+    await fallback.locator('.mc-camera img[alt="drone-1 仿真摄像头画面"][src^="data:"]').waitFor();
+    await fallback.close();
+
     await api('/tools/box_cancel_run', token, {...args, request_id: 'cleanup'});
     for(let i=0;i<40;i++){
       const saved=await api('/runs/'+run.run_id,operator);
@@ -127,6 +180,9 @@ const operator = 'browser-test-operator';
     await replayPage.waitForFunction(()=>!document.querySelector('.mc-tool-dialog').open);
     await replayPage.locator('.mc-feed').getByText(note,{exact:true}).waitFor();
     assert(await replayPage.locator('.mc-source').textContent().then(text=>text.includes('导入回放')));
+    await replayPage.setViewportSize({width:390,height:844});
+    await replayPage.locator(cameraSelector).scrollIntoViewIfNeeded();
+    await replayPage.locator(`${cameraSelector}[data-ready]`).waitFor();
     const cookies=await page.context().cookies();
     const sessionCookie=cookies.find(cookie=>cookie.name==='threebox_console_session');
     assert(sessionCookie.httpOnly&&sessionCookie.sameSite==='Lax');
@@ -147,7 +203,7 @@ const operator = 'browser-test-operator';
     await replayPage.getByRole('button',{name:'登录',exact:true}).click();
     await replayPage.waitForURL(url+'/');
     assert.deepEqual(errors, []);
-    console.log('Task browser: login redirect/return, reload, observer, SSE, replay, logout and safe redirects passed.');
+    console.log('Task browser: login, observer, SSE, live and replay cameras, SVG fallback, logout and safe redirects passed.');
   } finally {
     if (browser) await browser.close();
     if (control) {control.kill(); await controlExit;}
