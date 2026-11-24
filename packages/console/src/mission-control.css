@@ -198,7 +198,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  height: 100dvh;
  color: var(--ink);
  background: var(--bg);
- font-size: .875rem;
+ font-size: .75rem;
 }
 .mc-header {
  position: relative;
@@ -208,7 +208,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  gap: clamp(18px,4vw,64px);
  min-width: 0;
  padding: 0 16px 0 24px;
- min-height: 54px;
+ min-height: 52px;
  border-bottom: 1px solid var(--line);
 }
 .mc-brand {
@@ -217,7 +217,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  gap: 11px;
  flex: none;
  color: #c6cedb;
- font-size: .9375rem;
+ font-size: .8125rem;
  font-weight: 650;
  letter-spacing: .17em;
 }
@@ -233,7 +233,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  display: flex;
  align-items: center;
  height: 100%;
- min-height: 52px;
+ min-height: 50px;
  padding: 0 13px;
  border: 0;
  background: none;
@@ -267,7 +267,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  content: '';
 }
 .mc-tick, .mc-trace-list time, .mc-device-row-power { font-variant-numeric: tabular-nums; }
-.mc-tick { padding-left: 12px; border-left: 1px solid var(--line); color: var(--muted); }
+.mc-tick { padding-left: 12px; border-left: 1px solid var(--line); color: var(--muted); font-size: .6875rem; }
 .mc-run {
  display: inline-flex;
  align-items: center;
@@ -345,7 +345,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  justify-content: space-between;
  gap: 12px 30px;
  min-width: 0;
- min-height: 72px;
+ min-height: 68px;
  padding: 10px 24px;
  border-bottom: 1px solid var(--line);
 }
@@ -355,17 +355,17 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  gap: clamp(12px,2vw,28px);
  min-width: 0;
 }
-.mc-mission-title > span { flex: none; color: var(--muted); }
+.mc-mission-title > span { flex: none; color: var(--muted); font-size: .6875rem; }
 .mc-mission h1 {
  margin: 0;
  padding-left: clamp(12px,2vw,28px);
  border-left: 1px solid #50596a;
- font-size: clamp(1.0625rem,.75rem + .85vw,1.5rem);
+ font-size: 1.125rem;
  line-height: 1.3;
- font-weight: 680;
+ font-weight: 650;
  overflow-wrap: anywhere;
 }
-.mc-mission-meta { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.mc-mission-meta { flex: none; color: var(--muted); font-size: .6875rem; font-variant-numeric: tabular-nums; }
 .mc-mission-meta > div + div { padding-left: clamp(12px,2vw,28px); border-left: 1px solid #50596a; }
 .mc-mission-meta strong, .mc-mission-meta button { margin-left: 5px; color: var(--ink); font-weight: 550; }
 .mc-mission-meta button {
@@ -543,7 +543,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 }
 .mc-trace-header h2, .mc-device-header h2 {
  margin: 0;
- font-size: 1rem;
+ font-size: .8125rem;
  font-weight: 650;
  line-height: 1.2;
 }
@@ -557,7 +557,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  background: var(--accent);
  content: '';
 }
-.mc-pane-actions .mc-menu > summary { font-size: 12px; }
+.mc-pane-actions .mc-menu > summary { font-size: .6875rem; }
 .mc-feed, .mc-device-content, .mc-device-list {
  min-height: 0;
  overflow: auto;
@@ -640,13 +640,12 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  border-left: 1px solid var(--line);
 }
 .mc-device-header { justify-content: flex-start; min-height: 67px; padding: 0 3px; border: 0; }
-.mc-device-header h2 { font-size: 1.125rem; }
-.mc-device-count { margin-left: auto; color: var(--muted); white-space: nowrap; }
+.mc-device-count { margin-left: auto; color: var(--muted); font-size: .6875rem; white-space: nowrap; }
 .mc-device-header > .mc-menu { margin-left: auto; }
 .mc-device-count + .mc-menu { margin-left: 0; }
 .mc-device-content { flex: 1; padding: 2px 3px 14px; }
 .mc-device-list {
- --device-row-height: clamp(42px,6.7vh,61px);
+ --device-row-height: clamp(42px,6.2vh,56px);
  max-height: calc(4 * var(--device-row-height));
  margin: 0;
  padding: 0;
@@ -693,7 +692,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  border-top: 1px solid var(--line);
 }
 .mc-device-detail-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.mc-device-detail h3 { margin: 0; font-size: clamp(1.0625rem,1.5vw,1.3125rem); font-weight: 650; overflow-wrap: anywhere; }
+.mc-device-detail h3 { margin: 0; font-size: 1rem; font-weight: 650; overflow-wrap: anywhere; }
 .mc-follow-device, .mc-back-global {
  display: inline-flex;
  align-items: center;
@@ -709,7 +708,7 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 }
 .mc-follow-device:hover, .mc-back-global:hover { border-color: #5c6785; color: var(--ink); }
 .mc-back-global { margin-bottom: 5px; color: var(--accent); }
-.mc-device-camera-label { margin: 2px 0 9px; color: var(--muted); }
+.mc-device-camera-label { margin: 2px 0 9px; color: var(--muted); font-size: .6875rem; }
 .mc-camera {
  position: relative;
  overflow: hidden;
@@ -738,18 +737,16 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  border-radius: 5px;
  color: #b7bcff;
  background: none;
- font-size: .8125rem;
  font-weight: 600;
 }
 .mc-device-open:hover { background: #323950; color: #e1e2ff; }
 .mc-device-extra { margin-top: 7px; color: var(--muted); }
-.mc-device-extra > summary { padding: 5px 0; cursor: pointer; font-size: 12px; }
+.mc-device-extra > summary { padding: 5px 0; cursor: pointer; font-size: .6875rem; }
 .mc-device-telemetry { margin: 8px 0; }
 .mc-device-telemetry > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 8px; margin: 3px 0; }
 .mc-device-telemetry dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
 
 @media (max-width: 1040px) {
- .mission-control { font-size: .8125rem; }
  .mc-header { gap: 18px; }
  .mc-header-actions { gap: 8px; }
  .mc-navigation > button, .mc-navigation > .mc-menu > summary { padding-inline: 8px; }
@@ -765,17 +762,17 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 }
 @media (max-width: 760px) {
  .mc-header { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 2px 6px; padding: 5px 10px 0; }
- .mc-brand { font-size: .8125rem; gap: 6px; }
+ .mc-brand { gap: 6px; }
  .mc-brand svg { width: 21px; }
  .mc-navigation { grid-row: 2; grid-column: 1/-1; justify-content: space-between; }
  .mc-navigation > button, .mc-navigation > .mc-menu > summary { min-height: 39px; padding-inline: 12px; }
  .mc-navigation > .mc-menu:last-child .mc-menu-items { left: auto; right: 0; }
- .mc-header-actions { grid-row: 1; grid-column: 2; min-width: 0; font-size: 12px; }
+ .mc-header-actions { grid-row: 1; grid-column: 2; min-width: 0; }
  .mc-run { min-height: 32px; padding: 2px 7px; }
  .mc-header-account .mc-pill { padding-inline: 4px; font-size: 11px; overflow: hidden; text-overflow: ellipsis; max-width: 90px; display: block; }
  .mc-workspace { grid-template: auto minmax(310px,55vh) auto auto / minmax(0,1fr); }
  .mc-mission-title { flex-wrap: wrap; gap: 2px 10px; }
- .mc-mission h1 { padding-left: 0; border-left: 0; }
+ .mc-mission h1 { padding-left: 0; border-left: 0; font-size: 1rem; }
  .mc-left { display: contents; }
  .mc-stage { grid-row: 2; }
  .mc-devices { grid-row: 3; border: 0; padding-inline: 11px; }
