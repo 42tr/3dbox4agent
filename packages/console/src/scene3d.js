@@ -42,10 +42,15 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   let followRadius=Infinity,lastRequestedRadius=Infinity;
   const followTarget=new THREE.Vector3();
   const toWorld=p=>({x:p.x+center,y:p.z+center,z:p.y});
+  function setViewportProjection(aspect) {
+    camera.aspect=aspect;
+    camera.zoom=modern&&!cameraFocus?Math.min(1.13,aspect*.84):1;
+    camera.updateProjectionMatrix();
+  }
   function setCameraLimits(following) {
     // A farther near plane preserves depth precision for thin paint and roof details.
     camera.near=following ? .1 : 2;
-    camera.updateProjectionMatrix();
+    setViewportProjection(camera.aspect);
     controls.minDistance=following?4:18;
     controls.maxDistance=industrial?410:210;
     controls.maxTargetRadius=!following&&industrial?170:Infinity;
@@ -69,8 +74,7 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
         if(lunarCamera==='outpost'){camera.position.set(-12*fit,42*fit,2+68*fit);controls.target.set(4,0,2)}
         else{camera.position.set(-45*fit,40*fit,-6+56*fit);controls.target.set(0,0,-6)}
       }else if(modern){
-        const fit=Math.max(1,Math.min(1.45,1.38/aspect));
-        controls.target.set(10,0,21);camera.position.set(10+138*fit,220*fit,21+178*fit);
+        controls.target.set(10,0,21);camera.position.set(148,220,199);
       }else if(industrial){
         const fit=Math.max(1,Math.min(1.45,1.42/aspect));
         controls.target.set(13,0,41);camera.position.set(13+82*fit,209*fit,41+183*fit);
@@ -168,7 +172,7 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   const riskMaterial=new THREE.MeshBasicMaterial({color:0xb54555,transparent:true,opacity:.28,depthWrite:false,side:THREE.DoubleSide});let riskKey=null,riskMeshes=[];function updateRisk(zones){const key=JSON.stringify([zones,lastState?.heightfield]);if(key===riskKey)return;riskKey=key;for(const mesh of riskMeshes){scene.remove(mesh);mesh.geometry.dispose()}riskMeshes=zones.map(z=>surfacePatch(z,riskMaterial,.17))}
   const partMesh=box(scene,1.8,1.8,1.8,orange,0,.9,0);
   const agents=new Map(),pickables=[],transitions=new Map(),agentMaterials=new Map();let lastState=null,lastSelected=null,carriedBy=null;const reducedMotion=window.matchMedia?.('(prefers-reduced-motion: reduce)');
-  const routeLine=new THREE.Line(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:0x107d77,transparent:true,opacity:.85}));scene.add(routeLine);
+  const routeLine=new THREE.Line(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:0x39ded2,transparent:true,opacity:.95}));scene.add(routeLine);
   const messageLines=new THREE.LineSegments(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.9,depthTest:false}));messageLines.renderOrder=5;scene.add(messageLines);let linksKey='';
   const VISUAL_RADIUS=.78;
   function fitAgentVisual(group,excluded){const bounds=new THREE.Box3();group.traverse(o=>{if(o.isMesh&&o!==excluded&&o.visible!==false)bounds.expandByObject(o)});if(!Number.isFinite(bounds.min.x))return;const radius=Math.hypot(bounds.max.x-bounds.min.x,bounds.max.z-bounds.min.z)/2;if(radius>VISUAL_RADIUS)group.scale.multiplyScalar(VISUAL_RADIUS/radius)}
@@ -291,9 +295,12 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
       refreshThumbnails();
     }
     const part=state.part;const carrier=state.agents.find(a=>a.id===part.carrierId);const p=carrier?[carrier.x,carrier.y]:part.position;carriedBy=carrier?.id||null;partMesh.scale.setScalar(lunar ? .6 : 1);partMesh.visible=!focus&&!!p&&part.location!=='consumed';if(p)partMesh.position.set(p[0]-center,(carrier&&window.SandboxSensors.isAir(carrier)?(carrier.flightZ??16):floor(p[0],p[1]))+(carrier?(lunar?1.8:3):(lunar ? .54 : .9)),p[1]-center);
-    const flight=!focus&&(state.actions||[]).find(a=>a.status==='accepted'&&a.flight?.path?.length);
+    const taskAgent=state.tasks.find(task=>task.status==='active')?.assignee;
+    const movingAgents=state.agents.filter(a=>(a.status==='working'||a.status==='manual')&&a.route.length);
+    const taskRoute=movingAgents.find(a=>a.id===taskAgent);
+    const flight=!focus&&(state.actions||[]).find(a=>a.status==='accepted'&&a.flight?.path?.length&&(!taskRoute||a.agentId===taskAgent));
     const aircraft=flight&&state.agents.find(a=>a.id===flight.agentId);
-    const moving=state.agents.find(a=>(a.status==='working'||a.status==='manual')&&a.route.length&&(!focus||a.id===focus.id));
+    const moving=taskRoute||movingAgents[0];
     routeLine.visible=!!(aircraft||moving)&&!focus;
     if(aircraft){
       const start=window.SandboxSensors.position(aircraft,state.heightfield);
@@ -437,6 +444,23 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
       viewCamera.position.lerpVectors(controls.target,camera.position,followRadius/radius);
     }
   }
+  const agentLabel=canvas.closest('.mc-stage')?.querySelector('.mc-stage-agent');
+  const labelPosition=new THREE.Vector3();
+  function positionAgentLabel(width,height){
+    if(!agentLabel)return;
+    const id=agentLabel.dataset.stageAgent;
+    const agent=id&&agents.get(id)?.group;
+    let visible=false;
+    if(agent?.visible&&width&&height){
+      labelPosition.copy(agent.position);
+      labelPosition.y+=1.5;
+      labelPosition.project(viewCamera);
+      const x=(labelPosition.x+1)*width/2,y=(1-labelPosition.y)*height/2;
+      visible=labelPosition.z>=-1&&labelPosition.z<=1&&x>=4&&x<width-agentLabel.offsetWidth-12&&y>=36&&y<height;
+      if(visible)agentLabel.style.transform='translate('+Math.round(x+8)+'px,'+Math.round(y-30)+'px)';
+    }
+    agentLabel.style.visibility=visible?'visible':'hidden';
+  }
   let renderWidth=0,renderHeight=0;
   function animate(now){
     if(graphicsLost)return;
@@ -463,10 +487,11 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
     const w=canvas.clientWidth,h=canvas.clientHeight;
     if(w&&h&&(w!==renderWidth||h!==renderHeight)){
       renderWidth=w;renderHeight=h;
-      renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();
+      renderer.setSize(w,h,false);setViewportProjection(w/h);
     }
     updateViewCamera(elapsed);
     if(w&&h)renderer.render(scene,viewCamera);
+    positionAgentLabel(w,h);
     thumbnails(now);
   }
   requestAnimationFrame(animate);
