@@ -114,6 +114,9 @@ node tests/device-reports.test.js
 node tests/device-reports-server.test.js
 node tests/device-controls.test.js
 node tests/device-controls-server.test.js
+node tests/device-capabilities.test.js
+node tests/rover-survey.test.js
+node tests/task-operations.test.js
 node tests/manual-assignment.test.js
 node tests/manual-assignment-server.test.js
 node tests/task-execution.test.js

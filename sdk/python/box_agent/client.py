@@ -59,8 +59,17 @@ class AgentClient:
         except (TimeoutError, ConnectionError) as error:
             raise SandboxError(0, 'connection_error') from error
 
-    def observe(self):
-        return self._request(f'/sessions/{self._session}/observations/{self._agent}')
+    def observe(self, *, include_device=False):
+        query = '?include=device' if include_device else ''
+        return self._request(f'/sessions/{self._session}/observations/{self._agent}{query}')
+
+    def device_snapshot(self):
+        """Return the device profile, pose, status, observations and executable actions."""
+        return self.observe(include_device=True)['device']
+
+    def action_status(self, request_id):
+        """Return the requested own action, or None if the world has no such record."""
+        return next((action for action in self.observe()['actions'] if action['requestId'] == request_id), None)
 
     def lidar(self, count=36, max_range=None):
         """Return an instantaneous scoped 360-degree horizontal range scan."""
@@ -101,6 +110,45 @@ class AgentClient:
             'targetTick': target_tick, 'expiresTick': expires_tick,
         })
 
+    def move_direction(self, request_id, bearing_deg, distance_m, target_tick, expires_tick):
+        """Move along a world bearing in the plane. North is 0 degrees, east is 90."""
+        return self._request(f'/sessions/{self._session}/agents/{self._agent}/actions', {
+            'requestId': request_id, 'type': 'move',
+            'direction': {'bearingDeg': bearing_deg, 'distanceM': distance_m},
+            'targetTick': target_tick, 'expiresTick': expires_tick,
+        })
+
+    def change_altitude(self, request_id, delta_m, target_tick, expires_tick):
+        """Move vertically by delta_m. Positive values climb and negative values descend."""
+        return self._request(f'/sessions/{self._session}/agents/{self._agent}/actions', {
+            'requestId': request_id, 'type': 'move', 'vertical': {'deltaM': delta_m},
+            'targetTick': target_tick, 'expiresTick': expires_tick,
+        })
+
+    def move_to_3d(self, request_id, x, y, z, target_tick, expires_tick):
+        """Fly to a world position whose z is measured from the scene datum."""
+        return self._request(f'/sessions/{self._session}/agents/{self._agent}/actions', {
+            'requestId': request_id, 'type': 'move', 'target': {'x': x, 'y': y, 'z': z},
+            'targetTick': target_tick, 'expiresTick': expires_tick,
+        })
+
+    def takeoff(self, request_id, target_tick, expires_tick, *, height_m=8):
+        """Rise vertically to a height above the local ground."""
+        return self._flight_control(request_id, {'mode': 'takeoff', 'heightM': height_m}, target_tick, expires_tick)
+
+    def land(self, request_id, x, y, target_tick, expires_tick):
+        """Fly to the landing coordinates and descend to the surface."""
+        return self._flight_control(request_id, {'mode': 'land', 'x': x, 'y': y}, target_tick, expires_tick)
+
+    def hover(self, request_id, duration_ticks, target_tick, expires_tick):
+        """Hold the current pose for a number of simulation ticks."""
+        return self._flight_control(request_id, {'mode': 'hover', 'durationTicks': duration_ticks}, target_tick, expires_tick)
+
+    def _flight_control(self, request_id, control, target_tick, expires_tick):
+        return self._request(f'/sessions/{self._session}/agents/{self._agent}/actions', {
+            'requestId': request_id, 'type': 'move', 'flightControl': control,
+            'targetTick': target_tick, 'expiresTick': expires_tick,
+        })
 
     def rescue(self, request_id, target_agent_id, observed_tick, target_tick, expires_tick, fault_generation):
         """Reset one observed mechanical fault after reaching the target on site."""
@@ -116,12 +164,15 @@ class AgentClient:
             'targetTick': target_tick, 'expiresTick': expires_tick,
         })
 
-    def work_task(self, request_id, task_id, target_tick, expires_tick):
-        """Perform the current phase of an assigned task in primitive execution mode."""
-        return self._request(f'/sessions/{self._session}/agents/{self._agent}/actions', {
+    def work_task(self, request_id, task_id, target_tick, expires_tick, *, operation=None):
+        """Perform an assigned task phase or select an explicit work operation."""
+        payload = {
             'requestId': request_id, 'type': 'work_task', 'taskId': task_id,
             'targetTick': target_tick, 'expiresTick': expires_tick,
-        })
+        }
+        if operation is not None:
+            payload['operation'] = operation
+        return self._request(f'/sessions/{self._session}/agents/{self._agent}/actions', payload)
 
     def report_scan(self, request_id, scan_request_id):
         """Send a completed own scan through the simulated coordinator link."""
@@ -149,14 +200,31 @@ class AgentClient:
             'targetTick': target_tick, 'expiresTick': expires_tick,
         })
 
+    def scan_terrain(self, request_id, bearing_deg, radius_m, target_tick, expires_tick):
+        """Scan a sector from a stationary ground rover. North is 0 degrees."""
+        return self._request(f'/sessions/{self._session}/agents/{self._agent}/actions', {
+            'requestId': request_id, 'type': 'scan',
+            'survey': {'mode': 'terrain_scan', 'bearingDeg': bearing_deg, 'radiusM': radius_m},
+            'targetTick': target_tick, 'expiresTick': expires_tick,
+        })
+
+    def mark_access_point(self, request_id, scan_request_id, point_index, target_tick, expires_tick):
+        """Mark a traversable point by its zero-based index in an own terrain scan."""
+        return self._request(f'/sessions/{self._session}/agents/{self._agent}/actions', {
+            'requestId': request_id, 'type': 'scan',
+            'survey': {'mode': 'mark_access_point', 'scanRequestId': scan_request_id, 'pointIndex': point_index},
+            'targetTick': target_tick, 'expiresTick': expires_tick,
+        })
+
 
 class CoordinatorClient:
     """Scoped dispatch observations and decisions, without global snapshots."""
     def __init__(self, session_id, token, base_url=CONTROL_HTTP_ORIGIN, timeout=5, *, run_id=None):
         self._client = AgentClient(session_id, '_coordinator', token, base_url, timeout, run_id=run_id)
 
-    def observe(self):
-        return self._client._request(f'/sessions/{self._client._session}/coordinator/observation')
+    def observe(self, *, include_device=False):
+        query = '?include=device' if include_device else ''
+        return self._client._request(f'/sessions/{self._client._session}/coordinator/observation{query}')
 
     def assign(self, request_id, task_id, agent_id, observed_tick):
         return self._client._request(f'/sessions/{self._client._session}/coordinator/decisions', {

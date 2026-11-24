@@ -14,6 +14,7 @@ const {createConsoleServer} = require('../../packages/console/server/console-ser
 const streamProtobuf = require('../../packages/world/src/stream-protobuf');
 const {createHttpAgentClient} = require('../../packages/control/src/agent-control-client');
 const {createClientAgentRuntime} = require('../../packages/agent/src/agent-runtime');
+const {getScene} = require('../../packages/world/src/world-core');
 
 async function startControl(worldUrl) {
   const executable = process.platform === 'win32' ? 'threebox-control-server.exe' : 'threebox-control-server';
@@ -101,6 +102,56 @@ function mcpClient(base, token) {
   };
 }
 
+async function checkRoverMcp(base) {
+  const scene = getScene('lunar-sampling-v1');
+  scene.agents = [{...scene.agents.find(a => a.role === 'rover'), count: 1, spawnArea: {x: 20, y: 20, w: 1, h: 1}}];
+  scene.tasks = [{...scene.tasks.find(t => t.id === 'sample'), target: [22,20], duration: 2, dependsOn: []}];
+  scene.obstacles = [];
+  scene.communication = {...scene.communication, delay: 2, lossRate: 0};
+  const {sessionId, adminToken} = await http(base, '/sessions', {method: 'POST', status: 201,
+    body: {scene, physicsMode: 'kinematic', dispatchMode: 'external', executionMode: 'primitive'}});
+  const root = '/sessions/' + sessionId;
+  const agentId = 'rover-1';
+  const adminPost = (route, body) => http(base, root + route, {method: 'POST', token: adminToken, body});
+  try {
+    const {agentToken} = await http(base, root + '/agents/' + agentId + '/credentials',
+      {method: 'POST', token: adminToken, body: {}, status: 201});
+    const mcp = mcpClient(base, agentToken);
+    await mcp.initialize();
+    const target = {session_id: sessionId, agent_id: agentId};
+    const observe = async () => {
+      const result = await mcp.call('observe_agent', {...target, include_device: true});
+      assert.equal(result.isError, false);
+      return result.value;
+    };
+    const submit = async (requestId, type, payload) => {
+      const {tick} = await observe();
+      const action = {requestId, type, targetTick: tick + 1, expiresTick: tick + 20, ...payload};
+      const result = await mcp.call('submit_action', {...target, action});
+      assert.equal(result.isError, false);
+    };
+    await submit('scan', 'scan', {survey: {mode: 'terrain_scan', bearingDeg: 90, radiusM: 8}});
+    await adminPost('/step', {count: 3});
+    const {device} = await observe();
+    assert.equal(device.actions[0].result.kind, 'terrain_scan');
+    const {scanRequestId, pointIndices} = device.availableActions.find(a => a.name === 'mark_access_point').parameters.survey;
+    await submit('mark', 'scan', {survey: {mode: 'mark_access_point', scanRequestId, pointIndex: pointIndices[0]}});
+    await adminPost('/step', {count: 3});
+    assert.equal((await observe()).actions[1].result.kind, 'access_point');
+    await adminPost('/assign', {taskId: 'sample', agentId});
+    await submit('collect', 'work_task', {taskId: 'sample', operation: 'collect_sample'});
+    await adminPost('/step', {count: 2});
+    assert.equal((await observe()).device.sampleStorage.used, 1);
+    const receipt = await mcp.call('report_sample', {...target, task_id: 'sample', request_id: 'report'});
+    assert.equal(receipt.value.report.status, 'pending');
+    const settled = await adminPost('/step', {count: 2});
+    assert(settled.world.done);
+    assert.equal((await observe()).sampleReports[0].status, 'delivered');
+  } finally {
+    await http(base, root, {method: 'DELETE', token: adminToken});
+  }
+}
+
 (async () => {
   const data = mkdtempSync(path.join(tmpdir(), '3dbox-control-'));
   process.env.BOX_WORLD_API_ONLY = '1';
@@ -162,8 +213,12 @@ function mcpClient(base, token) {
     assert.deepEqual(await mcpClient(base).initialize({status: 401}), {error: 'missing_agent_token'});
     const mcp = mcpClient(consoleUrl + '/control', token);
     await mcp.initialize();
-    assert.deepEqual((await mcp.list()).tools.map(tool => tool.name).sort(), ['cancel_action', 'observe_agent', 'send_agent_message', 'submit_action']);
+    assert.deepEqual((await mcp.list()).tools.map(tool => tool.name).sort(), ['cancel_action', 'observe_agent', 'report_sample', 'send_agent_message', 'submit_action']);
     const target = {session_id: sessionId, agent_id: agent};
+    const noSample = await mcp.call('report_sample', {...target, request_id: 'report', task_id: 'sample'});
+    assert.deepEqual(noSample, {isError: true, value: {error: 'sample_not_available', status: 409}});
+    const forbiddenReport = await mcp.call('report_sample', {...target, agent_id: other, request_id: 'report', task_id: 'sample'});
+    assert.deepEqual(forbiddenReport, {isError: true, value: {error: 'forbidden', status: 403}});
     const mcpObservation = await mcp.call('observe_agent', target);
     assert.equal(mcpObservation.isError, false);
     assert.deepEqual(mcpObservation.value, await http(base, observation, {token}));
@@ -204,6 +259,8 @@ function mcpClient(base, token) {
     await http(base, root, {method: 'DELETE', token: adminToken});
     assert.deepEqual(await http(base, observation, {token, status: 404}), {error: 'session_not_found'});
     assert.deepEqual(await mcp.call('observe_agent', target), {isError: true, value: {error: 'session_not_found', status: 404}});
+
+    await checkRoverMcp(base);
 
     const {stdout} = await promisify(execFile)('python3', [
       'packages/agent/python/multi_agent_demo.py', '--fault', 'none', '--physics', 'rapier', '--archive'

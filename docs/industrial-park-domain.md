@@ -50,4 +50,6 @@ for (let i = 0; i < 4; i++) domain.advanceTask(task.id);
 
 任务状态为 `pending`、`assigned`、`active`、`paused`、`completed`、`failed` 或 `cancelled`。任务分配会检查所选对象的能力；任务启动会检查依赖是否已经完成。当前工业园区场景的五步链 `inspect → confirm → deliver → repair → verify` 会作为 `taskTemplates.scene` 返回，通用的入库、生产、物流、维修、质量、能源和应急模板位于 `taskTemplates.generic`。
 
+新建园区运行中，无人机的巡检、异常确认和维修后复核分别要求 `inspect`、`confirm` 和 `verify`。运输车用 `deliver` 完成取件和交付，维修机器人用 `repair` 完成现场维修。历史回放保留录制时的能力配置。
+
 后续将把领域命令与带认证的 session World 执行绑定，使 `execute()` 的状态变化同时驱动物理世界和任务验收。

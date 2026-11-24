@@ -17,6 +17,12 @@ assert(catalog.objects.some(object => object.id === 'vehicle-1' && object.operat
 assert(catalog.objects.some(object => object.type === 'person' && object.operations.includes('authenticate')));
 assert(catalog.objects.some(object => object.type === 'order' && object.operations.includes('release')));
 assert.equal(catalog.taskTemplates.scene.length, 5);
+const verification = catalog.taskTemplates.scene.find(task => task.id === 'verify');
+assert.equal(verification.requiredCapability, 'verify');
+assert.deepEqual(
+  catalog.objects.filter(object => object.capabilities.includes('verify')).map(object => object.id),
+  ['drone-1', 'drone-2', 'drone-3', 'drone-4', 'drone-5'],
+);
 assert(catalog.operationCatalog.equipment.includes('createMaintenanceOrder'));
 const sceneTaskDomain = Domain.createIndustrialParkDomain(scene);
 const sceneTask = sceneTaskDomain.createSceneTask('inspect');

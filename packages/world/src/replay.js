@@ -10,10 +10,123 @@ const Materials=typeof module!=='undefined'?require('./materials'):root.SandboxM
 const Construction=typeof module!=='undefined'?require('./construction'):root.SandboxConstruction;
 const Rescue=typeof module!=='undefined'?require('./rescue'):root.SandboxRescue;
 const Power=typeof module!=='undefined'?require('./operating-power'):root.SandboxOperatingPower;
+const Device=typeof module!=='undefined'?require('./device-capabilities'):root.SandboxDeviceCapabilities;
+const Flight=typeof module!=='undefined'?require('./flight'):root.SandboxFlight;
+const Operations=typeof module!=='undefined'?require('./task-operations'):root.SandboxTaskOperations;
+const Survey=typeof module!=='undefined'?require('./rover-survey'):root.SandboxRoverSurvey;
 const MAX_BYTES=50*1024*1024,MAX_FRAMES=5000;
 function fail(){throw Error('记录格式不兼容或内容不完整')}
 function list(x,max){return Array.isArray(x)&&x.length<=max}
 function num(n,min,max){return Number.isFinite(n)&&n>=min&&n<=max}
+function validDirectionalMove(action,agent,size){
+ const {bearingDeg,distanceM,start}=action.direction??{};
+ const validPoint=p=>p&&num(p.x,0,size)&&num(p.y,0,size);
+ if(action.type!=='move'||!Device.validDirection(agent,{bearingDeg,distanceM})||!validPoint(start)||!validPoint(action.target))return false;
+ const result=action.result;
+ if(!result||!validPoint(result.position)||!num(result.completedM,0,distanceM)||!num(result.remainingM,0,distanceM))return false;
+ const projected=Device.directionTarget(start,{bearingDeg,distanceM:result.completedM});
+ return Math.abs(result.completedM+result.remainingM-distanceM)<1e-6&&
+  Math.hypot(projected[0]-result.position.x,projected[1]-result.position.y)<1e-5&&
+  (action.status!=='completed'||result.remainingM<=1e-5);
+}
+function validFlightMove(action,world,agent,size){
+ const data=action.flight;
+ const point=p=>p&&num(p.x,0,size)&&num(p.y,0,size)&&Number.isFinite(p.z);
+ const position=p=>point(p)&&Flight.validPose(world,p);
+ if(action.type!=='move'||action.direction!==undefined||Device.mobility(agent)!=='air'||!data||
+    !position(data.start)||!point(action.target))return false;
+ const control=data.control===undefined?null:Flight.controlInput(data.control,size);
+ if(data.control!==undefined){
+  if(!control||data.deltaM!==undefined||JSON.stringify(canonical(control))!==JSON.stringify(canonical(data.control)))return false;
+  if(control.mode==='land'){
+   if(action.target.x!==control.x||action.target.y!==control.y)return false;
+   if(data.path!==undefined&&Math.abs(action.target.z-(Flight.landingPoint(world,control.x,control.y)?.z??Infinity))>1e-8)return false;
+  }else{
+   if(action.target.x!==data.start.x||action.target.y!==data.start.y)return false;
+   if(control.mode==='takeoff'&&data.path!==undefined){
+    const ground=Flight.heightRange(world,data.start.x,data.start.y).minimum-Flight.clearance.minimum;
+    if(Math.abs(action.target.z-ground-control.heightM)>1e-8)return false;
+   }
+  }
+ }else if(data.deltaM!==undefined){
+  if(!Flight.validDelta(data.deltaM)||action.target.x!==data.start.x||action.target.y!==data.start.y||
+     Math.abs(action.target.z-data.start.z-data.deltaM)>1e-8)return false;
+ }else if(!num(action.target.z,-8,45))return false;
+ if(data.path!==undefined&&(!list(data.path,17000)||!data.path.every(position)))return false;
+ if(action.status==='accepted'&&(control?.mode==='hover'?!Array.isArray(data.path)||data.path.length!==0:!data.path?.length))return false;
+ const result=action.result;
+ if(control?.mode==='hover'){
+  if(!result||!Number.isInteger(result.heldTicks)||!Number.isInteger(result.remainingTicks)||
+     result.heldTicks<0||result.remainingTicks<0||result.heldTicks+result.remainingTicks!==control.durationTicks||
+     result.completedM!==0||result.remainingM!==0||!point(result.position)||
+     Flight.distance(result.position,data.start)>1e-8||Flight.distance(action.target,data.start)>1e-8||
+     (action.status==='completed'&&result.remainingTicks!==0))return false;
+ }
+ return result&&position(result.position)&&num(result.completedM,0,100000)&&num(result.remainingM,0,100000)&&
+  (action.status!=='completed'||(result.remainingM<=1e-6&&Flight.distance(result.position,action.target)<=1e-6));
+}
+function validOperationState(task,world,point){
+ const state=task.operationState;
+ if(!state||!Object.hasOwn(Operations.flows,task.behavior))return false;
+ if(state.last==='restart')return task.behavior==='deliver'&&Object.keys(state).length===1;
+ if(!Operations.flows[task.behavior].includes(state.last))return false;
+ if(state.last.startsWith('dock_')){
+  return task.status==='active'&&state.assignmentId===task.assignmentId&&point(state.position)&&num(state.distance,0,10000000);
+ }
+ if(state.last==='unload'){
+  const part=world.part;
+  return task.status!=='done'&&part?.location==='ground'&&point(part.position)&&
+    part.position.every((coordinate,index)=>coordinate===task.target[index]);
+ }
+ if(state.last==='install')return task.status!=='done'&&world.part?.location==='consumed';
+ return ['handoff','self_test','collect_sample'].includes(state.last)===(task.status==='done');
+}
+function validOperationAction(action,world,tasks,point){
+ const operation=action.operation,task=tasks.get(action.taskId);
+ if(world.executionMode!=='primitive'||action.type!=='work_task'||!Operations.valid(operation)||!task||
+   !Number.isSafeInteger(action.operationAssignmentId)||action.operationAssignmentId<1)return false;
+ const duration=Operations.duration(task,operation);
+ if(action.progress!==undefined&&(!Number.isInteger(action.progress)||!num(action.progress,0,duration)))return false;
+ if(action.status==='accepted'&&(action.progress===undefined||action.progress>=duration||
+     action.operationAssignmentId!==world.tasks.find(t=>t.id===task.id)?.assignmentId))return false;
+ if(action.status!=='completed')return action.result===undefined;
+ const result=action.result;
+ if(operation==='collect_sample'&&(!Operations.canSample(world.agents.find(a=>a.id===action.agentId))||
+    result?.sampleId!==task.id||!world.events.some(e=>e.kind==='sample_collected'&&e.taskId===task.id&&
+      e.agentId===action.agentId&&e.tick===result.observedTick&&e.position.every((n,i)=>n===result.position?.[i]))))return false;
+ return Operations.flows[task.behavior]?.includes(operation)&&action.progress===duration&&result?.operation===operation&&
+    result.assignmentId===action.operationAssignmentId&&point(result.position)&&result.observedTick===action.updatedTick&&
+    world.events.some(e=>e.kind==='task_operation_completed'&&e.requestId===action.requestId&&e.taskId===task.id&&
+      e.agentId===action.agentId&&e.assignmentId===result.assignmentId&&e.operation===operation&&e.tick===result.observedTick);
+}
+function validSurveyAction(action,world,agent,point){
+ const survey=Survey.input(action.survey,world,agent);
+ if(action.type!=='scan'||action.target!==undefined||action.taskId!==undefined||!Survey.supported(agent)||!survey)return false;
+ if(action.status!=='completed')return action.result===undefined;
+ const result=action.result;
+ if(action.progress!==3||!result||!Number.isSafeInteger(result.observedTick)||result.observedTick<action.targetTick||
+    result.observedTick!==action.updatedTick||result.observedTick>world.tick)return false;
+ if(survey.mode==='terrain_scan')return result.kind==='terrain_scan'&&point(result.origin)&&
+   list(result.points,5*Math.ceil(survey.radiusM/2))&&result.points.every(p=>p&&point(p.position)&&
+     Math.hypot(p.position[0]-result.origin[0],p.position[1]-result.origin[1])<=survey.radiusM+1e-8&&
+     num(p.elevationM,-10,10)&&num(p.slopeDeg,0,90)&&typeof p.traversable==='boolean');
+ const source=Survey.markSource(world.actions,action.agentId,survey);
+ return result.kind==='access_point'&&source.point?.traversable===true&&point(result.position)&&
+   source.scan.result.observedTick<result.observedTick&&
+   result.elevationM===source.point.elevationM&&result.position.every((n,i)=>n===source.point.position?.[i]);
+}
+function archiveScene(config,first){
+ const scene=config.scene===undefined?E.getScene(first.sceneId):E.normalizeScene(config.scene);
+ if(scene.id!==first.sceneId)fail();
+ // Older built-in park recordings used confirm for both confirmation and verification.
+ if(config.scene===undefined&&scene.id==='industrial-park-v2'&&Array.isArray(first.tasks)&&
+    first.tasks.some(task=>task?.id==='verify'&&task.capability==='confirm')){
+  scene.tasks.find(task=>task.id==='verify').capability='confirm';
+  const drone=scene.agents.find(agent=>agent.role==='drone');
+  drone.capabilities=drone.capabilities.filter(capability=>capability!=='verify');
+ }
+ return scene;
+}
 // A task intention may precede the task itself. Such a record cannot describe
 // execution, and must agree with its retained submission/terminal events.
 function unresolvedTaskIntent(action,world){
@@ -32,7 +145,7 @@ function validateArchive(archive,{createWorld=E.create}={}){
  if(!archive||archive.format!=='3dbox-prototype-v1'||!archive.config||!list(archive.frames,MAX_FRAMES)||!archive.frames.length)fail();
  if(archive.recordingContext!==undefined){Recording.validate(archive.recordingContext);if(archive.source!=='server')fail()}
  const config=archive.config;if(!Number.isSafeInteger(config.seed)||config.seed<0||config.seed>0xffffffff||!['nearest','battery'].includes(config.policy))fail();
- const first=archive.frames[0];if(!first||!['rule','networked','external','networked_external','networked_reported'].includes(first.dispatchMode))fail();if(config.sceneId!==undefined&&config.sceneId!==first.sceneId)fail();let scene;try{scene=config.scene===undefined?E.getScene(first.sceneId):E.normalizeScene(config.scene);if(scene.id!==first.sceneId)fail()}catch{fail()}const expected=createWorld(config.seed,config.policy,scene,{dispatchMode:first.dispatchMode,physicsMode:first.physicsMode,executionMode:first.executionMode??'auto'});
+ const first=archive.frames[0];if(!first||!['rule','networked','external','networked_external','networked_reported'].includes(first.dispatchMode))fail();if(config.sceneId!==undefined&&config.sceneId!==first.sceneId)fail();let scene;try{scene=archiveScene(config,first)}catch{fail()}const expected=createWorld(config.seed,config.policy,scene,{dispatchMode:first.dispatchMode,physicsMode:first.physicsMode,executionMode:first.executionMode??'auto'});
  const size=expected.worldSize??100,point=p=>Array.isArray(p)&&p.length===2&&p.every(n=>num(n,0,size));
  const agents=new Map(expected.agents.map(a=>[a.id,a])),baseTasks=new Map(expected.tasks.map(t=>[t.id,t]));let lastTick=-1,priorEventKeys=[],previousPowerFrame=null;
  for(const s of archive.frames){
@@ -53,6 +166,7 @@ function validateArchive(archive,{createWorld=E.create}={}){
   if(s.agents.some(a=>a.deliveryTravel!==undefined)&&s.agents.some(a=>a.deliveryTravel===undefined))fail();for(const a of s.agents){const d=a.deliveryTravel;if(d!==undefined&&(!d||!['emptyDistance','loadedDistance'].every(k=>Number.isFinite(d[k])&&d[k]>=0)||!['emptyTicks','loadedTicks'].every(k=>Number.isSafeInteger(d[k])&&d[k]>=0)||d.emptyTicks+d.loadedTicks>s.tick||d.emptyDistance+d.loadedDistance>a.distance+1e-9*Math.max(1,a.distance)))fail()}
   for(const a of s.agents){if(a.roadblockWaitTicks!==undefined&&(!Number.isSafeInteger(a.roadblockWaitTicks)||a.roadblockWaitTicks<0||a.roadblockWaitTicks>s.tick))fail();const w=a.roadblockWait;if(!w)continue;if(a.disabled||s.done||a.route.length||!point(w.goal)||!['route','loading'].includes(w.mode)||!Number.isSafeInteger(w.startedTick)||w.startedTick<0||w.startedTick>s.tick||typeof w.roadblockId!=='string'||!w.owner||!s.events.some(e=>e.kind==='roadblock_wait_started'&&e.agentId===a.id&&e.roadblockId===w.roadblockId&&e.tick===w.startedTick&&e.mode===w.mode&&JSON.stringify(e.goal)===JSON.stringify(w.goal)))fail();if(w.owner.kind==='action'){if(w.mode!=='route'||a.status!=='manual'||!(s.actions||[]).some(x=>x.agentId===a.id&&x.requestId===w.owner.requestId&&x.status==='accepted'&&['move','charge'].includes(x.type)))fail()}else if(w.owner.kind==='task'){if(!['assigned','working'].includes(a.status)||!s.tasks.some(t=>t.id===w.owner.taskId&&t.status==='active'&&t.assignee===a.id&&t.assignmentId===w.owner.assignmentId))fail()}else fail()}
   const seenTasks=new Set();for(const t of s.tasks){const template=tasks.get(t.id);if(t.buildSite!==template?.buildSite)fail();if(JSON.stringify(canonical(t.materialCost))!==JSON.stringify(canonical(template?.materialCost)))fail();if(!template||seenTasks.has(t.id)||t.name!==template.name||t.role!==template.role||t.capability!==template.capability||t.duration!==template.duration||(t.behavior!==undefined&&t.behavior!==template.behavior)||t.priority!==template.priority||t.deadline!==template.deadline||(t.assignmentId!==undefined&&(!Number.isSafeInteger(t.assignmentId)||t.assignmentId<1))||JSON.stringify(t.target)!==JSON.stringify(template.target)||JSON.stringify(t.dependsOn)!==JSON.stringify(template.dependsOn)||!['pending','active','done'].includes(t.status)||(t.assignee!==null&&!agents.has(t.assignee))||(t.status==='active'&&!agents.has(t.assignee))||(t.phase!=null&&!['to_pickup','loading','to_site','unloading','repairing'].includes(t.phase)))fail();seenTasks.add(t.id)}
+  if(s.tasks.some(t=>t.operationState!==undefined&&(s.executionMode!=='primitive'||!validOperationState(t,s,point))))fail();
   try{Relay.validateWorld(s);Construction.validateWorld(s,scene.constructionSites)}catch{fail()}
   if(scene.materials!==undefined){try{Materials.validateState(s.materials,s.tasks,scene.materials)}catch{fail()}}else if(s.materials!==undefined)fail();
   if(s.chargingStation!==undefined&&JSON.stringify(s.chargingStation)!==JSON.stringify(scene.resource.warehouse))fail();
@@ -66,10 +180,17 @@ function validateArchive(archive,{createWorld=E.create}={}){
   if(s.events.some(e=>e.kind==='terrain_route_replanned'&&(!agents.has(e.agentId)||!['started','ended'].includes(e.transition)||!['time','energy'].includes(e.policy)||!num(e.previousCost,0,1e9)||!num(e.newCost,0,1e9)||e.newCost>=e.previousCost)))fail();
   if(s.events.some(e=>e.kind==='low_energy_injected'&&(!agents.has(e.agentId)||!num(e.before,1,100)||!num(e.level,1,5)||!num(e.amount,0,100)||e.amount<=0||Math.abs(e.before-e.level-e.amount)>1e-8)))fail();
   if(!list(s.actions,1000)||s.actions.some(a=>!a||!agents.has(a.agentId)||!['pending','accepted','completed','rejected','failed','cancelled'].includes(a.status)||(a.reason!==undefined&&(typeof a.reason!=='string'||a.reason.length>100))))fail();
-  for(const a of s.actions){if(a.resumeTaskId!==undefined&&(!['move','charge'].includes(a.type)||typeof a.resumeTaskId!=='string'||!tasks.has(a.resumeTaskId)))fail();if(!['move','scan','charge','execute_task','work_task','rescue'].includes(a.type)||['execute_task','work_task'].includes(a.type)&&(a.target!==undefined||!tasks.has(a.taskId)&&!unresolvedTaskIntent(a,s)))fail();if(a.type==='charge'&&(s.chargingStation===undefined||a.target!==undefined||a.taskId!==undefined||(a.energyAdded!==undefined&&!num(a.energyAdded,0,80))||(a.phase!==undefined&&!['travel','waiting','charging'].includes(a.phase))))fail();if(a.type==='scan'){if(a.progress!==undefined&&(!Number.isInteger(a.progress)||a.progress<0||a.progress>3))fail();if(a.result!==undefined){const r=a.result;if(a.status!=='completed'||!r||!['anomaly','normal','not_detected'].includes(r.kind)||!Number.isSafeInteger(r.observedTick)||r.observedTick<0||r.observedTick>s.tick||(r.kind==='not_detected'?r.position!==undefined:!point(r.position)))fail()}}}
+  if(s.actions.some(a=>a.direction!==undefined&&(s.physicsMode!=='kinematic'||!validDirectionalMove(a,agents.get(a.agentId),size))))fail();
+  if(s.actions.some(a=>a.operation!==undefined?!validOperationAction(a,s,tasks,point):a.operationAssignmentId!==undefined))fail();
+  if(s.agents.some(a=>a.flightZ!==undefined&&(s.physicsMode!=='kinematic'||Device.mobility(a)!=='air'||!Flight.validPose(s,{x:a.x,y:a.y,z:a.flightZ}))))fail();
+  if(s.agents.some(a=>a.landed!==undefined&&(a.landed!==true||a.flightZ===undefined||
+    Math.abs(a.flightZ-(Flight.landingPoint(s,a.x,a.y)?.z??Infinity))>1e-8)))fail();
+  if(s.actions.some(a=>a.flight!==undefined?(s.physicsMode!=='kinematic'||!validFlightMove(a,s,agents.get(a.agentId),size)):a.target?.z!==undefined))fail();
+  if(s.actions.some(a=>a.survey!==undefined&&!validSurveyAction(a,s,agents.get(a.agentId),point)))fail();
+  for(const a of s.actions){if(a.resumeTaskId!==undefined&&(!['move','charge'].includes(a.type)||typeof a.resumeTaskId!=='string'||!tasks.has(a.resumeTaskId)))fail();if(!['move','scan','charge','execute_task','work_task','rescue'].includes(a.type)||['execute_task','work_task'].includes(a.type)&&(a.target!==undefined||!tasks.has(a.taskId)&&!unresolvedTaskIntent(a,s)))fail();if(a.type==='charge'&&(s.chargingStation===undefined||a.target!==undefined||a.taskId!==undefined||(a.energyAdded!==undefined&&!num(a.energyAdded,0,80))||(a.phase!==undefined&&!['travel','waiting','charging'].includes(a.phase))))fail();if(a.type==='scan'){if(a.progress!==undefined&&(!Number.isInteger(a.progress)||a.progress<0||a.progress>3))fail();if(a.result!==undefined&&a.survey===undefined){const r=a.result;if(a.status!=='completed'||!r||!['anomaly','normal','not_detected'].includes(r.kind)||!Number.isSafeInteger(r.observedTick)||r.observedTick<0||r.observedTick>s.tick||(r.kind==='not_detected'?r.position!==undefined:!point(r.position)))fail()}}}
   if(s.sampleReports!==undefined){if(!list(s.sampleReports,1000))fail();const keys=new Set(),activeSamples=new Set();for(let i=0;i<s.sampleReports.length;i++){const r=s.sampleReports[i],key=r?.agentId+':'+r?.requestId,sample=s.events.find(e=>e.kind==='sample_collected'&&e.agentId===r?.agentId&&e.taskId===r?.taskId);if(!r||r.id!==i+1||!agents.has(r.agentId)||typeof r.requestId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(r.requestId)||keys.has(key)||!sample||JSON.stringify(r.position)!==JSON.stringify(sample.position)||r.collectedTick!==sample.tick||!Number.isSafeInteger(r.submittedTick)||r.submittedTick<r.collectedTick||r.submittedTick>s.tick||r.dueTick!==r.submittedTick+expected.communication.config.delay||r.expiresTick!==r.submittedTick+expected.communication.config.ttl||!['pending','delivered','failed'].includes(r.status)||!s.events.some(e=>e.kind==='sample_report_sent'&&e.reportId===r.id&&e.agentId===r.agentId&&e.taskId===r.taskId&&e.tick===r.submittedTick))fail();keys.add(key);if(r.status!=='failed'){const sampleKey=r.agentId+':'+r.taskId;if(activeSamples.has(sampleKey))fail();activeSamples.add(sampleKey)}if(r.status==='pending'){if(s.done||r.dueTick<=s.tick||r.expiresTick<s.tick||r.appliedTick!==undefined||r.reason!==undefined)fail()}else{if(!Number.isSafeInteger(r.appliedTick)||r.appliedTick<r.submittedTick||r.appliedTick>s.tick||r.status==='delivered'&&(r.appliedTick!==r.dueTick||r.reason!==undefined)||r.status==='failed'&&!['expired','unavailable','interrupted','dropped','run_ended'].includes(r.reason)||!s.events.some(e=>e.kind===(r.status==='delivered'?'sample_report_delivered':'sample_report_failed')&&e.reportId===r.id&&e.agentId===r.agentId&&e.taskId===r.taskId&&e.tick===r.appliedTick&&(r.status!=='failed'||e.reason===r.reason)))fail()}}}
   for(const [kind,status] of [['sample_report_sent',null],['sample_report_delivered','delivered'],['sample_report_failed','failed']]){const events=s.events.filter(e=>e.kind===kind),reports=(s.sampleReports||[]).filter(r=>status===null||r.status===status);if(events.length!==reports.length||events.some(e=>!reports.some(r=>r.id===e.reportId&&r.agentId===e.agentId&&r.taskId===e.taskId)))fail()}
-  if(s.evidenceReports!==undefined){if(!list(s.evidenceReports,1000))fail();const ids=new Set();for(let i=0;i<s.evidenceReports.length;i++){const r=s.evidenceReports[i],a=agents.get(r?.agentId),key=r?.agentId+':'+r?.requestId,scan=s.actions.find(x=>x.agentId===r?.agentId&&x.requestId===r?.scanRequestId&&x.type==='scan'&&x.status==='completed');if(!r||r.id!==i+1||!a||r.role!==a.role||r.canSurvey!==a.capabilities.includes('inspect')||typeof r.requestId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(r.requestId)||ids.has(key)||!scan||!r.result||r.result.kind!==scan.result?.kind||r.result.observedTick!==scan.result?.observedTick||JSON.stringify(r.result.position??null)!==JSON.stringify(scan.result?.position??null)||!Number.isSafeInteger(r.submittedTick)||r.submittedTick<r.result.observedTick||r.submittedTick>s.tick||r.dueTick!==r.submittedTick+expected.communication.config.delay||r.expiresTick!==r.submittedTick+expected.communication.config.ttl||!['pending','delivered','failed'].includes(r.status)||!s.events.some(e=>e.kind==='evidence_sent'&&e.reportId===r.id&&e.agentId===r.agentId))fail();ids.add(key);if(r.status==='pending'){if(r.dueTick<=s.tick||r.expiresTick<s.tick||r.appliedTick!==undefined||r.reason!==undefined)fail()}else if(!Number.isSafeInteger(r.appliedTick)||r.appliedTick<r.submittedTick||r.appliedTick>s.tick||r.status==='delivered'&&(r.appliedTick!==r.dueTick||r.reason!==undefined)||r.status==='failed'&&!['expired','unavailable','interrupted','dropped','run_ended'].includes(r.reason))fail()}}
+  if(s.evidenceReports!==undefined){if(!list(s.evidenceReports,1000))fail();const ids=new Set();for(let i=0;i<s.evidenceReports.length;i++){const r=s.evidenceReports[i],a=agents.get(r?.agentId),key=r?.agentId+':'+r?.requestId,scan=s.actions.find(x=>x.agentId===r?.agentId&&x.requestId===r?.scanRequestId&&x.type==='scan'&&!x.survey&&x.status==='completed');if(!r||r.id!==i+1||!a||r.role!==a.role||r.canSurvey!==a.capabilities.includes('inspect')||typeof r.requestId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(r.requestId)||ids.has(key)||!scan||!r.result||r.result.kind!==scan.result?.kind||r.result.observedTick!==scan.result?.observedTick||JSON.stringify(r.result.position??null)!==JSON.stringify(scan.result?.position??null)||!Number.isSafeInteger(r.submittedTick)||r.submittedTick<r.result.observedTick||r.submittedTick>s.tick||r.dueTick!==r.submittedTick+expected.communication.config.delay||r.expiresTick!==r.submittedTick+expected.communication.config.ttl||!['pending','delivered','failed'].includes(r.status)||!s.events.some(e=>e.kind==='evidence_sent'&&e.reportId===r.id&&e.agentId===r.agentId))fail();ids.add(key);if(r.status==='pending'){if(r.dueTick<=s.tick||r.expiresTick<s.tick||r.appliedTick!==undefined||r.reason!==undefined)fail()}else if(!Number.isSafeInteger(r.appliedTick)||r.appliedTick<r.submittedTick||r.appliedTick>s.tick||r.status==='delivered'&&(r.appliedTick!==r.dueTick||r.reason!==undefined)||r.status==='failed'&&!['expired','unavailable','interrupted','dropped','run_ended'].includes(r.reason))fail()}}
   if(s.revocations!==undefined&&(!list(s.revocations,1000)||s.revocations.some(v=>!v||typeof v.requestId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(v.requestId)||typeof v.taskId!=='string'||typeof v.agentId!=='string'||!Number.isSafeInteger(v.assignmentId)||v.assignmentId<1||!Number.isSafeInteger(v.observedTick)||v.observedTick<0||(v.requireBlockedSince!==undefined&&(!Number.isSafeInteger(v.requireBlockedSince)||v.requireBlockedSince<0||v.requireBlockedSince>v.observedTick))||!Number.isSafeInteger(v.appliedTick)||v.appliedTick<0||v.appliedTick>s.tick||!['accepted','rejected'].includes(v.status)||(v.status==='rejected'&&!['stale_observation','assignment_changed','route_condition_changed'].includes(v.reason)))))fail();
   if(!list(s.decisions,1000))fail();for(const collection of [s.decisions,s.proposals??[],s.revocations??[],s.events])if(collection.some(x=>x?.coordinatorId!==undefined&&(typeof x.coordinatorId!=='string'||!/^[A-Za-z0-9_-]{1,40}$/.test(x.coordinatorId))))fail();if(s.decisions.some(d=>d.coordinatorId!==undefined&&d.actor!=='external'))fail();
   if(!list(s.decisions,1000)||!s.perceptions||typeof s.perceptions!=='object'||!s.communication||!s.communication.inboxes||s.communication.config?.bytesPerTick!==expected.communication.config.bytesPerTick||s.communication.config?.lineOfSight!==expected.communication.config.lineOfSight)fail();

@@ -163,6 +163,55 @@ async function stdio(base, token) {
     const access = await http(base, `/runs/v1/runs/${id}/observer`, operator, {}); assert(access.observerToken);
     await http(base, `/runs/v1/runs/${id}/observer`, token, {}, 403);
     const rootArgs = {run_id: id, control_epoch: run.control_epoch};
+    const telemetryArgs = {run_id: id, view: 'agent', agent_id: 'drone-1', include_device: true};
+    const initialDevice = (await legacy.call('observe', telemetryArgs)).observation.device;
+    assert.equal(initialDevice.profile.id, 'drone-1');
+    assert(initialDevice.availableActions.some(action => action.name === 'move_direction' && action.available));
+    const direction = {...rootArgs, agent_id: 'drone-1', action: {
+      requestId: 'device-east', type: 'move', direction: {bearingDeg: 90, distanceM: 1},
+      targetTick: 1, expiresTick: 20,
+    }};
+    const queuedMove = await modern.call('submit_action', direction);
+    assert.equal(queuedMove.action.status, 'pending');
+    await modern.call('advance', {...rootArgs, request_id: 'device-step', expected_revision: queuedMove.world_revision, max_ticks: 1, until: []});
+    const updatedDevice = (await modern.call('observe', telemetryArgs)).observation.device;
+    assert.equal(updatedDevice.pose.x, initialDevice.pose.x + 1);
+    assert.equal(updatedDevice.pose.y, initialDevice.pose.y);
+    assert.equal(updatedDevice.actions.find(action => action.requestId === 'device-east').result.completedM, 1);
+    const climb = await modern.call('submit_action', {...rootArgs, agent_id: 'drone-1', action: {
+      requestId: 'device-climb', type: 'move', vertical: {deltaM: 5}, targetTick: 2, expiresTick: 20,
+    }});
+    await modern.call('advance', {...rootArgs, request_id: 'climb-step', expected_revision: climb.world_revision, max_ticks: 3, until: []});
+    const raisedDevice = (await modern.call('observe', telemetryArgs)).observation.device;
+    assert.equal(raisedDevice.pose.z, 21);
+    assert.equal(raisedDevice.pose.x, updatedDevice.pose.x);
+    assert(raisedDevice.availableActions.some(action => action.name === 'move_to_3d' && action.available));
+    const waypoint = {x: raisedDevice.pose.x - 2, y: raisedDevice.pose.y, z: 18};
+    const routed = await modern.call('submit_action', {...rootArgs, agent_id: 'drone-1', action: {
+      requestId: 'device-waypoint', type: 'move', target: waypoint, targetTick: 5, expiresTick: 20,
+    }});
+    await modern.call('advance', {...rootArgs, request_id: 'waypoint-step', expected_revision: routed.world_revision, max_ticks: 3, until: []});
+    const arrived = (await modern.call('observe', telemetryArgs)).observation.device;
+    assert.deepEqual(arrived.actions.find(action => action.requestId === 'device-waypoint').result.position, waypoint);
+    async function runFlightControl(device, requestId, flightControl, ticks) {
+      const intent = await modern.call('submit_action', {...rootArgs, agent_id: 'drone-1', action: {
+        requestId, type: 'move', flightControl, targetTick: device.observedTick + 1, expiresTick: device.observedTick + 40,
+      }});
+      await modern.call('advance', {...rootArgs, request_id: 'step-' + requestId, expected_revision: intent.world_revision,
+        max_ticks: ticks, until: []});
+      const updated = (await modern.call('observe', telemetryArgs)).observation.device;
+      const receipt = updated.actions.find(action => action.requestId === requestId);
+      assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+      return updated;
+    }
+    const landed = await runFlightControl(arrived, 'device-land', {mode: 'land', x: waypoint.x, y: waypoint.y}, 10);
+    assert.equal(landed.status.flightState, 'landed');
+    assert(landed.availableActions.some(action => action.name === 'takeoff' && action.available));
+    const airborne = await runFlightControl(landed, 'device-takeoff', {mode: 'takeoff'}, 4);
+    assert.equal(airborne.pose.z, 8);
+    const hovered = await runFlightControl(airborne, 'device-hover', {mode: 'hover', durationTicks: 3}, 3);
+    assert.equal(hovered.pose.z, 8);
+    assert.equal(hovered.actions.find(action => action.requestId === 'device-hover').result.heldTicks, 3);
     await legacy.call('record_note', {...rootArgs, request_id: 'plan-1', kind: 'plan', text: '按任务依赖分配合适设备，逐段推进并核验结果。'});
     await legacy.call('record_note', {...rootArgs, request_id: 'claim-complete', kind: 'progress', text: '已完成'});
     assert.equal((await legacy.call('get_run', {run_id: id})).status, 'running');
@@ -199,6 +248,61 @@ async function stdio(base, token) {
     const streamReader=streamResponse.body.getReader();const chunk=await streamReader.read();assert(new TextDecoder().decode(chunk.value).includes('event: run'));await streamReader.cancel();streaming.abort();
     const cursor = events.next_cursor; const rest = await legacy.call('get_events', {run_id: id, after_seq: cursor, limit: 200}); assert(rest.events.every(e => e.seq > cursor));
     assert(!JSON.stringify(events).includes(token)); assert(!JSON.stringify(run).includes(access.observerToken));
+
+    // Exercise explicit ground operations through the same task tools and World ledger.
+    const primitiveRun = await modern.call('create_run', {...input, request_id: 'primitive-operations',
+      config: {...input.config, execution_mode: 'primitive'}});
+    const primitiveArgs = {run_id: primitiveRun.run_id, control_epoch: primitiveRun.control_epoch};
+    let workSerial = 0;
+    async function primitiveObservation(agentId) {
+      return (await modern.call('observe', {run_id: primitiveRun.run_id, view: 'agent',
+        agent_id: agentId, include_device: true})).observation;
+    }
+    async function primitiveAction(agentId, action, ticks) {
+      const current = await primitiveObservation(agentId);
+      const key = 'primitive-' + (++workSerial);
+      const queued = await modern.call('submit_action', {...primitiveArgs, agent_id: agentId, action: {
+        ...action, requestId: key, targetTick: current.tick + 1, expiresTick: current.tick + 40,
+      }});
+      const outcome = await modern.call('advance', {...primitiveArgs, request_id: 'step-' + key,
+        expected_revision: queued.world_revision, max_ticks: ticks, until: []});
+      if (outcome.run.status !== 'running') return outcome.run;
+      const receipt = (await primitiveObservation(agentId)).actions.find(row => row.requestId === key);
+      assert.equal(receipt.status, 'completed', JSON.stringify(receipt));
+      return receipt;
+    }
+    for (const [taskId, agentId, offset, operations] of [
+      ['inspect','drone-1',[0,0],[null]], ['confirm','drone-1',[0,0],[null]],
+      ['deliver','vehicle-1',[-3,0],['dock_pickup','load','dock_delivery','unload','handoff']],
+      ['repair','robot-1',[0,3],['diagnose','remove','install','self_test']],
+      ['verify','drone-1',[0,0],[null]],
+    ]) {
+      const current = await modern.call('get_run', {run_id: primitiveRun.run_id});
+      await modern.call('assign_task', {...primitiveArgs, request_id: 'primitive-assign-' + taskId,
+        expected_revision: current.world_revision, task_id: taskId, agent_id: agentId});
+      for (const operation of operations) {
+        const observed = (await primitiveObservation(agentId)).assignedTasks.find(t => t.id === taskId);
+        if (!observed.withinReach) {
+          const [x,y] = observed.approachPoint ?? observed.waypoint;
+          const site = taskId === 'deliver' && operation === 'dock_pickup' ? [0,0] : offset;
+          await primitiveAction(agentId, {type:'move', target:{x:x+site[0],y:y+site[1]}}, 75);
+        }
+        if (operation) {
+          const state = (await primitiveObservation(agentId)).device;
+          assert(state.availableActions.some(a=>a.name===operation&&a.available));
+        }
+        const result = await primitiveAction(agentId, {type:'work_task',taskId,...(operation?{operation}:{})}, 15);
+        if (operation === 'install') assert.equal(result.result.consumed,1);
+        if (operation === 'self_test') assert.equal(result.result.passed,true);
+      }
+    }
+    let finishedPrimitive = await modern.call('get_run', {run_id:primitiveRun.run_id});
+    for (let i=0;i<20&&finishedPrimitive.status==='stopping';i++) {
+      await delay(250);
+      finishedPrimitive=await modern.call('get_run', {run_id:primitiveRun.run_id});
+    }
+    assert.equal(finishedPrimitive.status,'completed',JSON.stringify(finishedPrimitive));
+    assert.equal(finishedPrimitive.result.success,true);
 
     // Pause fences old writes; cancellation doesn't wait for an advance lock.
     let cancelled = await legacy.call('create_run', {...input, request_id: 'cancel-001'});

@@ -31,7 +31,7 @@ import {WorldSettingControls} from './world-setting-controls';
 import {createWorldSettingsController,DEFAULT_SCENE_ID,defaultWorldSettings,previewSettingsSeed,validateSettings,settingsConnectionDisabled,configuredScene,customSettings,settingsSession,type SettingsContext} from './world-settings';
 import {WorldDisturbanceControls} from './world-disturbance-controls';
 import {createDisturbanceController,projectDisturbances,type DisturbanceContext} from './world-disturbances';
-import {createDeviceController,type DeviceContext} from './device-actions';
+import {createDeviceController,deviceBlock,type DeviceDraft,type DeviceResult,type DeviceTask,type DeviceContext} from './device-actions';
 import {createDeviceReportController,projectDeviceReports} from './device-reports';
 import {createDeviceCredentialController} from './device-credentials';
 import {assignmentBlock,assignmentTasks,assignmentAgents,assignmentSelection,assignmentMessage,createAssignmentController,type AssignmentContext,type AssignmentResult} from './manual-assignment';
@@ -39,8 +39,8 @@ import {DeviceCapabilities} from './device-capabilities';
 type ThermalState={temperatureC:number;peakC:number;protected:boolean;trips:number;protectionTicks:number;tick:number};
 type CameraConfig={enabled?:boolean;mount?:number[];yaw?:number;pitch?:number;fov?:number;range?:number;updateTicks?:number;resolution?:[number,number]};
 type CameraFrame={version?:number;agentId:string;tick:number;width:number;height:number;mimeType?:string;yaw?:number;pitch?:number;fov?:number;svg?:string;url?:string};
-type Agent={camera?:CameraConfig;mobility?:string;sensorRange?:number;communicationRange?:number;speed?:number;deployableRelay?:true;relayState?:{deployed:boolean;deployedTick?:number;taskId?:string;position?:[number,number]};thermal?:{limitC:number;resumeC:number};thermalState?:ThermalState;id:string;name:string;role:string;battery:number;status:string;disabled:boolean;x:number;y:number;taskId?:string;capabilities?:string[]};
-type Mission={cameraFrames?:Record<string,CameraFrame>;constructionConfigured?:boolean;construction?:ConstructionView|null;materials?:MaterialView|null;heightfield?:{rows:number;cols:number;heights:number[];maxSlopeDegrees:number};replay?:ReplayView;chain?:TaskChainView;messages?:MessageContext;flow?:FlowView;sceneId:string;worldSize?:number;sceneName:string;tick:number;running:boolean;speed?:number;speedDisabled?:boolean;faultDisabled?:boolean;physicsMode?:string;executionMode?:string;playLabel?:string;statusLabel?:string;dispatchMode?:string;done:boolean;failed:boolean;selected:string;agents:Agent[];tasks:any[];events:any[];frame:number;frames:number;is3d:boolean;available3d:boolean;graphicsFailure?:{code:string;title:string;body:string;help:string}|null;obstacles?:any[];source:string;connectAvailable?:boolean;connectDisabled?:boolean;connectLabel?:string;playDisabled:boolean;resetDisabled:boolean;sceneDisabled:boolean;observer:boolean;remoteSession?:boolean;manual?:AssignmentContext;device?:DeviceContext;disturbances?:DisturbanceContext;settings?:SettingsContext;coordination?:CoordinatorContext;commandNodes?:NodeView;planReview?:PlanView};
+type Agent={rescue?:{workTicks:number};camera?:CameraConfig;mobility?:string;sensorRange?:number;communicationRange?:number;speed?:number;deployableRelay?:true;relayState?:{deployed:boolean;deployedTick?:number;taskId?:string;position?:[number,number]};thermal?:{limitC:number;resumeC:number};thermalState?:ThermalState;id:string;name:string;role:string;battery:number;status:string;disabled:boolean;x:number;y:number;taskId?:string;capabilities?:string[]};
+type Mission={cardTasks?:DeviceTask[];cardTaskTypes?:Pick<DeviceTask,'capability'|'behavior'>[];cameraFrames?:Record<string,CameraFrame>;constructionConfigured?:boolean;construction?:ConstructionView|null;materials?:MaterialView|null;heightfield?:{rows:number;cols:number;heights:number[];maxSlopeDegrees:number};replay?:ReplayView;chain?:TaskChainView;messages?:MessageContext;flow?:FlowView;sceneId:string;worldSize?:number;sceneName:string;tick:number;running:boolean;speed?:number;speedDisabled?:boolean;faultDisabled?:boolean;physicsMode?:string;executionMode?:string;playLabel?:string;statusLabel?:string;dispatchMode?:string;done:boolean;failed:boolean;selected:string;agents:Agent[];tasks:any[];events:any[];frame:number;frames:number;is3d:boolean;available3d:boolean;graphicsFailure?:{code:string;title:string;body:string;help:string}|null;obstacles?:any[];source:string;connectAvailable?:boolean;connectDisabled?:boolean;connectLabel?:string;playDisabled:boolean;resetDisabled:boolean;sceneDisabled:boolean;observer:boolean;remoteSession?:boolean;manual?:AssignmentContext;device?:DeviceContext;disturbances?:DisturbanceContext;settings?:SettingsContext;coordination?:CoordinatorContext;commandNodes?:NodeView;planReview?:PlanView};
 let snapshot:Mission={sceneId:DEFAULT_SCENE_ID,sceneName:'现代工业园区',tick:0,running:false,done:false,failed:false,selected:'global',agents:[],tasks:[],events:[],frame:0,frames:0,is3d:false,available3d:false,source:'浏览器仿真',playDisabled:true,resetDisabled:true,sceneDisabled:true,observer:false};
 let actions:any={};const subscribers=new Set<()=>void>();
 (window as any).SandboxMissionUI={update(next:Mission){snapshot=next;subscribers.forEach(f=>f())},setActions(next:any){actions=next},openMessaging(){window.dispatchEvent(new Event('sandbox-message-tools'))}};
@@ -53,7 +53,7 @@ const toolAnchors = new Map([
  ['agent-runs','Agent 任务'], ['runner','Runner 实验'], ['world-settings','场景与世界设置'], ['experiment-reports','实验报告与回放'],
  ['device-process','设备进程'], ['device-messaging','设备通信'], ['world-disturbances','扰动控制'],
  ['command-plan','计划审阅'], ['command-nodes','指挥节点'], ['task-coordination','任务指挥'],
- ['device-operations','设备操作'], ['device-reports','设备报告'], ['manual-assignment','人工任务分配'],
+ ['device-operations','设备操作'], ['device-rescue','现场救援'], ['device-reports','设备报告'], ['manual-assignment','人工任务分配'],
  ['replay-records','完整记录与回放'], ['service-diagnostics','记录与服务诊断'],
  ['agent-strategy','调度策略与智能体'], ['experiment-tools','实验与世界设置'],
 ]);
@@ -71,7 +71,7 @@ function readToolRoute() {
 const toolSections = new Map([
  ['设备通信','.mc-device-messaging'], ['计划审阅','.mc-plan-review'], ['指挥节点','.mc-node-registry'],
  ['任务指挥','.mc-task-coordination'], ['场景与世界设置','.mc-world-settings'], ['扰动控制','.mc-disturbances'],
- ['设备操作','.mc-device-actions'], ['设备报告','.mc-device-reports'], ['设备进程','.mc-device-process'],
+ ['设备操作','.mc-device-actions'], ['现场救援','.mc-device-rescue'], ['设备报告','.mc-device-reports'], ['设备进程','.mc-device-process'],
  ['人工任务分配','.mc-assignment'],
 ]);
 (window as any).SandboxMaterialView={projectMaterials,projectConstruction};
@@ -80,7 +80,7 @@ const toolSections = new Map([
 (window as any).SandboxReplayUI={createReplayNavigator};
 (window as any).SandboxMessaging={projectMessages,createMessageController};
 (window as any).SandboxManualAssignment={createAssignmentController};
-(window as any).SandboxDeviceActions={createDeviceController,createDeviceReportController,projectDeviceReports,createDeviceCredentialController};
+(window as any).SandboxDeviceActions={createDeviceController,deviceBlock,createDeviceReportController,projectDeviceReports,createDeviceCredentialController};
 const subscribe=(fn:()=>void)=>{subscribers.add(fn);return()=>{subscribers.delete(fn)}};
 const act=(id:string)=>actions.click?.(id);
 const select=(id:string,value:string)=>actions.select?.(id,value);
@@ -103,6 +103,7 @@ const deviceTypeNames=new Map([
  ['robot','机器人'],
  ['drone','无人机'],
  ['relay','中继车'],
+ ['boat','作业船'],
 ]);
 const statusName:Record<string,string>={deployed:'中继驻留',idle:'就绪',working:'工作中',assigned:'已分配',manual:'执行指令',charging:'充电中',returning:'返航中',disabled:'已退出'};
 type AssignmentRequest={key:string;taskId:string;serial:number};
@@ -245,7 +246,8 @@ function App(){
   if(!body)return;
   const id=disturbancePanels[toolTitle];
   const section=toolSections.get(toolTitle);
-  const panel=id?document.getElementById(id):section?body.querySelector<HTMLElement>(section):
+  const panel=id?document.getElementById(id):section?body.querySelector<HTMLElement>(section)
+   ??(toolTitle==='现场救援'?body.querySelector<HTMLElement>('.mc-device-actions'):null):
    toolRoute.hash.startsWith('section-directory-')?document.getElementById(toolRoute.hash):null;
   if((id||section)&&!panel)return;
   body.scrollTop=panel?panel.getBoundingClientRect().top-body.getBoundingClientRect().top+body.scrollTop
@@ -260,7 +262,7 @@ function App(){
  useLayoutEffect(()=>{const canvas=document.querySelector<HTMLCanvasElement>('[data-world-minimap]');if(!canvas)return;const c=canvas.getContext('2d');if(!c)return;const size=s.worldSize??100,sx=220/size,sy=170/size;c.clearRect(0,0,220,170);c.fillStyle='#20211fe8';c.fillRect(0,0,220,170);c.strokeStyle='#72726450';c.lineWidth=.7;for(let i=0;i<=10;i++){c.beginPath();c.moveTo(i*22,0);c.lineTo(i*22,170);c.stroke();c.beginPath();c.moveTo(0,i*17);c.lineTo(220,i*17);c.stroke()}if(s.heightfield){const h=s.heightfield,w=100/(h.cols-1),d=100/(h.rows-1);for(let r=0;r<h.rows-1;r++)for(let col=0;col<h.cols-1;col++){const i=r*h.cols+col,a=h.heights[i],b=h.heights[i+1],q=h.heights[i+h.cols],z=h.heights[i+h.cols+1],grade=Math.max(Math.hypot((b-a)/w,(q-a)/d),Math.hypot((z-q)/w,(z-b)/d)),blocked=Math.atan(grade)*180/Math.PI>h.maxSlopeDegrees+1e-9;c.fillStyle=blocked?'#d1934c88':`rgba(172,164,141,${.08+Math.min(.3,Math.abs(a)/30)})`;c.fillRect(col*w*sx,r*d*sy,w*sx,d*sy)}}if(s.sceneId==='industrial-park-v2'){const campus=(window as Window & {SandboxIndustrialCampus?:{roads:number[][];yards:number[][]}}).SandboxIndustrialCampus;if(campus){c.fillStyle='#55554b';for(const [x,y,w,h] of campus.yards)c.fillRect(x*sx,y*sy,w*sx,h*sy);c.fillStyle='#777d80';for(const [x,y,w,h] of campus.roads)c.fillRect(x*sx,y*sy,w*sx,h*sy)}}c.fillStyle='#bdb09866';for(const o of s.obstacles||[])c.fillRect(o.x*sx,o.y*sy,o.w*sx,o.h*sy);for(const a of s.agents){c.fillStyle=a.disabled?'#d4776b':a.status==='working'?'#90c8b8':'#bec3dd';c.beginPath();c.arc(a.x*sx,a.y*sy,2.5,0,Math.PI*2);c.fill()}},[s]);
  useEffect(()=>{const open=()=>openTools('设备通信');window.addEventListener('sandbox-message-tools',open);return()=>window.removeEventListener('sandbox-message-tools',open)},[]);
  const openTaskAssignment=(taskId:string)=>{if(!s.manual||assignmentBlock(s.manual)||!assignmentTasks(s.manual.tasks).some(t=>t.id===taskId))return;setAssignmentRequest(old=>({key:s.manual!.key,taskId,serial:(old?.serial||0)+1}));openTools('人工任务分配')};
- const invokeCardCapability=(agentId:string,draft:import('./device-actions').DeviceDraft):Promise<import('./device-actions').DeviceResult>=>{
+ const invokeCardCapability=(agentId:string,draft:DeviceDraft):Promise<DeviceResult>=>{
   if(!s.device?.key)return Promise.resolve({ok:false,reason:'context_changed'});
   if(actions.deviceCapability)return actions.deviceCapability(s.device.key,agentId,draft);
   if(agentId===s.device.selected)return actions.deviceAction?.(s.device.key,agentId,draft)||Promise.resolve({ok:false,reason:'request_failed'});
@@ -289,9 +291,11 @@ function App(){
    </section></div>
    <aside className="mc-devices"><div className="mc-device-header"><div><b>设备</b><span className="mc-tag">{s.source==='导入回放'||s.frame<s.frames-1?'回放':'状态'}</span><code>{active}/{s.agents.length}</code></div><span className="mc-observe-badge">{focused?'观察 '+s.selected:'全局监控'}</span></div><div className="mc-device-toolbar"><div className="mc-device-tabset">{[['devices','设备'],['data','数据流'],['events','动态']].map(([key,label])=><button className={tab===key?'selected':''} key={key} onClick={()=>setTab(key)}>{label}</button>)}</div><button className="mc-stop" disabled={!s.running||s.observer} onClick={()=>actions.pause?.()}><Stop size={9} weight="fill"/> 全局暂停</button></div>
     {focused&&<button className="mc-back-global" onClick={()=>select('view','global')}>返回全局观察</button>}{focused&&s.constructionConfigured&&<p className="mc-construction-scope">施工区仅显示碰撞范围；本机建设任务可在任务链中查看。</p>}
-    <div className="mc-device-content">{tab==='devices'?<><ConstructionPanel view={s.construction} tasks={()=>setTrace('tasks')} observe={id=>select('view',id)}/><MaterialPanel view={s.materials}/><div className="mc-device-grid">{s.agents.map(a=><article className={'mc-device-card '+(s.selected===a.id?'focused':'')+' '+(a.status==='working'?'busy':'')} key={a.id} tabIndex={0} onClick={()=>select('view',a.id)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();select('view',a.id)}}} aria-label={'观察 '+a.id+(a.thermalState?' · '+a.thermalState.temperatureC.toFixed(1)+'°C · '+(a.thermalState.protected?'热保护，等待散热':'热控正常'):'')+(a.deployableRelay?' · '+relayLabel(a):'')}>
+    <div className="mc-device-content">{tab==='devices'?<><ConstructionPanel view={s.construction} tasks={()=>setTrace('tasks')} observe={id=>select('view',id)}/><MaterialPanel view={s.materials}/><div className="mc-device-grid">{s.agents.map(a=><article className={'mc-device-card '+(s.selected===a.id?'focused':'')+' '+(a.status==='working'?'busy':'')} key={a.id} tabIndex={0} onClick={()=>select('view',a.id)} onKeyDown={event=>{if(event.target===event.currentTarget&&(event.key==='Enter'||event.key===' ')){event.preventDefault();select('view',a.id)}}} aria-label={'观察 '+a.id+(a.thermalState?' · '+a.thermalState.temperatureC.toFixed(1)+'°C · '+(a.thermalState.protected?'热保护，等待散热':'热控正常'):'')+(a.deployableRelay?' · '+relayLabel(a):'')}>
      {a.camera?.enabled&&<DeviceCamera key={(s.manual?.key||s.sceneId)+':'+cameraMode} agent={a} frame={s.cameraFrames?.[a.id]} available3d={s.available3d} history={cameraHistory} onFrame={cameraMode==='remote'?actions.cameraFrame:undefined}/>}
-     <div className="mc-device-title"><i/><b>{deviceTypeNames.get(a.role)??a.name}</b><span>{a.disabled?'已退出':statusName[a.status]||a.status}</span></div><div className="mc-device-id">{a.id} <span>· {a.role==='rover'?'勘察采样':a.role==='vehicle'?'物资运输':a.role==='robot'?'设施作业':a.role==='relay'?'通信中继':a.role}</span></div><div className="mc-telemetry"><div><small>电量</small><strong>{a.battery.toFixed(0)} <em>%</em></strong><div className="mc-battery"><i style={{width:Math.max(0,Math.min(100,a.battery))+'%'}}/></div></div><div><small>mode</small><code>{a.disabled?'offline':a.status}</code></div></div><ThermalStatus agent={a}/><RelayStatus agent={a}/><div className="mc-device-location"><span className="mc-tag">POS</span><code>{a.x.toFixed(1)} / {a.y.toFixed(1)}</code></div><DeviceCapabilities agent={a} tasks={s.tasks} context={s.device} invoke={invokeCardCapability}/><div className="mc-device-location"><span className="mc-tag">LINK</span><code>{a.sensorRange??'—'}m 感知 · {a.communicationRange??'—'}m 通信</code></div><div className="mc-device-location"><span className="mc-tag">SPEC</span><code>{a.mobility||a.role} · {a.speed===undefined?'—':a.speed.toFixed(1)} u/t</code></div>
+     <div className="mc-device-title"><i/><b>{a.role==='robot'&&a.capabilities?.includes('repair')?'维修机器人':deviceTypeNames.get(a.role)??a.name}</b><span>{a.disabled?'已退出':statusName[a.status]||a.status}</span></div><div className="mc-device-id">{a.id}</div><div className="mc-telemetry"><div><small>电量</small><strong>{a.battery.toFixed(0)} <em>%</em></strong><div className="mc-battery"><i style={{width:Math.max(0,Math.min(100,a.battery))+'%'}}/></div></div><div><small>mode</small><code>{a.disabled?'offline':a.status}</code></div></div><ThermalStatus agent={a}/><RelayStatus agent={a}/><div className="mc-device-location"><span className="mc-tag">POS</span><code>{a.x.toFixed(1)} / {a.y.toFixed(1)}</code></div><DeviceCapabilities key={s.device?.key} agent={a} tasks={s.cardTasks??s.tasks} taskTypes={s.cardTaskTypes}
+      context={s.device} invoke={invokeCardCapability}
+      openControls={rescue=>{select('deviceagent',a.id);openTools(rescue?'现场救援':'设备操作')}}/><div className="mc-device-location"><span className="mc-tag">LINK</span><code>{a.sensorRange??'—'}m 感知 · {a.communicationRange??'—'}m 通信</code></div><div className="mc-device-location"><span className="mc-tag">SPEC</span><code>{a.mobility||a.role} · {a.speed===undefined?'—':a.speed.toFixed(1)} u/t</code></div>
     </article>)}</div></>:tab==='data'?<DataFlowPanel key={s.sceneId+':'+s.selected} view={s.flow} source={s.source} frame={s.frame} frames={s.frames} physics={s.physicsMode} execution={s.executionMode} diagnostics={()=>openTools('记录与服务诊断')} messaging={()=>openTools('设备通信')}/>:<div className="mc-event-list">{s.events.length?s.events.slice(-40).reverse().map((e,i)=><div key={e.seq??i}><code>T+{e.tick}</code><p>{e.message}</p></div>):<p>{focused?'设备观察不显示全局事件。':'开始运行后显示世界事件。'}</p>}</div>}</div>
     <footer className="mc-device-footer"><i/> {s.source}<span>3DBOX / 01</span></footer></aside>
   </main>

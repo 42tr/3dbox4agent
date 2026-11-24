@@ -15,6 +15,6 @@ function visible(from,to,range,obstacles,heightfield){
  return true;
 }
 function isAir(a){return (a.mobility??(a.role==='drone'?'air':'ground'))==='air'}
-function position(a,heightfield){return {x:a.x,y:a.y,z:isAir(a)?16:1.5+Elevation.height(heightfield,a.x,a.y)}}
+function position(a,heightfield){return {x:a.x,y:a.y,z:isAir(a)?(a.flightZ??16):1.5+Elevation.height(heightfield,a.x,a.y)}}
 const api={visible,position,isAir};if(typeof module!=='undefined')module.exports=api;else root.SandboxSensors=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

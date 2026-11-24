@@ -91,7 +91,8 @@
             "execution_mode": {
               "type": "string",
               "enum": [
-                "agent"
+                "agent",
+                "primitive"
               ]
             },
             "dispatch_mode": {
@@ -191,6 +192,10 @@
           "minLength": 1,
           "maxLength": 64,
           "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "include_device": {
+          "type": "boolean",
+          "description": "Include the device profile and current capability status, or fixed sensor reports for a coordinator view."
         }
       },
       "required": [
@@ -208,7 +213,7 @@
   },
   {
     "name": "box_assign_task",
-    "description": "Assign a ready task using coordinator authority. Then submit execute_task for the selected device before advancing.",
+    "description": "Assign a ready task using coordinator authority. Start it with execute_task in agent mode, or use move and work_task in primitive mode.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -349,6 +354,61 @@
                 "type": {
                   "type": "string",
                   "enum": [
+                    "work_task"
+                  ]
+                },
+                "taskId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "operation": {
+                  "type": "string",
+                  "enum": [
+                    "dock_pickup",
+                    "load",
+                    "dock_delivery",
+                    "unload",
+                    "handoff",
+                    "diagnose",
+                    "remove",
+                    "install",
+                    "self_test"
+                  ]
+                }
+              },
+              "required": [
+                "requestId",
+                "targetTick",
+                "expiresTick",
+                "type",
+                "taskId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "targetTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "expiresTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10040
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
                     "move"
                   ]
                 },
@@ -369,6 +429,288 @@
                   "required": [
                     "x",
                     "y"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "requestId",
+                "targetTick",
+                "expiresTick",
+                "type",
+                "target"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "targetTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "expiresTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10040
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "move"
+                  ]
+                },
+                "direction": {
+                  "type": "object",
+                  "properties": {
+                    "bearingDeg": {
+                      "type": "number",
+                      "minimum": 0,
+                      "exclusiveMaximum": 360
+                    },
+                    "distanceM": {
+                      "type": "number",
+                      "minimum": 0.2,
+                      "maximum": 60
+                    }
+                  },
+                  "required": [
+                    "bearingDeg",
+                    "distanceM"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "requestId",
+                "targetTick",
+                "expiresTick",
+                "type",
+                "direction"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "targetTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "expiresTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10040
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "move"
+                  ]
+                },
+                "vertical": {
+                  "type": "object",
+                  "properties": {
+                    "deltaM": {
+                      "oneOf": [
+                        {
+                          "type": "number",
+                          "minimum": -20,
+                          "maximum": -0.5
+                        },
+                        {
+                          "type": "number",
+                          "minimum": 0.5,
+                          "maximum": 20
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "deltaM"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "requestId",
+                "targetTick",
+                "expiresTick",
+                "type",
+                "vertical"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "targetTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "expiresTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10040
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "move"
+                  ]
+                },
+                "flightControl": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "takeoff"
+                          ]
+                        },
+                        "heightM": {
+                          "type": "number",
+                          "minimum": 3,
+                          "maximum": 15,
+                          "default": 8
+                        }
+                      },
+                      "required": [
+                        "mode"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "land"
+                          ]
+                        },
+                        "x": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 256
+                        },
+                        "y": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 256
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "x",
+                        "y"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "hover"
+                          ]
+                        },
+                        "durationTicks": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 60
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "durationTicks"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "requestId",
+                "targetTick",
+                "expiresTick",
+                "type",
+                "flightControl"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Za-z0-9_-]{1,64}$"
+                },
+                "targetTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "expiresTick": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10040
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "move"
+                  ]
+                },
+                "target": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 256
+                    },
+                    "y": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 256
+                    },
+                    "z": {
+                      "type": "number",
+                      "minimum": -8,
+                      "maximum": 45
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
                   ],
                   "additionalProperties": false
                 }

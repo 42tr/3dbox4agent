@@ -46,6 +46,9 @@ struct AgentReference {
     session_id: String,
     #[schemars(description = "Agent identifier inside the session")]
     agent_id: String,
+    #[schemars(description = "Include device parameters, pose, available actions and action progress")]
+    #[serde(default)]
+    include_device: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -65,6 +68,15 @@ struct CancelActionRequest {
     #[schemars(description = "Agent identifier inside the session")]
     agent_id: String,
     request_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SampleReportRequest {
+    session_id: String,
+    agent_id: String,
+    request_id: String,
+    #[schemars(description = "Task identifier from this device's collected samples")]
+    task_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -97,10 +109,11 @@ impl ControlTools {
         Parameters(input): Parameters<AgentReference>,
     ) -> CallToolResult {
         let token = bearer_token(&parts.headers);
+        let include = if input.include_device { "?include=device" } else { "" };
         self.request(
             Method::GET,
             format!(
-                "/sessions/{}/observations/{}",
+                "/sessions/{}/observations/{}{include}",
                 encode_path(&input.session_id),
                 encode_path(&input.agent_id)
             ),
@@ -146,6 +159,26 @@ impl ControlTools {
             ),
             token,
             Some(json!({ "requestId": input.request_id })),
+        )
+        .await
+    }
+
+    #[tool(description = "Report a sample collected by this Agent to the coordinator")]
+    async fn report_sample(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(input): Parameters<SampleReportRequest>,
+    ) -> CallToolResult {
+        let token = bearer_token(&parts.headers);
+        self.request(
+            Method::POST,
+            format!(
+                "/sessions/{}/agents/{}/sample-reports",
+                encode_path(&input.session_id),
+                encode_path(&input.agent_id)
+            ),
+            token,
+            Some(json!({ "requestId": input.request_id, "taskId": input.task_id })),
         )
         .await
     }

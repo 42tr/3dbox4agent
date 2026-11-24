@@ -105,6 +105,18 @@ async function verifyServer(backend) {
   const classic = E.create(42);
   assert.equal(classic.worldSize, undefined);
   assert.equal(unwrapArchive(archive(42, [E.snapshot(classic)], classic.sceneId)).archive.config.sceneId, 'industrial-park-v1');
+  const oldPark = E.getScene(sceneId);
+  oldPark.agents.find(agent => agent.role === 'drone').capabilities = ['inspect', 'confirm'];
+  oldPark.tasks.find(task => task.id === 'verify').capability = 'confirm';
+  const oldWorld = E.create(42, 'nearest', oldPark);
+  const oldFrames = [E.snapshot(oldWorld)];
+  while (!oldWorld.done && oldWorld.tick < 350) {
+    E.step(oldWorld);
+    oldFrames.push(E.snapshot(oldWorld));
+  }
+  verifyMission(42, oldFrames);
+  const mixedFrames = [oldFrames[0], E.snapshot(local)];
+  assert.throws(() => unwrapArchive(archive(42, mixedFrames)), /记录格式/);
   const invalidFrame = {...E.snapshot(local), worldSize: 100};
   assert.throws(() => unwrapArchive(archive(42, [invalidFrame])), /记录格式/);
   for (const backend of ['wasm', 'rust']) await verifyServer(backend);

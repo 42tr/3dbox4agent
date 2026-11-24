@@ -2,6 +2,10 @@
 (function(root){
 'use strict';
 const Nav=typeof module!=='undefined'?require('./navigation'):root.SandboxNavigation;
+const Device=typeof module!=='undefined'?require('./device-capabilities'):root.SandboxDeviceCapabilities;
+const Operations=typeof module!=='undefined'?require('./task-operations'):root.SandboxTaskOperations;
+const Survey=typeof module!=='undefined'?require('./rover-survey'):root.SandboxRoverSurvey;
+const Flight=typeof module!=='undefined'?require('./flight'):root.SandboxFlight;
 const Sensors=typeof module!=='undefined'?require('./sensors'):root.SandboxSensors;
 const Elevation=typeof module!=='undefined'?require('./elevation'):root.SandboxElevation;
 const Surface=typeof module!=='undefined'?require('./surface-domain'):root.SandboxSurfaceDomain;
@@ -115,7 +119,7 @@ function bindWorldTasks(s,store){
 }
 function changeTask(s,t,kind,detail={}){
  const store=worldTasks.get(s);if(store){store.command(t.id,kind,{...(kind==='assign'?{}:{assignmentId:t.assignmentId}),...detail});return}
- if(kind==='assign'){t.status='active';t.assignee=detail.agentId;t.assignmentId=detail.assignmentId;if(t.behavior==='deliver')t.phase='to_pickup';else if(t.behavior==='repair')t.phase='repairing'}
+ if(kind==='assign'){t.status='active';t.assignee=detail.agentId;t.assignmentId=detail.assignmentId;if(t.behavior==='deliver')t.phase=Operations.unloaded(t)?'to_site':'to_pickup';else if(t.behavior==='repair')t.phase='repairing'}
  else if(kind==='requeue'){t.status='pending';t.assignee=null;if(detail.clearPhase)t.phase=null}
  else if(kind==='start')t.startedAssignmentId=t.assignmentId;
  else if(kind==='complete'){t.status='done';t.phase=null}
@@ -352,7 +356,12 @@ function surfaceRoute(s,a,start,target,reach=0,physical=worldObstacles(s),zones=
   const path=planNavigation(s,start,point,obstacles,zones,metric);if(!path)continue;let cost=0,previous=start;for(const p of path){cost+=Nav.segmentCost(previous,p,zones,metric);previous=p}if(cost<bestCost){bestCost=cost;best=path}
  }return best;
 }
-function routeBetween(s,a,target,reach=0){return s.surfaceDomain?surfaceRoute(s,a,[a.x,a.y],target,reach):Sensors.isAir(a)?[target.slice()]:groundRoute(s,[a.x,a.y],target,worldObstacles(s),a)}
+function routeBetween(s,a,target,reach=0){
+ if(a.flightZ!==undefined){
+  const from=Sensors.position(a,s.heightfield),to={x:target[0],y:target[1],z:from.z};
+  return Flight.horizontalRoute(s,from,to)?.map(({x,y})=>[x,y])??null;
+ }
+ return s.surfaceDomain?surfaceRoute(s,a,[a.x,a.y],target,reach):Sensors.isAir(a)?[target.slice()]:groundRoute(s,[a.x,a.y],target,worldObstacles(s),a)}
 function effectiveTerrain(s){const store=worldEnvironments.get(s);if(store)return store.effectiveTerrain();return (s.terrain||[]).map(z=>{const effect=(s.terrainEffects||[]).find(e=>e.zoneId===z.id);return effect?{...z,speedFactor:z.speedFactor*effect.speedFactor,energyFactor:z.energyFactor*effect.energyFactor}:z})}
 // The authorized estimate uses the published static map, not hidden live disturbances.
 function routeEnergyCost(s,a,start,route,terrain){if(!route)return null;
@@ -362,27 +371,37 @@ function returnEnergyEstimate(s,a){
  if(!s.chargingStation)return null;const terrain=Sensors.isAir(a)?[]:(s.terrain||[]),start=[a.x,a.y];const route=s.surfaceDomain?surfaceRoute(s,a,start,s.chargingStation,2.8,s.obstacles,terrain):Sensors.isAir(a)?[s.chargingStation.slice()]:planNavigation(s,start,s.chargingStation,planningObstacles(s,s.obstacles,a),terrain,s.navigation??'distance');if(!route)return null;
  return routeEnergyCost(s,a,start,route,terrain);
 }
-function taskPrecondition(s,t){if(t.behavior==='deliver'){if(!['warehouse','ground'].includes(s.part.location)||s.part.reservedBy)return 'part_unavailable'}if(t.behavior==='repair'){if(s.asset.diagnosis!=='confirmed')return 'anomaly_unconfirmed';if(s.part.location!=='site'||s.part.reservedBy)return 'part_unavailable'}if(t.behavior==='verify'&&s.asset.condition!=='repaired')return 'repair_required';if(!Materials.available(s.materials,t.materialCost))return 'materials_unavailable';return null}
+function taskPrecondition(s,t){if(t.behavior==='deliver'){if(!['warehouse','ground'].includes(s.part.location)||s.part.reservedBy||s.tasks.some(other=>other.id!==t.id&&other.status!=='done'&&Operations.unloaded(other)))return 'part_unavailable'}if(t.behavior==='repair'){if(s.asset.diagnosis!=='confirmed')return 'anomaly_unconfirmed';if(s.part.location!==(Operations.installed(t)?'consumed':'site')||s.part.reservedBy)return 'part_unavailable'}if(t.behavior==='verify'&&s.asset.condition!=='repaired')return 'repair_required';if(!Materials.available(s.materials,t.materialCost))return 'materials_unavailable';return null}
 // A low-energy device can recover only if it can reach the shared charger and serve a ready task.
 function chargeRecoveryCandidates(s,tasks){
  if(!s.chargingStation)return [];const terrain=effectiveTerrain(s);return s.agents.filter(a=>{
-  if(a.disabled||a.status!=='idle'||a.battery<=0||a.battery>5||!tasks.some(t=>!taskPrecondition(s,t)&&a.capabilities.includes(t.capability)&&(t.behavior!=='deploy'||a.deployableRelay)&&routeFor(s,a,t)!==null))return false;
+  if(a.disabled||a.status!=='idle'||a.battery<=0||a.battery>5||!tasks.some(t=>!taskPrecondition(s,t)&&a.capabilities.includes(t.capability)&&(t.behavior!=='deploy'||a.deployableRelay)&&!sampleSlotsFull(s,t,a)&&routeFor(s,a,t)!==null))return false;
   function affordable(route,zones){if((a.operatingEnergyPerTick??0)>=2)return false;const cost=routeEnergyCost(s,a,[a.x,a.y],route,zones);return cost!==null&&a.battery>cost+(a.operatingEnergyPerTick??0)+1e-9}
   const air=Sensors.isAir(a),route=routeBetween(s,a,s.chargingStation,2.8);if(affordable(route,air?[]:terrain))return true;
   // A temporary terrain effect will expire; retain the opportunity to wait for it.
   if(!air&&s.terrainEffects?.length){const baseline=s.terrain||[],future=s.surfaceDomain?surfaceRoute(s,a,[a.x,a.y],s.chargingStation,2.8,worldObstacles(s),baseline):planNavigation(s,[a.x,a.y],s.chargingStation,planningObstacles(s,worldObstacles(s),a),baseline,s.navigation??'distance');return affordable(future,baseline)}return false;
  });
 }
+function flightRecoveryPossible(s,tasks){
+ return s.agents.some(a=>{
+  if(a.flightZ===undefined||a.disabled||a.status!=='idle'||Flight.flightState(s,a)==='airborne'||a.battery<=0)return false;
+  if(a.battery<=5&&(!Flight.landedAtStation(s,a)||(a.operatingEnergyPerTick??0)>=2))return false;
+  if(!tasks.some(t=>a.capabilities.includes(t.capability)&&!taskPrecondition(s,t)))return false;
+  const start=Sensors.position(a,s.heightfield);
+  return !Flight.planControl(s,a,start,{mode:'takeoff',heightM:Flight.takeoffHeight.default}).reason;
+ });
+}
 function rescueRecoveryPossible(s,tasks){
- for(const target of s.agents){if(!target.recoverableFault||!target.disabled||target.battery<=5||!Rescue.faultAt(s.events,target.id)||!tasks.some(t=>!taskPrecondition(s,t)&&target.capabilities.includes(t.capability)&&routeFor(s,target,t)!==null))continue;
+ for(const target of s.agents){if(!target.recoverableFault||!target.disabled||target.battery<=5||!Rescue.faultAt(s.events,target.id)||!tasks.some(t=>!taskPrecondition(s,t)&&target.capabilities.includes(t.capability)&&!sampleSlotsFull(s,t,target)&&routeFor(s,target,t)!==null))continue;
   for(const helper of s.agents){if(helper.disabled||helper.status!=='idle'||!helper.rescue||helper.battery<=5||helper.id===target.id)continue;const route=routeBetween(s,helper,[target.x,target.y],3.7);if(route){const cost=helper.operatingEnergyPerTick!==undefined&&taskReachable(s,helper,{target:[target.x,target.y]})?0:routeEnergyCost(s,helper,[helper.x,helper.y],route,effectiveTerrain(s));if(cost!==null&&helper.battery>cost+helper.rescue.workTicks*((helper.workEnergyPerTick??.08)+(helper.operatingEnergyPerTick??0))+1e-9)return true}}
  }return false;
 }
 function routeFor(s,a,t){
+ if(Operations.unloaded(t))return routeBetween(s,a,t.target,3.7);
  if(t.behavior==='deliver'){const from=s.part.position;if(!from)return null;const first=routeBetween(s,a,from,3.7);if(first===null)return null;const second=s.surfaceDomain?surfaceRoute(s,a,first.at(-1)??[a.x,a.y],t.target,3.7):Sensors.isAir(a)?[t.target.slice()]:groundRoute(s,from,t.target,worldObstacles(s),a);if(second===null)return null;return first}
  return routeBetween(s,a,t.target,t.behavior?3.7:0);
 }
-function dispatchObservation(s,t){const target=t.behavior==='deliver'&&s.part.position?s.part.position:t.target;return {tick:s.tick,task:{id:t.id,capability:t.capability,target:target.slice()},candidates:taskPrecondition(s,t)?[]:s.agents.filter(a=>!a.disabled&&a.status==='idle'&&a.battery>5&&a.capabilities.includes(t.capability)&&(t.behavior!=='deploy'||a.deployableRelay)&&routeFor(s,a,t)!==null).map(a=>({id:a.id,x:a.x,y:a.y,battery:a.battery}))}}
+function dispatchObservation(s,t){const target=t.behavior==='deliver'&&s.part.position?s.part.position:t.target;return {tick:s.tick,task:{id:t.id,capability:t.capability,target:target.slice()},candidates:taskPrecondition(s,t)?[]:s.agents.filter(a=>!a.disabled&&a.status==='idle'&&a.battery>5&&a.capabilities.includes(t.capability)&&(t.behavior!=='deploy'||a.deployableRelay)&&!sampleSlotsFull(s,t,a)&&routeFor(s,a,t)!==null).map(a=>({id:a.id,x:a.x,y:a.y,battery:a.battery}))}}
 function choose(obs,policy){const candidates=obs.candidates.slice(),distance2=a=>{const dx=a.x-obs.task.target[0],dy=a.y-obs.task.target[1];return dx*dx+dy*dy};candidates.sort((a,b)=>{const diff=policy==='battery'?b.battery-a.battery:distance2(a)-distance2(b);return diff||a.id.localeCompare(b.id,'en')});return candidates[0]?.id||null}
 function ownedAssign(s,taskId,agentId){
  const tasks=worldTasks.get(s),execution=worldExecutions.get(s),environment=worldEnvironments.get(s),resources=worldResources.get(s),control=worldControls.get(s),ledger=worldLedgers.get(s);
@@ -396,7 +415,7 @@ function assign(s,taskId,agentId){
  const native=ownedAssign(s,taskId,agentId);if(native)return native;
  const t=s.tasks.find(x=>x.id===taskId),a=s.agents.find(x=>x.id===agentId),rules=taskRuleProviders.get(s);
  if(rules){const reason=rules.check(s,taskId,agentId);if(reason!==null){if(!['world_finished','unknown_task','unknown_agent','task_not_ready','agent_unavailable','low_battery','missing_capability','part_unavailable','anomaly_unconfirmed','repair_required','materials_unavailable'].includes(reason))throw Error('invalid native task rule result');return {ok:false,reason}}if(!t||!a)throw Error('invalid native task rule acceptance')}
- else{if(s.done)return {ok:false,reason:'world_finished'};if(!t)return {ok:false,reason:'unknown_task'};if(!a)return {ok:false,reason:'unknown_agent'};if(!ready(s,t))return {ok:false,reason:'task_not_ready'};if(a.disabled||a.status!=='idle')return {ok:false,reason:'agent_unavailable'};if(a.battery<=5)return {ok:false,reason:'low_battery'};if(!a.capabilities.includes(t.capability)||t.behavior==='deploy'&&!a.deployableRelay)return {ok:false,reason:'missing_capability'};const blocked=taskPrecondition(s,t);if(blocked)return {ok:false,reason:blocked}}
+ else{if(s.done)return {ok:false,reason:'world_finished'};if(!t)return {ok:false,reason:'unknown_task'};if(!a)return {ok:false,reason:'unknown_agent'};if(!ready(s,t))return {ok:false,reason:'task_not_ready'};if(a.disabled||a.status!=='idle')return {ok:false,reason:'agent_unavailable'};if(a.battery<=5)return {ok:false,reason:'low_battery'};if(!a.capabilities.includes(t.capability)||t.behavior==='deploy'&&!a.deployableRelay)return {ok:false,reason:'missing_capability'};if(sampleSlotsFull(s,t,a))return {ok:false,reason:'sample_slots_full'};const blocked=taskPrecondition(s,t);if(blocked)return {ok:false,reason:blocked}}
  const route=routeFor(s,a,t);if(route===null)return {ok:false,reason:'unreachable_target'};
  let transition=null;if(rules){const nextId=s.events.length+(a.roadblockWait?2:1);transition=rules.transition(s,t,a,route,nextId);if(!transition||transition.taskId!==t.id||transition.agentId!==a.id||transition.assignmentId!==nextId||transition.taskStatus!=='active'||!['working','assigned'].includes(transition.agentStatus)||!Array.isArray(transition.route)||transition.route.some(p=>!Array.isArray(p)||p.length!==2||!p.every(Number.isFinite))||transition.work!==0||transition.collisionReplans!==0||typeof transition.reservePart!=='boolean'||(transition.reservePart?!['to_pickup','repairing'].includes(transition.phase):transition.phase!==null))throw Error('invalid native task transition')}
  clearRoadblockWait(s,a,'cancelled');if(transition){setAgentExecution(s,a,{route:transition.route});changeTask(s,t,'assign',{agentId:transition.agentId,assignmentId:transition.assignmentId});setAgentExecution(s,a,{status:transition.agentStatus});setAgentExecution(s,a,{work:transition.work});setAgentExecution(s,a,{collisionReplans:transition.collisionReplans});if(!worldResources.has(s)&&transition.reservePart)s.part.reservedBy=transition.taskId}
@@ -484,15 +503,21 @@ function refreshPerceptions(s){
  if(s.sensorModel==='rapier-ray-v1'){const provider=sensorProviders.get(s);if(!provider)throw Error('ray sensor backend required');provider.syncRoadblocks(s.roadblocks||[])}
  for(const self of s.agents){const previous=s.perceptions[self.id]?.memory||[],current=[];
   if(!self.disabled){const from=Sensors.position(self,s.heightfield),range=self.sensorRange??s.sensorRange;
-   for(const a of s.agents)if(a.id!==self.id&&sensorVisible(s,from,Sensors.position(a,s.heightfield),range))current.push({kind:'agent',id:a.id,...(a.status==='fault'&&a.faultGeneration>0?{faultGeneration:a.faultGeneration}:{}),role:a.role,x:a.x,y:a.y,status:a.status,observedTick:s.tick,source:'sensor'});
+   for(const a of s.agents)if(a.id!==self.id&&sensorVisible(s,from,Sensors.position(a,s.heightfield),range))current.push({kind:'agent',id:a.id,...(a.status==='fault'&&a.faultGeneration>0?{faultGeneration:a.faultGeneration}:{}),role:a.role,x:a.x,y:a.y,...(a.flightZ!==undefined?{z:a.flightZ}:{}),status:a.status,observedTick:s.tick,source:'sensor'});
    for(const t of s.tasks)if(sensorVisible(s,from,{x:t.target[0],y:t.target[1],z:1+Elevation.height(s.heightfield,t.target[0],t.target[1])},range))current.push({kind:'target',id:t.id,x:t.target[0],y:t.target[1],observedTick:s.tick,source:'sensor'});
   }
   const updated=new Map(previous.filter(x=>s.tick-x.observedTick<=MEMORY_TTL).map(x=>[x.kind+':'+x.id,x]));for(const item of current)updated.set(item.kind+':'+item.id,item);
   s.perceptions[self.id]={current,memory:[...updated.values()].sort((a,b)=>(a.kind+':'+a.id).localeCompare(b.kind+':'+b.id,'en'))};
  }
 }
+function describeTaskOperation(s,t,a){
+ if(!taskOperationsSupported(s))return null;
+ const detail=Operations.describe(s,t,a);
+ if(!detail)return null;
+ return {...detail,reason:detail.reason||(taskReachable(s,a,t)?null:'out_of_reach')};
+}
 function taskWaypoint(s,t){return t.behavior==='deliver'&&['to_pickup','loading'].includes(t.phase)?s.part.position:t.target}
-function taskReachable(s,a,t){const p=taskWaypoint(s,t);return !!p&&Math.hypot(a.x-p[0],a.y-p[1])<=4&&(Sensors.isAir(a)||(Nav.clearSegment([a.x,a.y],p,worldObstacles(s),0,s.worldSize??100)&&Elevation.traversable(s.heightfield,[a.x,a.y],p,0)))}
+function taskReachable(s,a,t){const p=taskWaypoint(s,t);return !!p&&Math.hypot(a.x-p[0],a.y-p[1])<=4&&(Sensors.isAir(a)?Flight.flightState(s,a)==='airborne':Nav.clearSegment([a.x,a.y],p,worldObstacles(s),0,s.worldSize??100)&&Elevation.traversable(s.heightfield,[a.x,a.y],p,0))}
 function agentObservationComponents(s){const control=worldControls.get(s),execution=worldExecutions.get(s)?.store,environment=worldEnvironments.get(s),tasks=worldTasks.get(s),actions=worldActions.get(s)?.store,resources=worldResources.get(s),peer=worldPeers.get(s),reports=worldReports.get(s),perceptions=worldPerceptions.get(s);return control&&execution&&environment&&tasks&&actions&&resources&&peer&&reports&&perceptions?{control,args:[execution,environment,tasks,actions,resources,peer,reports,perceptions]}:null}
 function bindWorldAgentObservations(s){const c=agentObservationComponents(s);if(!c||typeof c.control.bindAgentObservations!=='function')return false;c.control.bindAgentObservations(...c.args);return true}
 function coordinatorObservationComponents(s){const c=agentObservationComponents(s),dispatch=worldDispatches.get(s),requests=worldRequests.get(s);return c&&dispatch&&requests?{control:c.control,args:[...c.args,dispatch,requests]}:null}
@@ -509,7 +534,7 @@ function observedApproach(s,a,goal){
 }
 function observe(s,agentId){
  const self=s.agents.find(a=>a.id===agentId);if(!self)return null;const native=agentObservationComponents(s);if(native?.control.agentObservationVersion===1&&native.control.agentObservationsBound())return native.control.agentObservation(agentId,s.tick,...native.args);const data=s.perceptions[agentId]||{current:[],memory:[]};const ids=new Set(data.current.map(x=>x.kind+':'+x.id));
- return clone({version:2,...((s.worldSize??100)!==100?{worldSize:s.worldSize}:{}),tick:s.tick,done:s.done,executionMode:s.executionMode??'auto',self:{id:self.id,role:self.role,...Rescue.fields(self),...Power.fields(self),...(self.operatingState?{operatingState:self.operatingState}:{}),...(self.recoverableFault?{faultGeneration:self.faultGeneration}:{}),...(s.materials?{materialReservations:Materials.own(s.materials,self.id)}:{}),...(self.mobility!==undefined?{mobility:self.mobility}:{}),...(self.deployableRelay?{deployableRelay:true,relayState:clone(self.relayState)}:{}),x:self.x,y:self.y,...(s.heightfield?{elevation:Elevation.height(s.heightfield,self.x,self.y),slopeDegrees:Elevation.surface(s.heightfield,self.x,self.y).slopeDegrees}:{}),battery:self.battery,status:self.status,sensorRange:self.sensorRange??s.sensorRange,communicationRange:self.communicationRange??s.communication.config.range,...(s.communication.config.lineOfSight!==undefined?{communicationLineOfSight:s.communication.config.lineOfSight}:{}),communicationBytesPerTick:self.communicationBytesPerTick??s.communication.config.bytesPerTick??null,moveEnergyPerUnit:self.moveEnergyPerUnit??.045,workEnergyPerTick:self.workEnergyPerTick??.08,capabilities:self.capabilities,...(self.thermal?{thermal:Thermal.observation(self.thermal,self.thermalState)}:{}),routeBlockedSince:self.roadblockWait?.startedTick??null,returnEnergyEstimate:returnEnergyEstimate(s,self),communicationInterrupted:(s.communication.outages||[]).some(o=>o.agentId===self.id&&s.tick<=o.untilTick)},nearby:data.current.filter(x=>x.kind==='agent'),visibleTargets:data.current.filter(x=>x.kind==='target'),assignedTasks:s.tasks.filter(t=>t.assignee===self.id).map(t=>({id:t.id,name:t.name,target:t.target.slice(),status:t.status,...(s.executionMode==='primitive'&&t.status==='active'?{behavior:t.behavior,phase:t.phase||null,waypoint:taskWaypoint(s,t)?.slice()||null,...observedApproach(s,self,taskWaypoint(s,t)),withinReach:taskReachable(s,self,t)}:{})})),memory:data.memory.map(x=>({...x,current:ids.has(x.kind+':'+x.id),age:s.tick-x.observedTick})),inbox:s.communication.inboxes[agentId],actions:s.actions.filter(a=>a.agentId===agentId),evidenceReports:(s.evidenceReports||[]).filter(r=>r.agentId===agentId),...(s.tasks.some(t=>t.behavior==='sample')?{sampleReports:(s.sampleReports||[]).filter(r=>r.agentId===agentId),samples:s.events.filter(e=>e.kind==='sample_collected'&&e.agentId===agentId).map(e=>({taskId:e.taskId,position:e.position.slice(),collectedTick:e.tick}))}:{})});
+ return clone({version:2,...((s.worldSize??100)!==100?{worldSize:s.worldSize}:{}),tick:s.tick,done:s.done,executionMode:s.executionMode??'auto',self:{id:self.id,role:self.role,...Rescue.fields(self),...Power.fields(self),...(self.operatingState?{operatingState:self.operatingState}:{}),...(self.recoverableFault?{faultGeneration:self.faultGeneration}:{}),...(s.materials?{materialReservations:Materials.own(s.materials,self.id)}:{}),...(self.mobility!==undefined?{mobility:self.mobility}:{}),...(self.deployableRelay?{deployableRelay:true,relayState:clone(self.relayState)}:{}),x:self.x,y:self.y,...(self.flightZ!==undefined?{z:self.flightZ,flightState:Flight.flightState(s,self)}:{}),...(s.heightfield?{elevation:Elevation.height(s.heightfield,self.x,self.y),slopeDegrees:Elevation.surface(s.heightfield,self.x,self.y).slopeDegrees}:{}),battery:self.battery,status:self.status,sensorRange:self.sensorRange??s.sensorRange,communicationRange:self.communicationRange??s.communication.config.range,...(s.communication.config.lineOfSight!==undefined?{communicationLineOfSight:s.communication.config.lineOfSight}:{}),communicationBytesPerTick:self.communicationBytesPerTick??s.communication.config.bytesPerTick??null,moveEnergyPerUnit:self.moveEnergyPerUnit??.045,workEnergyPerTick:self.workEnergyPerTick??.08,capabilities:self.capabilities,...(self.thermal?{thermal:Thermal.observation(self.thermal,self.thermalState)}:{}),routeBlockedSince:self.roadblockWait?.startedTick??null,returnEnergyEstimate:returnEnergyEstimate(s,self),communicationInterrupted:(s.communication.outages||[]).some(o=>o.agentId===self.id&&s.tick<=o.untilTick)},nearby:data.current.filter(x=>x.kind==='agent'),visibleTargets:data.current.filter(x=>x.kind==='target'),assignedTasks:s.tasks.filter(t=>t.assignee===self.id).map(t=>({id:t.id,name:t.name,target:t.target.slice(),status:t.status,...(s.executionMode==='primitive'&&t.status==='active'?{behavior:t.behavior,phase:t.phase||null,waypoint:taskWaypoint(s,t)?.slice()||null,...observedApproach(s,self,taskWaypoint(s,t)),withinReach:taskReachable(s,self,t),...(taskOperationsSupported(s)&&Operations.supported(t,self)?{workOperation:describeTaskOperation(s,t,self)}:{})}:{})})),memory:data.memory.map(x=>({...x,current:ids.has(x.kind+':'+x.id),age:s.tick-x.observedTick})),inbox:s.communication.inboxes[agentId],actions:s.actions.filter(a=>a.agentId===agentId),evidenceReports:(s.evidenceReports||[]).filter(r=>r.agentId===agentId),...(s.tasks.some(t=>t.behavior==='sample')?{sampleReports:(s.sampleReports||[]).filter(r=>r.agentId===agentId),samples:s.events.filter(e=>e.kind==='sample_collected'&&e.agentId===agentId).map(e=>({taskId:e.taskId,position:e.position.slice(),collectedTick:e.tick}))}:{})});
 }
 // Drop decisions depend only on seed and message id, separate from world initialization RNG.
 function messageRoll(seed,id){let x=(seed^Math.imul(id,0x9e3779b9))>>>0;x=Math.imul(x^(x>>>16),0x7feb352d)>>>0;x=Math.imul(x^(x>>>15),0x846ca68b)>>>0;return ((x^(x>>>16))>>>0)/4294967296}
@@ -533,7 +558,7 @@ function ownedEnvironmentDisturbance(s,input){const environment=worldEnvironment
 function replanTerrainRoutes(s,transition,zoneIds){
  const metric=s.navigation??'distance';if(metric==='distance')return;const terrain=effectiveTerrain(s);
  function cost(start,route){let p=start,total=0;for(const q of route){total+=Nav.segmentCost(p,q,terrain,metric,s.heightfield);p=q}return total}
- for(const agent of s.agents){if(Sensors.isAir(agent)||agent.disabled||!['manual','working'].includes(agent.status)||!agent.route.length)continue;
+ for(const agent of s.agents){if(Sensors.isAir(agent)||agent.disabled||!['manual','working'].includes(agent.status)||!agent.route.length||hasDirectionalMove(s,agent))continue;
   const start=[agent.x,agent.y],goal=agent.route[agent.route.length-1],path=groundRoute(s,start,goal,worldObstacles(s),agent),previousCost=cost(start,agent.route),newCost=path?cost(start,path):null;
   const result=!path?'unreachable':newCost>=previousCost-1e-6?'retained':'changed';
   if(s.terrainRouteAssessmentsVersion===1)log(s,`${agent.name} 地表路线评估：${result==='changed'?'调整':result==='retained'?'保持原路线':'未找到路线'}`,result==='unreachable'?'warning':'info',{kind:'terrain_route_assessed',agentId:agent.id,transition,zoneIds,policy:metric,result,previousCost,newCost});
@@ -552,10 +577,16 @@ function injectRoadblock(s,rect,duration){
  if(!rect||![rect.x,rect.y,rect.w,rect.h].every(Number.isFinite)||rect.x<0||rect.y<0||rect.w<2||rect.h<2||rect.x+rect.w>(s.worldSize??100)||rect.y+rect.h>(s.worldSize??100)||!Number.isInteger(duration)||duration<1||duration>1000)return {ok:false,reason:'invalid_roadblock'};
  if((s.roadblocks||[]).length>=8)return {ok:false,reason:'roadblock_limit'};
  const barrier={id:'roadblock-'+(s.events.length+1),x:rect.x,y:rect.y,w:rect.w,h:rect.h,height:4,startedTick:s.tick,untilTick:s.tick+duration};
- if(s.agents.some(a=>!Sensors.isAir(a)&&!Nav.free(a.x,a.y,[barrier],Nav.RADIUS,s.worldSize??100)))return {ok:false,reason:'agent_in_roadblock'};
+ if(s.agents.some(a=>{
+  if(!Sensors.isAir(a))return !Nav.free(a.x,a.y,[barrier],Nav.RADIUS,s.worldSize??100);
+  if(a.flightZ===undefined)return false;
+  const block=Elevation.prism(s.heightfield,barrier);
+  return a.flightZ>= (block.base??0)-.8&&a.flightZ<=block.height+.8&&
+   a.x>=block.x-.8&&a.x<=block.x+block.w+.8&&a.y>=block.y-.8&&a.y<=block.y+block.h+.8;
+ }))return {ok:false,reason:'agent_in_roadblock'};
  const native=ownedEnvironmentDisturbance(s,{kind:'roadblock',rect:{x:rect.x,y:rect.y,w:rect.w,h:rect.h},duration});if(native)return native;
  const prior=s.roadblocks||[],routes=[],physical=s.obstacles.concat(prior,barrier);
- for(const a of s.agents){if(a.disabled||Sensors.isAir(a)||!a.route.length)continue;let p=[a.x,a.y],blocked=false;for(const q of a.route){if(!Nav.clearSegment(p,q,[barrier],Nav.RADIUS,s.worldSize??100)){blocked=true;break}p=q}if(!blocked)continue;const goal=a.route[a.route.length-1].slice(),path=groundRoute(s,[a.x,a.y],goal,physical,a);if(!waitOwner(s,a))return {ok:false,reason:'route_owner_unavailable',agentId:a.id};routes.push({a,path,goal})}
+ for(const a of s.agents){if(a.disabled||Sensors.isAir(a)||!a.route.length||hasDirectionalMove(s,a))continue;let p=[a.x,a.y],blocked=false;for(const q of a.route){if(!Nav.clearSegment(p,q,[barrier],Nav.RADIUS,s.worldSize??100)){blocked=true;break}p=q}if(!blocked)continue;const goal=a.route[a.route.length-1].slice(),path=groundRoute(s,[a.x,a.y],goal,physical,a);if(!waitOwner(s,a))return {ok:false,reason:'route_owner_unavailable',agentId:a.id};routes.push({a,path,goal})}
  const environment=worldEnvironments.get(s);if(environment)environment.roadblock(rect,duration,s);else s.roadblocks=prior.concat(barrier);
  log(s,'临时道路封闭已生效','warning',{kind:'roadblock_started',...barrier});let replanned=0,waiting=0;for(const {a,path,goal} of routes){if(!path){startRoadblockWait(s,a,goal,barrier.id);waiting++;continue}setAgentExecution(s,a,{route:path});setAgentExecution(s,a,{blockedTicks:0});setAgentExecution(s,a,{progressWaypoint:''});replanned++;log(s,`${a.name} 绕行临时封闭区域`,'info',{kind:'roadblock_replanned',roadblockId:barrier.id,agentId:a.id})}refreshPerceptions(s);return {ok:true,roadblock:clone(barrier),replanned,waiting};
 }
@@ -593,7 +624,7 @@ function sendMessage(s,fromId,toId,text,via=[],requestId=undefined){
 function submitEvidence(s,agentId,input){
  const a=s.agents.find(a=>a.id===agentId);if(!a)return {ok:false,reason:'unknown_agent'};if(!input||typeof input.requestId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(input.requestId)||typeof input.scanRequestId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(input.scanRequestId))return {ok:false,reason:'invalid_evidence_request'};
  const reports=s.evidenceReports||[],prior=reports.find(r=>r.agentId===agentId&&r.requestId===input.requestId);if(prior)return prior.scanRequestId===input.scanRequestId?{ok:true,duplicate:true,report:clone(prior)}:{ok:false,reason:'request_id_conflict'};
- if(s.done)return {ok:false,reason:'world_finished'};if(a.disabled)return {ok:false,reason:'agent_unavailable'};if(reports.length>=1000)return {ok:false,reason:'evidence_limit'};const scan=s.actions.find(x=>x.agentId===agentId&&x.requestId===input.scanRequestId&&x.type==='scan'&&x.status==='completed'&&x.result);if(!scan)return {ok:false,reason:'scan_not_available'};if(reports.some(r=>r.agentId===agentId&&r.scanRequestId===input.scanRequestId&&['pending','delivered'].includes(r.status)))return {ok:false,reason:'scan_already_reported'};
+ if(s.done)return {ok:false,reason:'world_finished'};if(a.disabled)return {ok:false,reason:'agent_unavailable'};if(reports.length>=1000)return {ok:false,reason:'evidence_limit'};const scan=s.actions.find(x=>x.agentId===agentId&&x.requestId===input.scanRequestId&&x.type==='scan'&&!x.survey&&x.status==='completed'&&x.result);if(!scan)return {ok:false,reason:'scan_not_available'};if(reports.some(r=>r.agentId===agentId&&r.scanRequestId===input.scanRequestId&&['pending','delivered'].includes(r.status)))return {ok:false,reason:'scan_already_reported'};
  const store=worldReports.get(s);if(store){const result=store.evidence({agentId,requestId:input.requestId,scanRequestId:input.scanRequestId,result:scan.result,disabled:a.disabled,done:s.done},s.tick,reportEventsContext(s));if(result.published)return result;if(!result.duplicate)log(s,`${a.name} 已提交扫描报告`,'info',{kind:'evidence_sent',reportId:result.report.id,agentId});return {ok:true,...result}}const c=s.communication.config,report={id:reports.length+1,agentId,role:a.role,canSurvey:a.capabilities.includes('inspect'),requestId:input.requestId,scanRequestId:input.scanRequestId,result:clone(scan.result),submittedTick:s.tick,dueTick:s.tick+c.delay,expiresTick:s.tick+c.ttl,status:'pending'};if(!s.evidenceReports)s.evidenceReports=reports;reports.push(report);log(s,`${a.name} 已提交扫描报告`,'info',{kind:'evidence_sent',reportId:report.id,agentId});return {ok:true,duplicate:false,report:clone(report)};
 }
 // Reports reference a world-recorded collection, never a payload supplied by the sender.
@@ -666,18 +697,90 @@ function processDispatches(s){
 }
 function cancelDispatches(s,reason='run_ended'){const store=worldDispatches.get(s),context=dispatchEventsContext(s);if(context&&typeof store?.cancelEvents==='function'){store.cancelEvents(reason,s.tick,context);return}for(const p of s.communication.dispatchQueue||[]){if(!store&&p.actor==='external'){const d=s.decisions.find(x=>x.actor==='external'&&x.requestId===p.requestId);if(d&&d.status==='pending'){d.status='failed';d.reason=reason;d.appliedTick=s.tick}}log(s,reason==='mode_changed'?'任务指令未送达（指挥方式切换）':'任务指令未送达（实验结束）','warning',{kind:'dispatch_failed',dispatchId:p.id,taskId:p.taskId,agentId:p.agentId,reason})}if(store)store.cancel(reason,s.tick);else s.communication.dispatchQueue=[]}
 function cancelMessages(s){for(const packet of s.communication.queue)log(s,`消息 ${packet.id} 未送达（实验结束）`,'warning',{kind:'message_failed',messageId:packet.id,from:packet.from,to:packet.to,reason:'run_ended'});const store=worldPeers.get(s);if(store)store.cancel(s.tick);else s.communication.queue=[]}
+function hasDirectionalMove(s,a) {
+ return a.status==='manual'&&s.actions.some(action=>action.agentId===a.id&&action.direction&&action.status==='accepted');
+}
+function directionalMotionSupported(s) {
+ return !worldActions.has(s)&&!taskRuleProviders.has(s)&&s.physicsMode==='kinematic';
+}
+function straightDestination(s,a,end) {
+ const start=[a.x,a.y],size=s.worldSize??100;
+ const air=Sensors.isAir(a),position=Sensors.position(a,s.heightfield);
+ const blocks=air?null:planningObstacles(s,worldObstacles(s),a);
+ const clear=([x,y])=>air?Flight.clear(s,position,{x,y,z:position.z})
+  :Nav.clearSegment(start,[x,y],blocks,.8,size);
+ if(clear(end))return end;
+ if(!clear(start))return start;
+ let low=0,high=1;
+ const point=t=>[start[0]+(end[0]-start[0])*t,start[1]+(end[1]-start[1])*t];
+ for(let i=0;i<36;i++){const mid=(low+high)/2;if(clear(point(mid)))low=mid;else high=mid}
+ const distance=Math.hypot(end[0]-start[0],end[1]-start[1]);
+ return point(Math.max(0,low-.001/distance));
+}
+function directionalResult(a,direction) {
+ const completedM=Math.min(direction.distanceM,Math.hypot(a.x-direction.start.x,a.y-direction.start.y));
+ return {position:{x:a.x,y:a.y},completedM,remainingM:Math.max(0,direction.distanceM-completedM)};
+}
+function roverSurveySupported(s){
+ return !taskRuleProviders.has(s)&&!worldActions.has(s);
+}
+function taskOperationsSupported(s){
+ return s.executionMode==='primitive'&&roverSurveySupported(s)&&!worldTasks.has(s)&&!worldResources.has(s);
+}
+function sampleSlotsFull(s,t,a){
+ return t.behavior==='sample'&&taskOperationsSupported(s)&&Operations.canSample(a)&&Operations.sampleFull(s,a.id);
+}
+function surveyPassable(s,a){
+ const blocks=planningObstacles(s,worldObstacles(s),a);
+ return (from,to)=>Nav.clearSegment(from,to,blocks,.8,s.worldSize??100)&&Surface.clearSegment(s.surfaceDomain,'ground',from,to);
+}
+function sameMove(action,input,control) {
+ if(control)return !!action.flight?.control&&Object.entries(control).every(([key,value])=>action.flight.control[key]===value);
+ if(input.direction!==undefined)return action.direction?.bearingDeg===input.direction.bearingDeg&&action.direction.distanceM===input.direction.distanceM;
+ if(input.vertical!==undefined)return action.flight?.deltaM===input.vertical.deltaM;
+ return !action.direction&&!action.flight?.control&&action.flight?.deltaM===undefined&&
+  ['x','y','z'].every(axis=>action.target[axis]===input.target[axis]);
+}
 // Actions are submitted as intentions. The world validates them again when due.
 function submitAction(s,agentId,input){
  const a=s.agents.find(x=>x.id===agentId);if(!a)return {ok:false,reason:'unknown_agent'};
  if(!input||typeof input.requestId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(input.requestId)||!['move','scan','charge','execute_task','work_task','rescue'].includes(input.type)||!Number.isSafeInteger(input.targetTick)||!Number.isSafeInteger(input.expiresTick))return {ok:false,reason:'invalid_action'};
- if(input.type==='move'&&(!input.target||!Number.isFinite(input.target.x)||!Number.isFinite(input.target.y)||input.target.x<0||input.target.x>(s.worldSize??100)||input.target.y<0||input.target.y>(s.worldSize??100))||['scan','charge'].includes(input.type)&&input.target!==undefined||['execute_task','work_task'].includes(input.type)&&(typeof input.taskId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(input.taskId)||input.target!==undefined))return {ok:false,reason:'invalid_action'};
+ const operation=input.operation;
+ if(operation!==undefined&&(input.type!=='work_task'||!Operations.valid(operation)))return {ok:false,reason:'invalid_action'};
+ if(operation!==undefined&&!taskOperationsSupported(s))return {ok:false,reason:'task_operations_unavailable'};
+ const survey=input.survey===undefined?null:Survey.input(input.survey,s,a);
+ if(input.survey!==undefined&&(input.type!=='scan'||!survey||input.taskId!==undefined))return {ok:false,reason:'invalid_action'};
+ if(survey&&!roverSurveySupported(s))return {ok:false,reason:'rover_survey_unavailable'};
+ if(survey&&!Survey.supported(a))return {ok:false,reason:'missing_capability'};
+ const relative=input.direction!==undefined,vertical=input.vertical!==undefined,spatial=input.target?.z!==undefined;
+ const control=input.flightControl===undefined?null:Flight.controlInput(input.flightControl,s.worldSize??100);
+ if(input.flightControl!==undefined&&(!control||input.type!=='move'||relative||vertical||input.target!==undefined||input.taskId!==undefined))return {ok:false,reason:'invalid_action'};
+ if((vertical||spatial)&&(input.type!=='move'||relative||input.taskId!==undefined))return {ok:false,reason:'invalid_action'};
+ if(vertical&&(input.target!==undefined||!input.vertical||Object.keys(input.vertical).length!==1||!Flight.validDelta(input.vertical.deltaM)))return {ok:false,reason:'invalid_action'};
+ if(spatial&&(!Number.isFinite(input.target.z)||input.target.z< -8||input.target.z>45))return {ok:false,reason:'invalid_action'};
+ if((vertical||spatial||control)&&(!Sensors.isAir(a)||!directionalMotionSupported(s)))return {ok:false,reason:'flight_motion_unavailable'};
+ if(relative&&(input.type!=='move'||input.target!==undefined||input.taskId!==undefined||!Device.validDirection(a,input.direction)))return {ok:false,reason:'invalid_action'};
+ if(relative&&!directionalMotionSupported(s))return {ok:false,reason:'directional_motion_unavailable'};
+ if(input.type==='move'&&!relative&&!vertical&&!control&&(!input.target||!Number.isFinite(input.target.x)||!Number.isFinite(input.target.y)||input.target.x<0||input.target.x>(s.worldSize??100)||input.target.y<0||input.target.y>(s.worldSize??100))||['scan','charge'].includes(input.type)&&input.target!==undefined||['execute_task','work_task'].includes(input.type)&&(typeof input.taskId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(input.taskId)||input.target!==undefined))return {ok:false,reason:'invalid_action'};
  if(input.type==='rescue'&&(!/^[A-Za-z0-9_-]{1,64}$/.test(input.targetAgentId||'')||input.targetAgentId===agentId||!Number.isSafeInteger(input.faultGeneration)||input.faultGeneration<1||!Number.isSafeInteger(input.observedTick)||input.observedTick<0||input.observedTick>s.tick||input.target!==undefined||input.taskId!==undefined)||input.type!=='rescue'&&['targetAgentId','observedTick','faultSeq','faultGeneration'].some(k=>input[k]!==undefined)||input.type==='rescue'&&input.faultSeq!==undefined)return {ok:false,reason:'invalid_action'};
  const existing=s.actions.find(x=>x.agentId===agentId&&x.requestId===input.requestId);
- if(existing){const same=existing.type===input.type&&existing.targetTick===input.targetTick&&existing.expiresTick===input.expiresTick&&(input.type==='rescue'&&existing.targetAgentId===input.targetAgentId&&existing.observedTick===input.observedTick&&existing.faultGeneration===input.faultGeneration||['scan','charge'].includes(input.type)||['execute_task','work_task'].includes(input.type)&&existing.taskId===input.taskId||input.type==='move'&&existing.target.x===input.target.x&&existing.target.y===input.target.y);return same?{ok:true,duplicate:true,action:clone(existing)}:{ok:false,reason:'request_id_conflict'}}
+ if(existing){const same=existing.type===input.type&&existing.targetTick===input.targetTick&&existing.expiresTick===input.expiresTick&&(input.type==='rescue'&&existing.targetAgentId===input.targetAgentId&&existing.observedTick===input.observedTick&&existing.faultGeneration===input.faultGeneration||input.type==='charge'||input.type==='scan'&&JSON.stringify(existing.survey??null)===JSON.stringify(survey)||['execute_task','work_task'].includes(input.type)&&existing.taskId===input.taskId&&existing.operation===operation||input.type==='move'&&sameMove(existing,input,control));return same?{ok:true,duplicate:true,action:clone(existing)}:{ok:false,reason:'request_id_conflict'}}
  if(s.done)return {ok:false,reason:'world_finished'};if(input.targetTick<=s.tick||input.expiresTick<input.targetTick||input.expiresTick>s.tick+100)return {ok:false,reason:'invalid_schedule'};if(s.actions.length>=1000)return {ok:false,reason:'action_limit'};
  if(input.type==='rescue'&&!observe(s,agentId)?.memory.some(c=>c.kind==='agent'&&c.id===input.targetAgentId&&c.status==='fault'&&c.observedTick===input.observedTick&&c.faultGeneration===input.faultGeneration))return {ok:false,reason:'fault_not_observed'};
  const fault=input.type==='rescue'?Rescue.faultAt(s.events,input.targetAgentId,input.observedTick):null;if(input.type==='rescue'&&(!fault||!s.agents.some(a=>a.id===input.targetAgentId)))return {ok:false,reason:'fault_not_observed'};
- let action={agentId,requestId:input.requestId,type:input.type,...(fault?{targetAgentId:input.targetAgentId,observedTick:input.observedTick,faultGeneration:input.faultGeneration,faultSeq:fault.seq}:{}),...(input.type==='move'?{target:{x:input.target.x,y:input.target.y}}:['execute_task','work_task'].includes(input.type)?{taskId:input.taskId}:{}),targetTick:input.targetTick,expiresTick:input.expiresTick,submittedTick:s.tick,status:'pending'};action=appendAction(s,action);log(s,`${a.name} 提交${({scan:'扫描',charge:'补能',move:'移动',execute_task:'执行任务',work_task:'执行作业',rescue:'现场救援'})[input.type]}意图`,'info',{kind:'action_submitted',agentId,requestId:action.requestId,actionType:input.type});return {ok:true,duplicate:false,action:clone(action)};
+ const assignment=operation===undefined?null:s.tasks.find(t=>t.id===input.taskId&&t.status==='active'&&t.assignee===agentId);
+ if(operation!==undefined&&!assignment)return {ok:false,reason:'task_not_assigned'};
+ const direction=relative?{bearingDeg:input.direction.bearingDeg,distanceM:input.direction.distanceM,start:{x:a.x,y:a.y}}:null;
+ const [x,y]=direction?straightDestination(s,a,Device.directionTarget(a,direction)):[input.target?.x,input.target?.y];
+ const start=vertical||spatial||control?Sensors.position(a,s.heightfield):null;
+ let target={x,y};
+ if(vertical)target={...start,z:start.z+input.vertical.deltaM};
+ else if(spatial)target.z=input.target.z;
+ else if(control)target=control.mode==='land'?{x:control.x,y:control.y,z:start.z}:start;
+ const flight=start?{start,...(vertical?{deltaM:input.vertical.deltaM}:{}),...(control?{control}:{})}:null;
+ const held=control?.mode==='hover'?{heldTicks:0,remainingTicks:control.durationTicks}:{};
+ let action={agentId,requestId:input.requestId,type:input.type,...(survey?{survey}:{}),...(operation!==undefined?{operation,operationAssignmentId:assignment.assignmentId}:{}),...(direction?{direction,result:directionalResult(a,direction)}:{}),
+  ...(flight?{flight,result:{position:start,completedM:0,remainingM:Flight.distance(start,target),...held}}:{}),...(fault?{targetAgentId:input.targetAgentId,observedTick:input.observedTick,faultGeneration:input.faultGeneration,faultSeq:fault.seq}:{}),...(input.type==='move'?{target}:['execute_task','work_task'].includes(input.type)?{taskId:input.taskId}:{}),targetTick:input.targetTick,expiresTick:input.expiresTick,submittedTick:s.tick,status:'pending'};action=appendAction(s,action);log(s,`${a.name} 提交${({scan:'扫描',charge:'补能',move:'移动',execute_task:'执行任务',work_task:'执行作业',rescue:'现场救援'})[input.type]}意图`,'info',{kind:'action_submitted',agentId,requestId:action.requestId,actionType:input.type});return {ok:true,duplicate:false,action:clone(action)};
 }
 function actionStatus(s,action,status,reason){setAction(s,action,{status,updatedTick:s.tick,...(reason?{reason}:{})});logActionStatus(s,action,status,reason)}
 function logActionStatus(s,action,status,reason){const a=s.agents.find(x=>x.id===action.agentId);log(s,`${a.name} 的${({scan:'扫描',charge:'补能',move:'移动',execute_task:'执行任务',work_task:'执行作业',rescue:'现场救援'})[action.type]}动作${{accepted:'已接受',completed:'已完成',rejected:'被拒绝',failed:'已失败',cancelled:'已取消'}[status]}`,(status==='completed'?'success':['rejected','failed','cancelled'].includes(status)?'warning':'info'),{kind:'action_'+status,agentId:action.agentId,requestId:action.requestId,actionType:action.type,...(reason?{reason}:{})})}
@@ -731,8 +834,30 @@ function ownedActivateAction(s,action,a){
  if(started)log(s,`${a.name} 道路不可达，等待封闭解除`,'warning',{kind:'roadblock_wait_started',agentId:a.id,roadblockId:started.roadblockId,goal:started.goal.slice(),mode:started.mode});return true;
 }
 function activateActions(s){for(const action of s.actions.filter(x=>x.status==='pending')){if(s.tick<action.targetTick)continue;const a=s.agents.find(x=>x.id===action.agentId);if(ownedActivateAction(s,action,a))continue;if(action.type==='rescue'){const target=s.agents.find(t=>t.id===action.targetAgentId),reachable=target&&taskReachable(s,a,{target:[target.x,target.y]});const reason=s.tick>action.expiresTick?'expired':a.disabled||a.status!=='idle'?'agent_unavailable':a.battery<=5?'low_battery':Rescue.reason(s,a,action,reachable);if(reason){actionStatus(s,action,'rejected',reason);continue}setAgentExecution(s,a,{status:'manual',route:[]});setAction(s,action,{progress:0});actionStatus(s,action,'accepted');continue}const rules=taskRuleProviders.get(s),actionTask=s.tasks.find(t=>t.id===action.taskId),assignedTask=a.status==='assigned'?s.tasks.find(t=>t.status==='active'&&t.assignee===a.id):null;let reason=null;if(rules){const reachable=action.type==='work_task'&&!!actionTask&&taskReachable(s,a,actionTask);reason=rules.checkAction(s,action,a,actionTask,assignedTask,reachable);if(reason!==null&&!['expired','agent_execution_disabled','agent_unavailable','task_not_assigned','low_battery','out_of_reach','battery_sufficient','missing_capability'].includes(reason))throw Error('invalid native action rule result')}
- if(action.type==='execute_task'||action.type==='work_task'){const t=actionTask;if(!rules&&s.tick>action.expiresTick)reason='expired';else if(!rules&&s.executionMode!==(action.type==='work_task'?'primitive':'agent'))reason='agent_execution_disabled';else if(!rules&&a.disabled)reason='agent_unavailable';else if(!rules&&(!t||t.status!=='active'||t.assignee!==a.id||a.status!=='assigned'))reason='task_not_assigned';else if(!rules&&a.battery<=5)reason='low_battery';else if(!rules&&action.type==='work_task'&&!taskReachable(s,a,t))reason='out_of_reach';let resumeRoute=null,waitGoal=null;if(!reason&&action.type==='execute_task'&&a.taskNeedsRoute){const goal=taskWaypoint(s,t);resumeRoute=goal&&routeBetween(s,a,goal,3.7);if(!resumeRoute){const baseline=goal&&!Sensors.isAir(a)&&s.roadblocks?.length?(s.surfaceDomain?surfaceRoute(s,a,[a.x,a.y],goal,3.7,s.obstacles):planNavigation(s,[a.x,a.y],goal,planningObstacles(s,s.obstacles,a),effectiveTerrain(s),s.navigation??'distance')):null;if(baseline)waitGoal=goal;else reason='unreachable_target'}}if(reason){actionStatus(s,action,'rejected',reason);continue}if(a.taskNeedsRoute&&action.type==='execute_task'){setAgentExecution(s,a,{route:resumeRoute||[]});setAgentExecution(s,a,{taskNeedsRoute:null})}setAgentExecution(s,a,{status:'working'});actionStatus(s,action,'accepted');if(waitGoal)startRoadblockWait(s,a,waitGoal,s.roadblocks[0].id);continue}
- const assignedMove=action.type==='move'&&s.executionMode==='primitive'&&!!assignedTask,assignedCharge=action.type==='charge'&&['agent','primitive'].includes(s.executionMode)&&!!assignedTask;if(!rules&&s.tick>action.expiresTick)reason='expired';else if(!rules&&(a.disabled||a.status!=='idle'&&!assignedMove&&!assignedCharge))reason='agent_unavailable';else if(!rules&&a.battery<=5&&action.type!=='charge')reason='low_battery';else if(!rules&&action.type==='charge'&&a.battery>=80)reason='battery_sufficient';else if(!rules&&action.type==='scan'&&!a.capabilities.some(c=>c==='inspect'||c==='confirm'))reason='missing_capability';let route=null,waitGoal=null;if(!reason&&['move','charge'].includes(action.type)){const goal=action.type==='charge'?s.chargingStation:[action.target.x,action.target.y];route=action.type==='charge'?routeBetween(s,a,goal,2.8):routeFor(s,a,{target:goal});if(route===null){const baseline=!Sensors.isAir(a)&&s.roadblocks?.length?(s.surfaceDomain?surfaceRoute(s,a,[a.x,a.y],goal,action.type==='charge'?2.8:0,s.obstacles):planNavigation(s,[a.x,a.y],goal,planningObstacles(s,s.obstacles,a),effectiveTerrain(s),s.navigation??'distance')):null;if(baseline)waitGoal=goal;else reason='unreachable_target'}}if(reason){actionStatus(s,action,'rejected',reason);continue}if(assignedCharge&&a.roadblockWait)clearRoadblockWait(s,a,'cancelled');setAgentExecution(s,a,{route:route||[]});if(assignedMove||assignedCharge)setAction(s,action,{resumeTaskId:assignedTask.id});setAgentExecution(s,a,{status:'manual'});if(action.type==='scan')setAction(s,action,{progress:0});if(action.type==='charge'){setAction(s,action,{phase:'travel'});setAction(s,action,{energyAdded:0})}actionStatus(s,action,'accepted');if(waitGoal)startRoadblockWait(s,a,waitGoal,s.roadblocks[0].id)}}
+ if(action.type==='execute_task'||action.type==='work_task'){const t=actionTask;if(!rules&&s.tick>action.expiresTick)reason='expired';else if(!rules&&s.executionMode!==(action.type==='work_task'?'primitive':'agent'))reason='agent_execution_disabled';else if(!rules&&a.disabled)reason='agent_unavailable';else if(!rules&&(!t||t.status!=='active'||t.assignee!==a.id||a.status!=='assigned'))reason='task_not_assigned';else if(!rules&&a.battery<=5)reason='low_battery';else if(!rules&&action.type==='work_task'&&!taskReachable(s,a,t))reason='out_of_reach';
+ if(!reason&&action.type==='work_task'){
+  if(action.operation)reason=action.operationAssignmentId===t.assignmentId?Operations.operationBlock(s,t,a,action.operation):'assignment_changed';
+  else if(sampleSlotsFull(s,t,a))reason='sample_slots_full';
+  else if(t.operationState)reason='operation_required';
+ }
+ let resumeRoute=null,waitGoal=null;if(!reason&&action.type==='execute_task'&&a.taskNeedsRoute){const goal=taskWaypoint(s,t);resumeRoute=goal&&routeBetween(s,a,goal,3.7);if(!resumeRoute){const baseline=goal&&!Sensors.isAir(a)&&s.roadblocks?.length?(s.surfaceDomain?surfaceRoute(s,a,[a.x,a.y],goal,3.7,s.obstacles):planNavigation(s,[a.x,a.y],goal,planningObstacles(s,s.obstacles,a),effectiveTerrain(s),s.navigation??'distance')):null;if(baseline)waitGoal=goal;else reason='unreachable_target'}}if(reason){actionStatus(s,action,'rejected',reason);continue}if(a.taskNeedsRoute&&action.type==='execute_task'){setAgentExecution(s,a,{route:resumeRoute||[]});setAgentExecution(s,a,{taskNeedsRoute:null})}if(action.operation)setAction(s,action,{progress:0});
+ setAgentExecution(s,a,{status:'working'});actionStatus(s,action,'accepted');if(waitGoal)startRoadblockWait(s,a,waitGoal,s.roadblocks[0].id);continue}
+ const assignedMove=action.type==='move'&&s.executionMode==='primitive'&&!!assignedTask,assignedCharge=action.type==='charge'&&['agent','primitive'].includes(s.executionMode)&&!!assignedTask;if(!rules&&s.tick>action.expiresTick)reason='expired';else if(!rules&&(a.disabled||a.status!=='idle'&&!assignedMove&&!assignedCharge))reason='agent_unavailable';else if(!rules&&a.battery<=5&&action.type!=='charge'&&(action.flight?.control?.mode!=='land'||a.battery<=0))reason='low_battery';else if(!rules&&action.type==='charge'&&a.battery>=80)reason='battery_sufficient';else if(!rules&&action.type==='scan'&&!action.survey&&!a.capabilities.some(c=>c==='inspect'||c==='confirm'))reason='missing_capability';
+ if(!reason&&action.type==='move'&&!action.flight?.control&&Sensors.isAir(a)&&Flight.flightState(s,a)!=='airborne')reason='takeoff_required';
+ if(!reason&&action.type==='charge'&&a.landed&&!Flight.landedAtStation(s,a))reason='takeoff_required';
+ let route=null,waitGoal=null;
+ if(!reason&&action.flight)reason=prepareFlight(s,a,action);
+ else if(!reason&&action.direction){
+  const {start}=action.direction;
+  if(Math.hypot(a.x-start.x,a.y-start.y)>1e-6)reason='pose_changed';
+  else{
+   const [x,y]=straightDestination(s,a,Device.directionTarget(start,action.direction));
+   setAction(s,action,{target:{x,y}});
+   if(Math.hypot(x-a.x,y-a.y)<1e-6)reason='movement_blocked';
+   else route=[[x,y]];
+  }
+ }else if(!reason&&['move','charge'].includes(action.type)){const goal=action.type==='charge'?s.chargingStation:[action.target.x,action.target.y];const atStation=action.type==='charge'&&Flight.landedAtStation(s,a);
+ route=atStation?[]:action.type==='charge'?routeBetween(s,a,goal,2.8):routeFor(s,a,{target:goal});if(route===null){const baseline=!Sensors.isAir(a)&&s.roadblocks?.length?(s.surfaceDomain?surfaceRoute(s,a,[a.x,a.y],goal,action.type==='charge'?2.8:0,s.obstacles):planNavigation(s,[a.x,a.y],goal,planningObstacles(s,s.obstacles,a),effectiveTerrain(s),s.navigation??'distance')):null;if(baseline)waitGoal=goal;else reason='unreachable_target'}}if(reason){actionStatus(s,action,'rejected',reason);continue}if((assignedCharge||action.flight)&&a.roadblockWait)clearRoadblockWait(s,a,'cancelled');setAgentExecution(s,a,{route:route||[]});if(assignedMove||assignedCharge)setAction(s,action,{resumeTaskId:assignedTask.id});setAgentExecution(s,a,{status:'manual'});if(action.type==='scan')setAction(s,action,{progress:0});if(action.type==='charge'){setAction(s,action,{phase:'travel'});setAction(s,action,{energyAdded:0})}actionStatus(s,action,'accepted');if(waitGoal)startRoadblockWait(s,a,waitGoal,s.roadblocks[0].id)}}
 // Terrain modifies only ground motion. Split each route segment at zone boundaries.
 function terrainTouches(a,dx,dy,z){let lo=0,hi=1;for(const [p,d,min,max] of [[a.x,dx,z.x,z.x+z.w],[a.y,dy,z.y,z.y+z.h]]){if(d===0){if(p<min||p>max)return false}else{const t1=(min-p)/d,t2=(max-p)/d;lo=Math.max(lo,Math.min(t1,t2));hi=Math.min(hi,Math.max(t1,t2));if(lo>hi)return false}}return lo<=hi}
 function terrainContact(s,a,dx,dy){const zones=effectiveTerrain(s).filter(z=>terrainTouches(a,dx,dy,z));return {inside:zones.length>0||Elevation.factor(s.heightfield,a.x+dx/2,a.y+dy/2).energyFactor>1,effects:zones.map(z=>(s.terrainEffects||[]).find(e=>e.zoneId===z.id)).filter(Boolean)}}
@@ -797,6 +922,11 @@ function kinematicBodyFraction(ox,oy,dx,dy){
 }
 function kinematicAgentMove(s,a,dx,dy){
  const distance=Math.hypot(dx,dy);if(distance<1e-12)return {x:0,y:0,contacts:0};
+ if(s.agents.some(actor=>actor.flightZ!==undefined)){
+  const from=Sensors.position(a,s.heightfield),to={x:a.x+dx,y:a.y+dy,z:from.z};
+  const fraction=Flight.bodyFraction(s,a,from,to);
+  return {x:dx*fraction,y:dy*fraction,contacts:fraction<1?1:0};
+ }
  const air=Sensors.isAir(a),px=a.x,py=a.y;
  let fraction=1;
  for(const other of s.agents){
@@ -837,7 +967,9 @@ if(stopAtOccupiedAirTask(s,a,physics))return;
 const waypoint=a.route[0],waypointKey=waypoint?waypoint.join(','):'';let remaining=a.thermalState?.protected?0:a.speed,contact=false,moved=0,progress=0;while(remaining>1e-9&&a.route.length){const [x,y]=a.route[0],dx=x-a.x,dy=y-a.y,d=Math.hypot(dx,dy);if(d<1e-6){setAgentExecution(s,a,{route:a.route.slice(1)});continue}const ux=dx/d,uy=dy/d,zone=terrainSegment(s,a,ux,uy,d),rate=a.moveEnergyPerUnit??.045,rules=taskRuleProviders.get(s);let desired,mx,my;
  if(rules){const budget=rules.movementBudget({distance:d,boundary:zone.boundary,remaining,speedFactor:zone.speed,battery:a.battery,energyRate:rate,energyFactor:zone.energy,ux,uy});if(!budget||!Number.isFinite(budget.distance)||budget.distance<0||budget.distance>d||!Number.isFinite(budget.dx)||!Number.isFinite(budget.dy))throw Error('invalid native movement budget');desired=budget.distance;mx=budget.dx;my=budget.dy}else{desired=Math.min(d,zone.boundary,remaining*zone.speed,a.battery/(rate*zone.energy));mx=ux*desired;my=uy*desired}
  if(a.thermal){const minimum=physics?2e-5:1e-6,limit=Thermal.moveLimit(a.thermal,a.thermalState,rate*zone.energy,minimum);if(limit<=minimum){thermalChange(s,a,Thermal.protect(a.thermal,a.thermalState));break}if(desired>limit){desired=limit;mx=ux*desired;my=uy*desired}}
- let raw;if(physics)raw=physics.move(a,mx,my);else{const blocked=s.surfaceDomain&&!Surface.clearSegment(s.surfaceDomain,a.mobility??(a.role==='drone'?'air':'ground'),[a.x,a.y],[a.x+mx,a.y+my],.8);raw=blocked?{x:0,y:0,contacts:1}:kinematicAgentMove(s,a,mx,my)}const result=boundMovement(s,a,raw,physics),actual=Math.hypot(result.x,result.y);let accounting;if(rules){accounting=rules.movementAccounting({battery:a.battery,actualDistance:actual,energyRate:rate,energyFactor:zone.energy,remaining,desiredDistance:desired,speedFactor:zone.speed});if(!accounting||!Number.isFinite(accounting.battery)||accounting.battery<0||accounting.battery>a.battery||!Number.isFinite(accounting.remaining)||accounting.remaining>remaining)throw Error('invalid native movement accounting')}riskSegment(s,a,result.x,result.y,result.nativeRisks);footprintSegment(s,a,result.x,result.y);const contactTerrain=zone.micro?terrainContact(s,a,result.x,result.y):zone;thermalSpent(s,a,Math.min(a.battery,actual*rate*zone.energy));setAgentMotion(s,a,{x:Math.max(0,Math.min(s.worldSize??100,a.x+result.x)),y:Math.max(0,Math.min(s.worldSize??100,a.y+result.y)),distance:a.distance+actual,battery:accounting?accounting.battery:Math.max(0,a.battery-actual*rate*zone.energy)});if(contactTerrain.inside)setAgentExecution(s,a,{terrainDistance:(a.terrainDistance||0)+actual});if(actual>1e-9&&contactTerrain.effects.length){setAgentExecution(s,a,{terrainEffectDistance:(a.terrainEffectDistance||0)+actual});for(const effect of contactTerrain.effects)if(!s.events.some(e=>e.kind==='terrain_effect_exposure'&&e.agentId===a.id&&e.zoneId===effect.zoneId&&e.startedTick===effect.startedTick))log(s,`${a.name} 进入受扰动地表区域`,'info',{kind:'terrain_effect_exposure',agentId:a.id,zoneId:effect.zoneId,startedTick:effect.startedTick})}moved+=actual;progress+=(result.x*dx+result.y*dy)/d;remaining=accounting?accounting.remaining:remaining-desired/zone.speed;contact=contact||result.contacts>0;if(Math.hypot(x-a.x,y-a.y)<1e-5)setAgentExecution(s,a,{route:a.route.slice(1)});if(a.battery<=Math.max(1e-9,rate*zone.energy*(physics?2e-5:1e-6))){setAgentMotion(s,a,{battery:0});break}if(actual<1e-6)break}
+ let raw;if(physics)raw=physics.move(a,mx,my);else{
+ const flightBlocked=a.flightZ!==undefined&&!Flight.clear(s,Sensors.position(a,s.heightfield),{x:a.x+mx,y:a.y+my,z:a.flightZ});
+ const blocked=flightBlocked||s.surfaceDomain&&!Surface.clearSegment(s.surfaceDomain,a.mobility??(a.role==='drone'?'air':'ground'),[a.x,a.y],[a.x+mx,a.y+my],.8);raw=blocked?{x:0,y:0,contacts:1}:kinematicAgentMove(s,a,mx,my)}const result=boundMovement(s,a,raw,physics),actual=Math.hypot(result.x,result.y);let accounting;if(rules){accounting=rules.movementAccounting({battery:a.battery,actualDistance:actual,energyRate:rate,energyFactor:zone.energy,remaining,desiredDistance:desired,speedFactor:zone.speed});if(!accounting||!Number.isFinite(accounting.battery)||accounting.battery<0||accounting.battery>a.battery||!Number.isFinite(accounting.remaining)||accounting.remaining>remaining)throw Error('invalid native movement accounting')}riskSegment(s,a,result.x,result.y,result.nativeRisks);footprintSegment(s,a,result.x,result.y);const contactTerrain=zone.micro?terrainContact(s,a,result.x,result.y):zone;thermalSpent(s,a,Math.min(a.battery,actual*rate*zone.energy));setAgentMotion(s,a,{x:Math.max(0,Math.min(s.worldSize??100,a.x+result.x)),y:Math.max(0,Math.min(s.worldSize??100,a.y+result.y)),distance:a.distance+actual,battery:accounting?accounting.battery:Math.max(0,a.battery-actual*rate*zone.energy)});if(contactTerrain.inside)setAgentExecution(s,a,{terrainDistance:(a.terrainDistance||0)+actual});if(actual>1e-9&&contactTerrain.effects.length){setAgentExecution(s,a,{terrainEffectDistance:(a.terrainEffectDistance||0)+actual});for(const effect of contactTerrain.effects)if(!s.events.some(e=>e.kind==='terrain_effect_exposure'&&e.agentId===a.id&&e.zoneId===effect.zoneId&&e.startedTick===effect.startedTick))log(s,`${a.name} 进入受扰动地表区域`,'info',{kind:'terrain_effect_exposure',agentId:a.id,zoneId:effect.zoneId,startedTick:effect.startedTick})}moved+=actual;progress+=(result.x*dx+result.y*dy)/d;remaining=accounting?accounting.remaining:remaining-desired/zone.speed;contact=contact||result.contacts>0;if(Math.hypot(x-a.x,y-a.y)<1e-5)setAgentExecution(s,a,{route:a.route.slice(1)});if(a.battery<=Math.max(1e-9,rate*zone.energy*(physics?2e-5:1e-6))){setAgentMotion(s,a,{battery:0});break}if(actual<1e-6)break}
  if(delivery&&a.deliveryTravel&&moved>0){const loaded=s.part.location==='carried'&&s.part.carrierId===a.id;const d=a.deliveryTravel,distKey=loaded?'loadedDistance':'emptyDistance',tickKey=loaded?'loadedTicks':'emptyTicks';setAgentExecution(s,a,{deliveryTravel:{...d,[distKey]:d[distKey]+moved,[tickKey]:d[tickKey]+1}})}
  if(contact&&!a.collisionActive){incrementWorldCounter(s,'collisionContacts');log(s,`${a.name} 遇到障碍，运动已受限`,'warning',{kind:'collision_contact',agentId:a.id})}setAgentExecution(s,a,{collisionActive:contact});const current=a.route[0],key=current?current.join(','):'';if(!contact||!current||key!==waypointKey||a.progressWaypoint!==key){setAgentExecution(s,a,{blockedTicks:0});setAgentExecution(s,a,{progressWaypoint:key});setAgentExecution(s,a,{bestWaypointDistance:current?Math.hypot(current[0]-a.x,current[1]-a.y):0})}else{const distance=Math.hypot(current[0]-a.x,current[1]-a.y);if(distance<(a.bestWaypointDistance??Infinity)-.05){setAgentExecution(s,a,{bestWaypointDistance:distance});setAgentExecution(s,a,{blockedTicks:0})}else setAgentExecution(s,a,{blockedTicks:(a.blockedTicks||0)+1})}
 }
@@ -849,7 +981,12 @@ function occupiedTaskTarget(s,a,goal){return !!goal&&s.agents.some(b=>b.id!==a.i
 function ownedCollisionReplan(s,a){const execution=worldExecutions.get(s),environment=worldEnvironments.get(s),resources=worldResources.get(s),tasks=worldTasks.get(s),actions=worldActions.get(s)?.store,control=worldControls.get(s),ledger=worldLedgers.get(s);if(typeof execution?.store.replan!=='function'||!environment||!resources||!tasks||!actions||!control||!ledger)return null;const result=execution.store.replan(execution.indices.get(a),environment,resources,tasks,actions,control,ledger,s.tick);if(typeof result?.replanned!=='boolean')throw Error('invalid native collision replan');return result.replanned}
 function replanAroundAgents(s,a,goal,reach,radius=3.7){
  const owned=ownedCollisionReplan(s,a);if(owned!==null)return owned;
- if(!goal)return false;const air=Sensors.isAir(a),other=s.agents.filter(b=>b.id!==a.id&&Sensors.isAir(b)===air),start=[a.x,a.y],physical=air?worldObstacles(s).filter(b=>(s.heightfield?Elevation.prism(s.heightfield,b).height:b.height)>=15.2):worldObstacles(s),planning=air?physical:planningObstacles(s,physical,a),zones=air?[]:effectiveTerrain(s),metric=air?'distance':s.navigation??'distance';
+ if(!goal)return false;const air=Sensors.isAir(a),start=[a.x,a.y],z=Sensors.position(a,s.heightfield).z;
+ const varyingAltitude=s.agents.some(b=>b.flightZ!==undefined);
+ const other=s.agents.filter(b=>b.id!==a.id&&(varyingAltitude
+  ?Math.abs(z-Sensors.position(b,s.heightfield).z)<1.6:Sensors.isAir(b)===air));
+ const physical=air?worldObstacles(s).filter(o=>Elevation.prism(s.heightfield,o).height>=z-.8):worldObstacles(s);
+ const planning=air?physical:planningObstacles(s,physical,a),zones=air?[]:effectiveTerrain(s),metric=air?'distance':s.navigation??'distance';
  // Agent obstacles include both 0.8-radius bodies and a small safety margin.
  const obstacles=planning.concat(other.map(b=>({x:b.x-.8,y:b.y-.8,w:1.6,h:1.6,padding:.9})));
  const escapePlanning=air||s.surfaceDomain?planning.map(b=>({...b,padding:.8})):planning;
@@ -857,14 +994,17 @@ function replanAroundAgents(s,a,goal,reach,radius=3.7){
   if(!Nav.clearSegment(start,end,escapePlanning,Nav.RADIUS,s.worldSize??100))return false;
   const dx=end[0]-start[0],dy=end[1]-start[1];
   // Check the first leg out of the planning margin with the same sweep as movement.
-  if(s.physicsMode==='kinematic')return other.every(b=>kinematicBodyFraction(start[0]-b.x,start[1]-b.y,dx,dy)===1);
+  if(s.physicsMode==='kinematic')return kinematicAgentMove(s,a,dx,dy).contacts===0;
   const length=dx*dx+dy*dy;
   return other.every(b=>{const t=length?Math.max(0,Math.min(1,((b.x-start[0])*dx+(b.y-start[1])*dy)/length)):0;return Math.hypot(start[0]+t*dx-b.x,start[1]+t*dy-b.y)>=1.59});
  }
  const entries=[];if(Nav.free(...start,obstacles,Nav.RADIUS,s.worldSize??100))entries.push({point:start,prefix:[],cost:0});else for(const length of [1,2,3,4,5,6])for(let i=0;i<24;i++){const theta=2*Math.PI*i/24,p=[start[0]+length*Math.cos(theta),start[1]+length*Math.sin(theta)];if(Nav.free(...p,obstacles,Nav.RADIUS,s.worldSize??100)&&escapeClear(p))entries.push({point:p,prefix:[p],cost:length})}
  entries.sort((u,v)=>(u.cost+Math.hypot(u.point[0]-goal[0],u.point[1]-goal[1]))-(v.cost+Math.hypot(v.point[0]-goal[0],v.point[1]-goal[1])));
- const targets=[];if(Nav.free(...goal,obstacles,Nav.RADIUS,s.worldSize??100))targets.push(goal);if(reach)for(let i=0;i<24;i++){const theta=2*Math.PI*i/24,p=[goal[0]+radius*Math.cos(theta),goal[1]+radius*Math.sin(theta)];if(Nav.free(...p,obstacles,Nav.RADIUS,s.worldSize??100)&&(air?Sensors.visible({x:p[0],y:p[1],z:16},{x:goal[0],y:goal[1],z:16},4,worldObstacles(s),s.heightfield):(Nav.clearSegment(p,goal,physical,0,s.worldSize??100)&&Elevation.traversable(s.heightfield,p,goal,0))))targets.push(p)}
- let best=null,bestCost=Infinity;for(const entry of entries.slice(0,24)){const ordered=targets.slice().sort((u,v)=>Math.hypot(entry.point[0]-u[0],entry.point[1]-u[1])-Math.hypot(entry.point[0]-v[0],entry.point[1]-v[1]));for(const target of ordered){const route=planNavigation(s,entry.point,target,obstacles,zones,metric,air?null:s.heightfield);if(!route)continue;let prev=entry.point,total=entry.prefix.length?Nav.segmentCost(start,entry.point,zones,metric,air?null:s.heightfield):0;for(const p of route){total+=Nav.segmentCost(prev,p,zones,metric,air?null:s.heightfield);prev=p}if(total<bestCost){best=entry.prefix.concat(route);bestCost=total}}}
+ const targets=[];if(Nav.free(...goal,obstacles,Nav.RADIUS,s.worldSize??100))targets.push(goal);if(reach)for(let i=0;i<24;i++){const theta=2*Math.PI*i/24,p=[goal[0]+radius*Math.cos(theta),goal[1]+radius*Math.sin(theta)];if(Nav.free(...p,obstacles,Nav.RADIUS,s.worldSize??100)&&(air?Sensors.visible({x:p[0],y:p[1],z},{x:goal[0],y:goal[1],z},4,worldObstacles(s),s.heightfield):(Nav.clearSegment(p,goal,physical,0,s.worldSize??100)&&Elevation.traversable(s.heightfield,p,goal,0))))targets.push(p)}
+ let best=null,bestCost=Infinity;for(const entry of entries.slice(0,24)){const ordered=targets.slice().sort((u,v)=>Math.hypot(entry.point[0]-u[0],entry.point[1]-u[1])-Math.hypot(entry.point[0]-v[0],entry.point[1]-v[1]));for(const target of ordered){const route=planNavigation(s,entry.point,target,obstacles,zones,metric,air?null:s.heightfield);if(!route)continue;let prev=entry.point,total=entry.prefix.length?Nav.segmentCost(start,entry.point,zones,metric,air?null:s.heightfield):0;for(const p of route){
+  if(a.flightZ!==undefined&&!Flight.clear(s,{x:prev[0],y:prev[1],z},{x:p[0],y:p[1],z})){total=Infinity;break}
+  total+=Nav.segmentCost(prev,p,zones,metric,air?null:s.heightfield);prev=p
+ }if(total<bestCost){best=entry.prefix.concat(route);bestCost=total}}}
  if(!best)return false;setAgentExecution(s,a,{route:best});setAgentExecution(s,a,{collisionReplans:(a.collisionReplans||0)+1});setAgentExecution(s,a,{blockedTicks:0});setAgentExecution(s,a,{progressWaypoint:''});log(s,`${a.name} 绕行受阻设备`,'info',{kind:'collision_replan',agentId:a.id});return true;
 }
 function markTaskStarted(s,t,a){if(s.recoveryEventsVersion!==1||t.startedAssignmentId===t.assignmentId)return;const store=worldTasks.get(s),execution=worldExecutions.get(s),environment=worldEnvironments.get(s),resources=worldResources.get(s),actions=worldActions.get(s)?.store,control=worldControls.get(s),ledger=worldLedgers.get(s);if(typeof store?.start==='function'&&execution&&environment&&resources&&actions&&control&&ledger){store.start(t.id,execution.store,environment,resources,actions,control,ledger,s.tick);return}changeTask(s,t,'start');log(s,`${a.name} 开始执行「${t.name}」`,'info',{kind:'task_work_started',taskId:t.id,agentId:a.id,assignmentId:t.assignmentId})}
@@ -890,7 +1030,105 @@ function nativeStationaryTick(s,action,a,rules,chargerBusy=false){
  else {if(!['waiting','charging'].includes(r.phase)||!Number.isFinite(r.energyAdded)||r.energyAdded<action.energyAdded||r.battery<a.battery||r.battery>80||r.effect==='energy_depleted'||(r.effect==='completed')!==(r.battery===80)||r.phase==='waiting'&&(!chargerBusy||r.battery!==a.battery||r.energyAdded!==action.energyAdded))throw Error('invalid native charge result');setAction(s,action,{phase:r.phase});setAction(s,action,{energyAdded:r.energyAdded});setAgentMotion(s,a,{battery:r.battery})}
  return r.effect;
 }
+function prepareFlight(s,a,action){
+ const start=Sensors.position(a,s.heightfield),control=action.flight.control;
+ let target=action.target,path;
+ if(control){
+  const plan=Flight.planControl(s,a,start,control);
+  if(plan.reason)return plan.reason;
+  ({target,path}=plan);
+ }else{
+  if(action.flight.deltaM!==undefined&&Flight.distance(start,action.flight.start)>1e-6)return 'pose_changed';
+  if(!Flight.validHeight(s,target))return 'flight_height_limit';
+  path=Flight.plan(s,start,target);
+  if(!path)return 'unreachable_target';
+ }
+ const remainingM=path.reduce((sum,point,index)=>sum+Flight.distance(path[index-1]??start,point),0);
+ setAction(s,action,{target,flight:{...action.flight,start,path},result:{...action.result,position:start,completedM:0,remainingM}});
+ return null;
+}
+function finishFlight(s,a,action,reason){
+ const task=action.resumeTaskId&&s.tasks.find(t=>t.id===action.resumeTaskId&&t.status==='active'&&t.assignee===a.id);
+ if(!reason&&action.flight.control?.mode==='land')a.landed=true;
+ setAgentExecution(s,a,{status:task?'assigned':'idle',route:[]});
+ actionStatus(s,action,reason?'failed':'completed',reason);
+}
+function depleteFlight(s,a,action,task){
+ finishFlight(s,a,action,'energy_depleted');
+ setAgentMotion(s,a,{battery:0});
+ setAgentExecution(s,a,{status:'fault',disabled:true});
+ if(task){releaseTaskResource(s,task,a);requeueTask(s,task);setAgentExecution(s,a,{work:0});incrementWorldCounter(s,'replans')}
+ log(s,`${a.name} 飞行时电量耗尽`,'warning',{kind:'energy_depleted',agentId:a.id,actionId:action.requestId,...(task?{taskId:task.id}:{})});
+}
+function advanceHover(s,a,action,task){
+ if(!thermalWork(s,a))return;
+ if(task)markTaskStarted(s,task,a);
+ const energy=Math.min(a.battery,a.workEnergyPerTick??.08);
+ thermalSpent(s,a,energy);
+ setAgentMotion(s,a,{battery:a.battery-energy});
+ if(a.battery<=1e-9){depleteFlight(s,a,action,task);return}
+ const heldTicks=action.result.heldTicks+1,remainingTicks=action.flight.control.durationTicks-heldTicks;
+ setAction(s,action,{result:{...action.result,heldTicks,remainingTicks}});
+ if(remainingTicks===0)finishFlight(s,a,action);
+}
+function advanceFlight(s,a,action){
+ const task=action.resumeTaskId&&s.tasks.find(t=>t.id===action.resumeTaskId&&t.status==='active'&&t.assignee===a.id);
+ const mode=action.flight.control?.mode;
+ if(mode==='hover'){advanceHover(s,a,action,task);return}
+ const from=Sensors.position(a,s.heightfield),path=action.flight.path,goal=path[0];
+ const distance=Flight.distance(from,goal);
+ if(distance<1e-8){
+  if(path.length===1)finishFlight(s,a,action);
+  else setAction(s,action,{flight:{...action.flight,path:path.slice(1)}});
+  return;
+ }
+ const dz=Math.abs(goal.z-from.z),speed=dz>0?Math.min(a.speed,Flight.verticalSpeed*distance/dz):a.speed;
+ const rate=a.moveEnergyPerUnit??.045,thermalLimit=Thermal.moveLimit(a.thermal,a.thermalState,rate,1e-6);
+ if(thermalLimit<=1e-6){thermalChange(s,a,Thermal.protect(a.thermal,a.thermalState));return}
+ const budget=Math.min(speed,a.battery/rate,thermalLimit,distance);
+ const wanted=budget===distance?goal:Flight.pointAlong(from,goal,budget/distance);
+ const landingColumn=mode==='takeoff'||mode==='land'&&path.length===1;
+ const clear=landingColumn?Flight.clearLandingColumn(s,from,wanted):Flight.clear(s,from,wanted);
+ if(!clear){finishFlight(s,a,action,'movement_blocked');return}
+ if(task)markTaskStarted(s,task,a);
+ const fraction=Flight.bodyFraction(s,a,from,wanted),to=fraction===1?wanted:Flight.pointAlong(from,wanted,fraction);
+ const moved=Flight.distance(from,to),energy=Math.min(a.battery,moved*rate);
+ if(moved>0){
+  riskSegment(s,a,to.x-from.x,to.y-from.y);
+  thermalSpent(s,a,energy);
+  a.flightZ=to.z;
+  if(mode==='takeoff')delete a.landed;
+  setAgentMotion(s,a,{x:to.x,y:to.y,battery:Math.max(0,a.battery-energy),distance:a.distance+moved});
+ }
+ const reached=fraction===1&&budget===distance;
+ const rest=reached?path.slice(1):path;
+ const remainingM=reached&&rest.length===0?0:Math.max(0,action.result.remainingM-moved);
+ setAction(s,action,{flight:{...action.flight,path:rest},result:{
+  position:to,completedM:action.result.completedM+moved,remainingM,
+ }});
+ if(a.battery<=1e-9)depleteFlight(s,a,action,task);
+ else if(fraction<1){
+  incrementWorldCounter(s,'collisionContacts');
+  log(s,`${a.name} 飞行遇到障碍`,'warning',{kind:'collision_contact',agentId:a.id});
+  finishFlight(s,a,action,'collision_blocked');
+ }else if(!rest.length)finishFlight(s,a,action);
+}
+function finishScan(s,a,action){
+ let result,reason;
+ if(action.survey){
+  const traversable=surveyPassable(s,a);
+  if(action.survey.mode==='terrain_scan')result=Survey.scan(s,a,action.survey,worldObstacles(s),traversable);
+  else ({result,reason}=Survey.mark(s,a,action.survey,traversable));
+ }else{
+  const [x,y]=s.part.site,visible=sensorVisible(s,Sensors.position(a,s.heightfield),{x,y,z:1+Elevation.height(s.heightfield,x,y)},a.sensorRange??s.sensorRange);
+  result=visible?{kind:s.asset.condition==='fault'?'anomaly':'normal',position:[x,y],observedTick:s.tick}:{kind:'not_detected',observedTick:s.tick};
+ }
+ setAgentExecution(s,a,{status:'idle'});
+ if(result)setAction(s,action,{result});
+ actionStatus(s,action,reason?'failed':'completed',reason);
+}
 function updateActions(s,physics){for(const action of s.actions.filter(x=>x.status==='accepted')){const a=s.agents.find(x=>x.id===action.agentId);if(a.disabled){if(ownedSettleTravel(s,action,a))continue;setAgentExecution(s,a,{route:[]});actionStatus(s,action,'failed','agent_unavailable');continue}if(a.roadblockWait)continue;if(action.type==='execute_task'||action.type==='work_task')continue;
+ if(action.flight){advanceFlight(s,a,action);continue}
  if(action.type==='charge'){
   if(action.phase==='travel'){
    if(Math.hypot(a.x-s.chargingStation[0],a.y-s.chargingStation[1])<=3&&Nav.clearSegment([a.x,a.y],s.chargingStation,worldObstacles(s),0,s.worldSize??100))setAgentExecution(s,a,{route:[]});
@@ -907,17 +1145,30 @@ function updateActions(s,physics){for(const action of s.actions.filter(x=>x.stat
   continue;
  }
  if(action.type==='rescue'){if(ownedStationaryTick(s,action,a,physics))continue;const target=s.agents.find(t=>t.id===action.targetAgentId),reason=Rescue.reason(s,a,action,target&&taskReachable(s,a,{target:[target.x,target.y]}));if(reason){setAgentExecution(s,a,{status:'idle',route:[]});actionStatus(s,action,'failed',reason);continue}if(!thermalWork(s,a))continue;const energy=Math.min(a.battery,a.workEnergyPerTick??.08);thermalSpent(s,a,energy);setAgentMotion(s,a,{battery:Math.max(0,a.battery-energy)});setAction(s,action,{progress:action.progress+1});if(a.battery<=0){setAgentExecution(s,a,{disabled:true,status:'fault',route:[]});actionStatus(s,action,'failed','energy_depleted');log(s,`${a.name} 救援时电量耗尽`,'warning',{kind:'energy_depleted',agentId:a.id,actionId:action.requestId})}else if(action.progress>=a.rescue.workTicks){setAgentExecution(s,target,{disabled:false,status:target.relayState?.deployed?'deployed':'idle',route:[],work:0});setAgentExecution(s,a,{status:'idle'});log(s,`${a.name} 完成对 ${target.name} 的现场救援`,'success',{kind:'rescue_completed',agentId:a.id,requestId:action.requestId,targetAgentId:target.id,faultSeq:action.faultSeq,faultGeneration:action.faultGeneration,workTicks:a.rescue.workTicks,position:[target.x,target.y],battery:target.battery});actionStatus(s,action,'completed')}continue}
- if(action.type==='scan'){if(ownedStationaryTick(s,action,a,physics))continue;if(!thermalWork(s,a))continue;const rules=taskRuleProviders.get(s),effect=rules?nativeStationaryTick(s,action,a,rules):null;if(!rules){thermalSpent(s,a,Math.min(a.battery,a.workEnergyPerTick??.08));setAgentMotion(s,a,{battery:Math.max(0,a.battery-(a.workEnergyPerTick??.08))});setAction(s,action,{progress:action.progress+1})}if(rules?effect==='energy_depleted':a.battery<=0){setAgentExecution(s,a,{disabled:true,status:'fault'});actionStatus(s,action,'failed','energy_depleted');log(s,`${a.name} 扫描时电量耗尽`,'warning',{kind:'energy_depleted',agentId:a.id,actionId:action.requestId})}else if(rules?effect==='completed':action.progress>=3){const [x,y]=s.part.site,visible=sensorVisible(s,Sensors.position(a,s.heightfield),{x,y,z:1+Elevation.height(s.heightfield,x,y)},a.sensorRange??s.sensorRange);setAction(s,action,{result:visible?{kind:s.asset.condition==='fault'?'anomaly':'normal',position:[x,y],observedTick:s.tick}:{kind:'not_detected',observedTick:s.tick}});setAgentExecution(s,a,{status:'idle'});actionStatus(s,action,'completed')}continue}
+ if(action.type==='scan'){if(ownedStationaryTick(s,action,a,physics))continue;if(!thermalWork(s,a))continue;const rules=taskRuleProviders.get(s),effect=rules?nativeStationaryTick(s,action,a,rules):null;if(!rules){thermalSpent(s,a,Math.min(a.battery,a.workEnergyPerTick??.08));setAgentMotion(s,a,{battery:Math.max(0,a.battery-(a.workEnergyPerTick??.08))});setAction(s,action,{progress:action.progress+1})}if(rules?effect==='energy_depleted':a.battery<=0){setAgentExecution(s,a,{disabled:true,status:'fault'});actionStatus(s,action,'failed','energy_depleted');log(s,`${a.name} 扫描时电量耗尽`,'warning',{kind:'energy_depleted',agentId:a.id,actionId:action.requestId})}else if(rules?effect==='completed':action.progress>=3){finishScan(s,a,action)}continue}
  const task=action.resumeTaskId?s.tasks.find(t=>t.id===action.resumeTaskId&&t.status==='active'&&t.assignee===a.id):null,goal=task?taskWaypoint(s,task):null;
+ if(action.direction&&a.route.length){
+  const [x,y]=straightDestination(s,a,[action.target.x,action.target.y]);
+  setAgentExecution(s,a,{route:[[x,y]]});
+ }
  if(physics&&goal&&action.target.x===goal[0]&&action.target.y===goal[1]&&taskReachable(s,a,task))setAgentExecution(s,a,{route:[]});
- if(task)markTaskStarted(s,task,a);moveAlongRoute(s,a,physics,task?.behavior==='deliver');if(a.blockedTicks===10&&(a.collisionReplans||0)<3&&a.route.length)replanAroundAgents(s,a,[action.target.x,action.target.y],!!goal&&action.target.x===goal[0]&&action.target.y===goal[1]);
+ if(task)markTaskStarted(s,task,a);moveAlongRoute(s,a,physics,task?.behavior==='deliver');
+ if(action.direction)setAction(s,action,{result:directionalResult(a,action.direction)});
+ if(!action.direction&&a.blockedTicks===10&&(a.collisionReplans||0)<3&&a.route.length)replanAroundAgents(s,a,[action.target.x,action.target.y],!!goal&&action.target.x===goal[0]&&action.target.y===goal[1]);
  if(ownedSettleTravel(s,action,a))continue;
  if(a.battery<=0){setAgentExecution(s,a,{disabled:true,status:'fault',route:[]});actionStatus(s,action,'failed','energy_depleted');if(task){releaseTaskResource(s,task,a);requeueTask(s,task);setAgentExecution(s,a,{work:0});incrementWorldCounter(s,'replans');}log(s,`${a.name} 电量耗尽${task?'，任务重新分配':''}`,'warning',{kind:'energy_depleted',agentId:a.id,actionId:action.requestId,...(task?{taskId:task.id}:{})})}
- else if(a.blockedTicks>=60){setAgentExecution(s,a,{route:[]});setAgentExecution(s,a,{status:task?'assigned':'idle'});actionStatus(s,action,'failed','collision_blocked')}
- else if(!a.route.length){setAgentExecution(s,a,{status:task?'assigned':'idle'});actionStatus(s,action,'completed')}}}
+ else if(a.blockedTicks>=60||action.direction&&a.collisionActive){setAgentExecution(s,a,{route:[]});setAgentExecution(s,a,{status:task?'assigned':'idle'});actionStatus(s,action,'failed','collision_blocked')}
+ else if(!a.route.length){
+  setAgentExecution(s,a,{status:task?'assigned':'idle'});
+  if(action.direction&&action.result.remainingM>1e-5)actionStatus(s,action,'failed','movement_blocked');
+  else actionStatus(s,action,'completed');
+ }
+}}
 function cancelActions(s){const components=actionLifecycleComponents(s);if(components){const effects=components.binding.store.lifecycle('run',null,...components.args);if(effects.published)return;for(const effect of effects){if(effect.kind==='action_cancelled')logActionStatus(s,s.actions[effect.index],'cancelled','run_ended');else if(effect.kind==='wait_cancelled'){const a=s.agents.find(a=>a.id===effect.agentId);logCancelledWait(s,a,effect.wait)}else throw Error('invalid native run cancellation effect')}return}for(const action of s.actions.filter(x=>x.status==='pending'||x.status==='accepted')){const a=s.agents.find(x=>x.id===action.agentId);if(action.status==='accepted'&&a.status==='manual'){setAgentExecution(s,a,{status:'idle'});setAgentExecution(s,a,{route:[]})}actionStatus(s,action,'cancelled','run_ended')}}
 function applyTaskResource(s,t,a,kind){const store=worldResources.get(s);if(store){store.command(kind,t,a,s.tick);return}if(kind==='load'){s.part.location='carried';s.part.position=null;s.part.carrierId=a.id}else if(kind==='deliver'){s.part.location='site';s.part.position=t.target.slice();s.part.carrierId=null;s.part.reservedBy=null}else if(t.behavior==='detect')s.asset.diagnosis='suspected';else if(t.behavior==='confirm')s.asset.diagnosis='confirmed';else if(t.behavior==='repair'){s.part.location='consumed';s.part.position=null;s.part.reservedBy=null;s.asset.condition='repaired'}else if(t.behavior==='verify')s.asset.condition='operational'}
-function releaseTaskResource(s,t,a){const store=worldResources.get(s);if(store){const result=store.command('abort',t,a,s.tick);if(result.dropped)log(s,'运输中断，备件留在当前位置','warning',{kind:'part_dropped',agentId:a.id,taskId:t.id});if(result.released)setTaskPhase(s,t,null);return}if(t.materialCost)s.materials=Materials.settle(s.materials,t,a.id,t.assignmentId,false);if(s.part.reservedBy!==t.id)return;if(s.part.location==='carried'&&s.part.carrierId===a.id){s.part.location='ground';s.part.position=[a.x,a.y];s.part.carrierId=null;log(s,'运输中断，备件留在当前位置','warning',{kind:'part_dropped',agentId:a.id,taskId:t.id})}s.part.reservedBy=null;setTaskPhase(s,t,null)}
+function releaseTaskResource(s,t,a){const store=worldResources.get(s);if(store){const result=store.command('abort',t,a,s.tick);if(result.dropped)log(s,'运输中断，备件留在当前位置','warning',{kind:'part_dropped',agentId:a.id,taskId:t.id});if(result.released)setTaskPhase(s,t,null);return}if(t.materialCost)s.materials=Materials.settle(s.materials,t,a.id,t.assignmentId,false);if(s.part.reservedBy!==t.id)return;if(s.part.location==='carried'&&s.part.carrierId===a.id){s.part.location='ground';s.part.position=[a.x,a.y];s.part.carrierId=null;log(s,'运输中断，备件留在当前位置','warning',{kind:'part_dropped',agentId:a.id,taskId:t.id})}s.part.reservedBy=null;setTaskPhase(s,t,null);
+ if(t.behavior==='deliver'&&t.operationState&&!Operations.unloaded(t))t.operationState={last:'restart'};
+}
 function settleTaskAction(s,t,a,status,reason){const action=s.actions.find(x=>['execute_task','work_task'].includes(x.type)&&x.taskId===t.id&&x.agentId===a.id&&x.status==='accepted');if(action)actionStatus(s,action,status,reason)}
 function completeTask(s,t,a,completion=null){settleTaskAction(s,t,a,'completed');const resources=worldResources.get(s);if(resources)resources.command('finish',t,a,s.tick);else{const built=t.behavior==='build'?Construction.finish(s.construction,t,a,s.tick):null,materials=t.materialCost?Materials.settle(s.materials,t,a.id,t.assignmentId,true):null;if(built)s.construction=built;if(materials)s.materials=materials}changeTask(s,t,'complete');setAgentExecution(s,a,t.behavior==='deploy'?{relayState:Relay.deploy(a,{...t,status:'active'},s.tick),status:'deployed',work:0}:{status:completion?completion.agentStatus:'idle',work:completion?completion.work:0});log(s,`「${t.name}」完成`,'success',{kind:'task_completed',taskId:t.id,agentId:a.id})}
 function nativeWorkTask(s,t,a,rules){
@@ -961,10 +1212,74 @@ function ownedWorkTask(s,t,a){
  else if(result.effect==='verify')log(s,'复核通过，设备恢复运行','success',{kind:'asset_verified',agentId:a.id,taskId:t.id});
  if(terminalAction)logActionStatus(s,terminalAction,'completed');log(s,`「${t.name}」完成`,'success',{kind:'task_completed',taskId:t.id,agentId:a.id});return true;
 }
+function finishOperation(s,t,a,action){
+ const operation=action.operation,position=operation==='collect_sample'?t.target.slice():[a.x,a.y],assignmentId=t.assignmentId;
+ t.operationState={last:operation,...(operation.startsWith('dock_')?{position,assignmentId,distance:a.distance}:{})};
+ const part=s.part;
+ if(operation==='collect_sample'){
+  log(s,`${a.name} 已完成采样`,'success',{kind:'sample_collected',agentId:a.id,taskId:t.id,position});
+ }else if(operation==='load'){
+  applyTaskResource(s,t,a,'load');
+  setTaskPhase(s,t,'to_site');
+  log(s,`${a.name} 已装载备件`,'info',{kind:'part_loaded',agentId:a.id,taskId:t.id});
+ }else if(operation==='unload'){
+  part.location='ground';part.position=t.target.slice();part.carrierId=null;
+ }else if(operation==='handoff'){
+  applyTaskResource(s,t,a,'deliver');
+  log(s,'备件已送至维修点','success',{kind:'part_delivered',agentId:a.id,taskId:t.id});
+ }else if(operation==='install'){
+  part.location='consumed';part.position=null;
+ }else if(operation==='self_test'){
+  part.reservedBy=null;s.asset.condition='repaired';
+  log(s,'备件已使用，设备完成维修','success',{kind:'asset_repaired',agentId:a.id,taskId:t.id});
+ }
+ const componentState={diagnose:'diagnosed',remove:'removed',install:'installed',self_test:'tested'};
+ const result={operation,assignmentId,position,observedTick:s.tick,
+  ...(operation==='collect_sample'?{sampleId:t.id}:{partId:'spare_part',
+  ...(t.behavior==='deliver'?{partLocation:part.location,partPosition:part.position,quantity:1}:{componentState:componentState[operation]}),
+  ...(operation==='diagnose'?{condition:s.asset.condition,diagnosis:s.asset.diagnosis}:{}),
+  ...(operation==='install'?{consumed:1}:{}),
+  ...(operation==='self_test'?{passed:true}:{})})};
+ setAction(s,action,{result});
+ log(s,`「${t.name}」完成${Operations.labels[operation]}`,'success',{
+  kind:'task_operation_completed',requestId:action.requestId,taskId:t.id,agentId:a.id,assignmentId,operation,
+ });
+ if(operation==='handoff'||operation==='self_test'||operation==='collect_sample')completeTask(s,t,a);
+ else{
+  setAgentExecution(s,a,{status:'assigned',route:[],work:0});
+  actionStatus(s,action,'completed');
+ }
+}
+function advanceTaskOperation(s,t,a,action){
+ const reason=Operations.operationBlock(s,t,a,action.operation);
+ if(reason||!taskReachable(s,a,t)){
+  setAgentExecution(s,a,{status:'assigned',route:[],work:0});
+  actionStatus(s,action,'failed',reason||'out_of_reach');
+  return;
+ }
+ const cost=Math.min(a.battery,a.workEnergyPerTick??.08);
+ thermalSpent(s,a,cost);
+ setAgentMotion(s,a,{battery:a.battery-cost});
+ if(a.battery<=0)return;
+ const progress=action.progress+1;
+ setAction(s,action,{progress});
+ if(progress>=Operations.duration(t,action.operation))finishOperation(s,t,a,action);
+}
+const sampleReportWindowTicks=120;
+function waitingForSampleReports(s){
+ return s.actions.some(action=>{
+  if(action.operation!=='collect_sample'||action.status!=='completed')return false;
+  const reports=(s.sampleReports||[]).filter(r=>r.agentId===action.agentId&&r.taskId===action.taskId);
+  return reports.some(r=>r.status==='pending')||
+   (s.tick-action.updatedTick<sampleReportWindowTicks&&!reports.some(r=>r.status==='delivered'));
+ });
+}
 function workTask(s,t,a){
  if(ownedWorkTask(s,t,a))return;
  if(!thermalWork(s,a))return;
  const rules=taskRuleProviders.get(s);if(rules){const before=a.battery;nativeWorkTask(s,t,a,rules);thermalSpent(s,a,before-a.battery);return}
+ const action=s.executionMode==='primitive'&&s.actions.find(row=>row.operation&&row.status==='accepted'&&row.taskId===t.id&&row.agentId===a.id);
+ if(action){advanceTaskOperation(s,t,a,action);return}
  if(t.behavior==='deliver'){
   if(t.phase==='to_pickup')setTaskPhase(s,t,'loading');
   if(t.phase==='loading'){setAgentExecution(s,a,{work:a.work+1});thermalSpent(s,a,Math.min(a.battery,a.workEnergyPerTick??.08));setAgentMotion(s,a,{battery:Math.max(0,a.battery-(a.workEnergyPerTick??.08))});if(a.battery<=0)return;if(a.work>=4){const route=routeBetween(s,a,t.target,3.7);if(!route){if(s.roadblocks?.length){startRoadblockWait(s,a,t.target,s.roadblocks[0].id,'loading');return}settleTaskAction(s,t,a,'failed','unreachable_target');releaseTaskResource(s,t,a);setAgentExecution(s,a,{status:'idle'});setAgentExecution(s,a,{work:0});requeueTask(s,t);finishWorld(s,true);log(s,'备件到维修点的路径不可达','warning',{kind:'run_failed',reason:'unreachable_target',agentId:a.id,taskId:t.id});return}applyTaskResource(s,t,a,'load');setAgentExecution(s,a,{work:0});setTaskPhase(s,t,'to_site');setAgentExecution(s,a,{route:route});log(s,`${a.name} 已装载备件`,'info',{kind:'part_loaded',agentId:a.id,taskId:t.id})}return}
@@ -1008,9 +1323,9 @@ function step(s,physics=null){
   let candidateIds=new Set();if(!allDone&&!busy){readyTasks=s.tasks.filter(t=>ready(s,t));for(const t of readyTasks)if(dispatchObservation(s,t).candidates.length){candidateIds.add(t.id);break}if(!candidateIds.size)recoverable=chargeRecoveryCandidates(s,readyTasks)}
   const rules=taskRuleProviders.get(s);
   if(rules){const readyIds=new Set(readyTasks.map(t=>t.id)),input={tasks:s.tasks.map(t=>({status:t.status,ready:readyIds.has(t.id),hasCandidate:candidateIds.has(t.id)})),actionStatuses:s.actions.map(a=>a.status),hasRecoverableAgent:recoverable.length>0,hasRoadblock:!!s.roadblocks?.length};outcome=rules.termination(input);if(!['completed','continue','wait_charge','wait_roadblock','failed'].includes(outcome))throw Error('invalid native termination result')}
-  else outcome=allDone?'completed':busy||candidateIds.size?'continue':recoverable.length?'wait_charge':s.roadblocks?.length?'wait_roadblock':'failed';
+  else outcome=allDone?(waitingForSampleReports(s)?'continue':'completed'):busy||candidateIds.size?'continue':recoverable.length?'wait_charge':s.roadblocks?.length?'wait_roadblock':'failed';
  }
- if(outcome==='failed'&&rescueRecoveryPossible(s,readyTasks))outcome='continue';
+ if(outcome==='failed'&&(rescueRecoveryPossible(s,readyTasks)||flightRecoveryPossible(s,readyTasks)))outcome='continue';
  if(outcome==='completed'){finishWorld(s);log(s,'任务链完成，实验结束','success',{kind:'run_completed'})}
  else if(outcome==='wait_charge'){const agentIds=recoverable.map(a=>a.id),control=worldControls.get(s);if(control){if(control.recover(agentIds,s))log(s,'等待低电量设备提交补能动作','warning',{kind:'charge_recovery_wait_started',agentIds})}else if(!s.chargeRecovery){s.chargeRecovery={startedTick:s.tick,agentIds};log(s,'等待低电量设备提交补能动作','warning',{kind:'charge_recovery_wait_started',agentIds})}else s.chargeRecovery.agentIds=agentIds}
  else if(outcome==='failed'){finishWorld(s,true);const blocked=readyTasks[0];const reason=blocked?taskPrecondition(s,blocked):null;log(s,'没有可执行的任务或可用设备，任务链无法继续','warning',{kind:'run_failed',...(reason?{reason}:{}),...(blocked?{taskId:blocked.id}:{})})}
@@ -1113,7 +1428,7 @@ function taskMilestones(s){
  return [...records.values()];
 }
 function metrics(s){const operating=Power.metrics(s),enabled=s.agents.filter(a=>a.thermal);return {...(operating?{operatingEnergy:operating}:{}),...(s.agents.some(a=>a.rescue)?{rescue:{configuredDevices:s.agents.filter(a=>a.rescue).length,attempts:s.actions.filter(a=>a.type==='rescue').length,active:s.actions.filter(a=>a.type==='rescue'&&['pending','accepted'].includes(a.status)).length,completed:s.events.filter(e=>e.kind==='rescue_completed').length,failures:s.actions.filter(a=>a.type==='rescue'&&['failed','rejected'].includes(a.status)).length,cancelled:s.actions.filter(a=>a.type==='rescue'&&a.status==='cancelled').length,workTicks:s.actions.filter(a=>a.type==='rescue').reduce((n,a)=>n+(a.progress||0),0)}}:{}),...(s.construction?{construction:{sites:s.construction.sites.length,built:s.construction.sites.filter(v=>v.status==='built').length,pending:s.construction.sites.filter(v=>v.status==='planned').length}}:{}),...(s.materials?{materials:Materials.metrics(s.materials)}:{}),...(enabled.length?{thermal:{devices:enabled.length,protected:enabled.filter(a=>a.thermalState.protected).length,trips:enabled.reduce((n,a)=>n+a.thermalState.trips,0),protectionTicks:enabled.reduce((n,a)=>n+a.thermalState.protectionTicks,0),peakC:Math.max(...enabled.map(a=>a.thermalState.peakC)),limitViolations:enabled.filter(a=>a.thermalState.peakC>a.thermal.limitC+1e-7).length}}:{}),taskMilestones:taskMilestones(s),samplesCollected:s.events.filter(e=>e.kind==='sample_collected').length,peerMessages:peerMessageMetrics(s),boundaryInterventions:s.boundaryMonitoringVersion===1?s.events.filter(e=>e.kind==='boundary_exit_prevented').length:null,footprintBoundaryExits:s.footprintMonitoringVersion===1?s.events.filter(e=>e.kind==='footprint_boundary_exit').length:null,riskZoneEntries:[1,2].includes(s.riskMonitoringVersion)?s.events.filter(e=>e.kind==='risk_zone_entered').length:null,roadblockWaitTicks:s.agents.every(a=>Number.isSafeInteger(a.roadblockWaitTicks))?s.agents.reduce((n,a)=>n+a.roadblockWaitTicks,0):null,faultRecovery:faultRecovery(s),activity:activityMetrics(s),deliveryTravel:deliveryTravelMetrics(s),completed:s.tasks.filter(t=>t.status==='done').length,total:s.tasks.length,deadlineTasks:s.tasks.filter(t=>t.deadline!==undefined).length,deadlineMissed:s.events.filter(e=>e.kind==='deadline_missed').length,ticks:s.tick,replans:s.replans,revokedTasks:(s.revocations||[]).filter(v=>v.status==='accepted').length,proposedTasks:(s.proposals||[]).filter(v=>v.status==='accepted').length,evidenceDelivered:(s.evidenceReports||[]).filter(v=>v.status==='delivered').length,evidenceFailed:(s.evidenceReports||[]).filter(v=>v.status==='failed').length,faults:s.faults,energyDepletions:s.events.filter(e=>e.kind==='energy_depleted').length,relayHops:s.events.filter(e=>e.kind==='message_relayed').length,dispatchSent:s.events.filter(e=>e.kind==='dispatch_sent').length,dispatchFailed:s.events.filter(e=>e.kind==='dispatch_failed').length,dispatchDelivered:s.events.filter(e=>e.kind==='dispatch_delivered').length,reportSent:s.communication.reporting?.sent||0,reportDelivered:s.communication.reporting?.delivered||0,reportFailed:s.communication.reporting?.failed||0,distance:Math.round(s.agents.reduce((n,a)=>n+a.distance,0)),terrainDistance:Math.round(s.agents.reduce((n,a)=>n+(a.terrainDistance||0),0)*100)/100,terrainReplans:s.events.filter(e=>e.kind==='terrain_route_replanned').length,terrainEffectDistance:Math.round(s.agents.reduce((n,a)=>n+(a.terrainEffectDistance||0),0)*100)/100,terrainEffectAgents:new Set(s.events.filter(e=>e.kind==='terrain_effect_exposure').map(e=>e.agentId)).size,energyUsed:Math.round((s.agents.reduce((n,a)=>n+a.initialBattery-a.battery,0)-s.events.filter(e=>e.kind==='low_energy_injected').reduce((n,e)=>n+e.amount,0)+s.actions.filter(a=>a.type==='charge').reduce((n,a)=>n+(a.energyAdded||0),0))*100)/100,energyCharged:Math.round(s.actions.filter(a=>a.type==='charge').reduce((n,a)=>n+(a.energyAdded||0),0)*100)/100,energyInjected:Math.round(s.events.filter(e=>e.kind==='low_energy_injected').reduce((n,e)=>n+e.amount,0)*100)/100,collisionContacts:s.collisionContacts}}
-const api={bindWorldAdvance,bindWorldActionAdvance,bindWorldTaskAdvance,bindWorldCoordinatorObservations,bindWorldAgentObservations,bindWorldTransaction,restoreHostState,bindWorldControl,bindWorldRequests,bindWorldEnvironment,bindWorldPerceptions,bindWorldResources,bindWorldDispatch,withCoordinator,bindWorldReports,bindWorldPeer,bindWorldActions,bindWorldExecution,bindWorldTasks,bindWorldMotion,bindWorldLedger,disposeWorld,bindNavigation,bindRaySensors,bindTaskRules,bindCommunicationRules,footprintCrossing,cancelAction,peerMessageMetrics,injectRoadblock,faultRecovery,scene:SCENE,getScene,validateScene,normalizeScene,withLinkProfile,create,step,setDispatchMode,revokeTask,normalizeSurveyTask,proposeSurvey,fault,injectFault,injectLowEnergy,snapshot,metrics,observe,assign,dispatchObservation,choose,refreshPerceptions,sendMessage,submitEvidence,submitSampleReport,interruptCommunication,injectTerrainEffect,submitAction,coordinatorObservation,submitDecision,submitExternalDecision};
+const api={roverSurveySupported,taskOperationsSupported,describeTaskOperation,directionalMotionSupported,bindWorldAdvance,bindWorldActionAdvance,bindWorldTaskAdvance,bindWorldCoordinatorObservations,bindWorldAgentObservations,bindWorldTransaction,restoreHostState,bindWorldControl,bindWorldRequests,bindWorldEnvironment,bindWorldPerceptions,bindWorldResources,bindWorldDispatch,withCoordinator,bindWorldReports,bindWorldPeer,bindWorldActions,bindWorldExecution,bindWorldTasks,bindWorldMotion,bindWorldLedger,disposeWorld,bindNavigation,bindRaySensors,bindTaskRules,bindCommunicationRules,footprintCrossing,cancelAction,peerMessageMetrics,injectRoadblock,faultRecovery,scene:SCENE,getScene,validateScene,normalizeScene,withLinkProfile,create,step,setDispatchMode,revokeTask,normalizeSurveyTask,proposeSurvey,fault,injectFault,injectLowEnergy,snapshot,metrics,observe,assign,dispatchObservation,choose,refreshPerceptions,sendMessage,submitEvidence,submitSampleReport,interruptCommunication,injectTerrainEffect,submitAction,coordinatorObservation,submitDecision,submitExternalDecision};
 for(const key of ['step','setDispatchMode','revokeTask','proposeSurvey','fault','injectFault','injectLowEnergy','refreshPerceptions','assign','sendMessage','submitEvidence','submitSampleReport','interruptCommunication','injectRoadblock','injectTerrainEffect','submitAction','cancelAction','submitDecision','submitExternalDecision']){const operation=api[key];api[key]=(s,...args)=>{const driver=worldTransactions.get(s);return driver?driver.run(()=>operation(s,...args)):operation(s,...args)}}
 if(typeof module!=='undefined')module.exports=api;else{root.SandboxWorldCore=api;root.SandboxEngine=api;}
 })(typeof globalThis!=='undefined'?globalThis:this);

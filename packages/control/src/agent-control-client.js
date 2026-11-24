@@ -31,7 +31,7 @@ function createHttpAgentClient({baseUrl = 'http://127.0.0.1:8789', sessionId, ag
     return body;
   }
   return Object.freeze({
-    observe: () => request('GET', `/sessions/${session}/observations/${agent}`),
+    observe: ({includeDevice = false} = {}) => request('GET', `/sessions/${session}/observations/${agent}${includeDevice ? '?include=device' : ''}`),
     submitAction: action => request('POST', `/sessions/${session}/agents/${agent}/actions`, action),
     cancelAction: requestId => request('POST', `/sessions/${session}/agents/${agent}/actions/cancel`, {requestId}),
     sendMessage: ({to, text, via, requestId} = {}) => request('POST', `/sessions/${session}/agents/${agent}/messages`, {to, text, ...(via === undefined ? {} : {via}), ...(requestId === undefined ? {} : {requestId})}),

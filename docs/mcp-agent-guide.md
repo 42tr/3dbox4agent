@@ -2,7 +2,7 @@
 
 Control 提供任务级 MCP：外部 Agent 创建运行、观察、分配任务、提交设备动作并分段推进；Console 显示同一运行的三维状态、执行记录、目标验收和回放。
 
-当前交付第一阶段：`industrial-park-v2` 场景、`external` 指挥和 `agent` 执行模式。支持完整场景目标与指定任务集合。OAuth、多个控制者同时操作、自定义目标表达式及 primitive 控制尚未开放。
+任务工具支持 `industrial-park-v2` 场景、`external` 指挥，以及 `agent` 和 `primitive` 两种执行模式。可运行完整场景目标或指定任务集合。OAuth、多个控制者同时操作和自定义目标表达式尚未开放。
 
 ## 启动与签发凭据
 
@@ -104,9 +104,70 @@ box_get_capabilities
 
 指定任务集合使用 `type: "all_tasks_done"` 和 `task_ids`。场景任务为 `inspect → confirm → deliver → repair → verify`；World 仍校验前置依赖。不能通过省略依赖跳过执行。目标创建后固定，Agent 的“已完成”摘要不会让目标通过验收。
 
-分配任务后还需要向所选设备提交 `execute_task`。动作使用自己的 `requestId`、`targetTick` 和 `expiresTick`；通常选择观察到的 tick 加一作为开始 tick。World 会进一步检查设备状态、任务归属和执行模式。
+在 `agent` 模式下，分配任务后向设备提交 `execute_task`。在 `primitive` 模式下，先把设备移动到作业范围，再提交 `work_task`。动作使用自己的 `requestId`、`targetTick` 和 `expiresTick`，通常选择观察到的 tick 加一作为开始 tick。World 会进一步检查设备状态、任务归属和执行模式。
 
 `box_advance` 每次最多 100 tick，按固定步长推进；墙钟预算为两秒，在单步边界停止，因此单个上游请求较慢时可能超过两秒。它返回实际执行步数、最新 revision 和停止原因。推进下一段使用新的 request ID；重试未确认的同一段必须保留原 ID 和参数。达到事件停止条件或某段结束，不等于整个运行已完成。
+
+## 设备参数与定向移动
+
+调用 `box_observe` 时传入 `view: "agent"`、`agent_id` 和 `include_device: true`，即可读取 `observation.device`。它按同一仿真步返回设备参数、位置、电量、任务、可用动作、有限范围内的观测和本机动作记录。每条周边观测附带来源和观测步。协调器视图可用同一选项读取固定传感器参数和最近收到的读数。
+
+Console 的「设备操作」面板也可提交方位角与距离，并在动作记录里查看实际移动距离。
+
+设备 HTTP 客户端可以请求 `GET /sessions/{sessionId}/observations/{agentId}?include=device`。Python SDK 提供 `device_snapshot()`、`action_status(request_id)` 和 `move_direction(request_id, bearing_deg, distance_m, target_tick, expires_tick)`。
+
+在 JavaScript 运动学仿真中，可通过 `box_submit_action` 发送以下动作。先查询 `availableActions`，使用设备当时提供的距离范围。
+
+```json
+{"requestId":"move-east","type":"move","direction":{"bearingDeg":90,"distanceM":5},"targetTick":1,"expiresTick":21}
+```
+
+方位角以正北为 0°，顺时针增加，正东为 90°。定向动作以提交时的位置为起点，执行前发现位置变化会返回 `pose_changed`。障碍、通行边界和其他设备会限制直线移动，结果返回 `position`、`completedM` 和 `remainingM`。`pose.courseDeg` 是有水平位移时根据相邻快照计算的行进方位。
+
+### 勘察车地形扫描与采样
+
+在使用 JavaScript 任务后端的 World 会话中，空闲勘察车可提交 `type: "scan"` 和 `survey: {"mode":"terrain_scan","bearingDeg":90,"radiusM":12}`。半径最小 2 米，最大值取设备感知范围与 30 米中的较小值。仿真在指定方位左右各 30° 的扇区沿五条射线测量。动作完成后，`result.points` 返回无遮挡观测点的坐标、高程、坡度与相对扫描起点的直线通行判定。
+
+提交 `type: "scan"` 和 `survey: {"mode":"mark_access_point","scanRequestId":"scan-1","pointIndex":0}`，可标记本机一次扫描中的通行点。索引从 0 开始。动作完成时会从当前位置重新检查点是否仍在扫描范围内，以及直线路线能否通行。标记坐标保存在该动作的 `result.position`，随后可作为移动目标或通过设备消息共享。
+
+在 `primitive` 模式下，给勘察车分配 `sample` 任务后，先移动至观察返回的作业接近点，再提交 `type: "work_task"`、`operation: "collect_sample"` 与所分配的 `taskId`。采样所需步数来自任务配置。设备观察中的 `device.samples` 返回本机样本及位置，`device.sampleStorage` 返回 4 个槽位的使用情况。报告送达后样本仍占用槽位。
+
+设备级 MCP 的 `submit_action` 可提交扫描、标记和采样，`observe_agent` 配合 `include_device: true` 可读取结果，`report_sample` 会将本机样本对应的任务 ID 交给模拟通信链路。`sampleReports` 显示提交、送达及失败状态。最近一次显式采样完成后，若任务链已经完成，仿真保留 120 步供设备上报，并让已提交的报告继续处理至终态。任务运行级 MCP 仍使用园区场景。可在 Console 选择 `lunar-heightfield-v1` 或 `lunar-materials-v1` 验证完整流程，Python SDK 则提供 `scan_terrain()`、`mark_access_point()`、`work_task(operation="collect_sample")` 与 `report_sample()`。
+
+### 无人机升降与三维航点
+
+JavaScript 运动学后端为飞行设备提供 `ascend`、`descend` 和 `move_to_3d`。在 Console 的「设备操作」中，垂直飞行表单接收升降距离，「移动目标」中的 Z 字段接收相对场景基准面的高度。
+
+- `type: "move", vertical: {deltaM: 5}` 上升 5 米。下降使用负数，单次距离为 0.5–20 米。可用范围会随当前位置的地面高度和飞机当前高度变化。
+- `type: "move", target: {x: 112, y: 70, z: 21}` 飞往三维航点。航线检查离地 2–35 米的飞行范围、建筑和地形净空，必要时尝试绕行或改变巡航高度。
+- `type: "move", target: {x: 112, y: 70}` 在当前高度进行平面导航。
+
+仍需填写 `requestId`、`targetTick` 和 `expiresTick`。动作进度包含当前位置的 Z、已飞距离和剩余航程。取消后设备停在最后一次已提交的位置和高度，观测、机载相机及回放使用同一个高度。Python SDK 提供 `change_altitude()` 和 `move_to_3d()`。
+
+### 无人机起飞、着陆和定时悬停
+
+在 Console 的「设备操作」中使用「起降与悬停」，也可在 `box_submit_action` 的 `type: "move"` 动作中传入 `flightControl`。
+
+| 操作 | 参数 |
+| --- | --- |
+| 起飞 | `{mode: "takeoff", heightM: 8}` 从当前位置垂直起飞，目标离地高度为 3–15 米，默认 8 米。 |
+| 着陆 | `{mode: "land", x: 112, y: 70}` 飞到落点后垂直下降。落点须在陆地、无障碍且坡度最多 12°。 |
+| 悬停 | `{mode: "hover", durationTicks: 5}` 保持位置和高度 1–60 个仿真步。动作结果返回 `heldTicks` 和 `remainingTicks`。 |
+
+默认内置场景中的无人机以空中状态开始。触地后，设备快照中的 `status.flightState` 会显示为 `landed`，`pose.z` 继续使用机体中心的高度。低空取消着陆后，可以重新着陆或起飞。Python SDK 提供 `takeoff()`、`land()` 和 `hover()`。三项动作支持 JavaScript 运动学后端。
+
+## 运输和维修分步工序
+
+创建 MCP 运行时设置 `config.execution_mode: "primitive"`，或在 Console 的世界设置中选择「单体分步执行」。JavaScript 任务后端会在设备观察的 `assignedTasks[].workOperation` 中返回下一道工序、执行步数和当前阻塞原因。
+
+| 任务 | 工序顺序 |
+| --- | --- |
+| 运输 | `dock_pickup` 取货对接 → `load` 装货 → 移动到工位 → `dock_delivery` 卸货对接 → `unload` 卸货 → `handoff` 交接 |
+| 维修 | `diagnose` 现场诊断 → `remove` 拆卸 → `install` 安装备件 → `self_test` 维修自检 |
+
+例如在作业范围内提交 `{"type":"work_task","taskId":"deliver","operation":"load","requestId":"load-1","targetTick":51,"expiresTick":71}`。Python SDK 的 `work_task()` 接受 `operation=`，Console 会在设备卡和「已分配任务」显示当前工序入口。
+
+卸货把备件放到工位，交接后维修任务才满足依赖。安装消耗一件任务备件，自检通过后维修任务才完成，可继续独立复核。任务撤回时，运输中的备件留在车辆当前位置。已经卸下或安装的备件保留实际状态，重新分配后分别接续交接或自检。同一个请求 ID 和参数重试会返回原动作记录。
 
 ## Console 观察与操作
 

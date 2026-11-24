@@ -124,10 +124,12 @@ pub fn validate(value: &Value, schema: &Value) -> Result<()> {
             let n = value.as_f64().context("invalid_arguments")?;
             ensure!(
                 n >= schema["minimum"].as_f64().unwrap_or(0.0)
-                    && n <= schema["maximum"].as_f64().unwrap_or(9007199254740991.0),
+                    && n <= schema["maximum"].as_f64().unwrap_or(9007199254740991.0)
+                    && schema["exclusiveMaximum"].as_f64().is_none_or(|max| n < max),
                 "invalid_arguments"
             )
         }
+        Some("boolean") => ensure!(value.is_boolean(), "invalid_arguments"),
         Some("array") => {
             let a = value.as_array().context("invalid_arguments")?;
             ensure!(
@@ -276,7 +278,7 @@ impl RunService {
         )
     }
     pub fn capabilities(&self, p: &Principal) -> Value {
-        json!({"version":1,"scenes":[scene()],"execution_modes":["agent"],"dispatch_modes":["external"],"objectives":["all_tasks_done","scene_completed"],"limits":{"max_ticks_per_call":100,"max_wall_ms_per_call":2000,"max_ticks":10000},"permissions":p.scopes,"tools":tool_definitions(),"workflow":"create_run → observe(coordinator) → assign_task → submit_action(execute_task) → advance → repeat until get_run.status is terminal. Agent thinking does not advance simulation."})
+        json!({"version":1,"scenes":[scene()],"execution_modes":["agent","primitive"],"dispatch_modes":["external"],"objectives":["all_tasks_done","scene_completed"],"limits":{"max_ticks_per_call":100,"max_wall_ms_per_call":2000,"max_ticks":10000},"permissions":p.scopes,"tools":tool_definitions(),"workflow":"create_run → observe(coordinator) → assign_task → submit_action → advance → repeat until get_run.status is terminal. Agent thinking does not advance simulation."})
     }
     async fn world(
         &self,
@@ -444,16 +446,17 @@ impl RunService {
                 let _guard = self.lock(&id).lock_owned().await;
                 let r = self.authorized(p, &id)?;
                 ensure!(!terminal(&r), "run_not_writable");
+                let include = if input["include_device"] == true { "?include=device" } else { "" };
                 let v = if input["view"] == "agent" {
                     let agent = field(&input, "agent_id")?;
                     self.check_agent(p, &r, agent)?;
                     let token = self.credential(&id, Some(agent)).await?;
-                    self.session_request(&r, "GET", &format!("/observations/{agent}"), &token, None)
+                    self.session_request(&r, "GET", &format!("/observations/{agent}{include}"), &token, None)
                         .await?
                 } else {
                     ensure!(p.operator || p.scopes["coordinator"] == true, "forbidden");
                     let token = self.credential(&id, None).await?;
-                    self.session_request(&r, "GET", "/coordinator/observation", &token, None)
+                    self.session_request(&r, "GET", &format!("/coordinator/observation{include}"), &token, None)
                         .await?
                 };
                 self.store.edit(
@@ -606,7 +609,7 @@ impl RunService {
         let r = self.store.run(id)?;
         if r["session"].is_null() {
             let c = &r["config"];
-            let v=self.world("POST","/sessions",None,Some(json!({"creationKey":r["creation_key"],"sceneId":r["scene_id"],"seed":c["seed"],"physicsMode":c["physics_mode"],"executionMode":"agent","dispatchMode":"external"}))).await?;
+            let v=self.world("POST","/sessions",None,Some(json!({"creationKey":r["creation_key"],"sceneId":r["scene_id"],"seed":c["seed"],"physicsMode":c["physics_mode"],"executionMode":c["execution_mode"],"dispatchMode":"external"}))).await?;
             self.store.edit(
                 id,
                 |r| {

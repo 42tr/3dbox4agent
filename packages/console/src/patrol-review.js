@@ -3,7 +3,7 @@
 'use strict';
 function summarize(world, selected='global'){
  const reports=world.evidenceReports||[],names=new Map(world.agents.map(a=>[a.id,a.name]));
- const scans=world.actions.filter(a=>a.type==='scan'&&a.status==='completed'&&a.result&&(selected==='global'||a.agentId===selected)).map(a=>({
+ const scans=world.actions.filter(a=>a.type==='scan'&&!a.survey&&a.status==='completed'&&a.result&&(selected==='global'||a.agentId===selected)).map(a=>({
   agentId:a.agentId,agentName:names.get(a.agentId)||a.agentId,requestId:a.requestId,
   tick:a.result.observedTick,kind:a.result.kind,position:a.result.position||null,
   reports:reports.filter(r=>r.agentId===a.agentId&&r.scanRequestId===a.requestId).map(r=>({status:r.status,reason:r.reason||null,submittedTick:r.submittedTick,appliedTick:r.appliedTick??null}))

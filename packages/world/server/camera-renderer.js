@@ -48,7 +48,7 @@ function projection(agent, camera, options = {}) {
   const pitch = Number.isFinite(options.pitch) ? options.pitch : camera.pitch;
   const fov = Number.isFinite(options.fov) ? clamp(options.fov, 30, 120) : camera.fov;
   const air = (agent.mobility ?? (agent.role === 'drone' ? 'air' : 'ground')) === 'air';
-  const baseHeight = air ? 16 : 1.5;
+  const baseHeight = air ? (agent.flightZ ?? 16) : 1.5;
   const mount = camera.mount;
   const origin = {x: agent.x + mount[0], y: agent.y + mount[2], z: baseHeight + mount[1]};
   const angle = yaw * Math.PI / 180;
@@ -128,7 +128,7 @@ function renderCameraFrame(world, agent, options = {}) {
   const agentMarkup = [];
   for (const other of agents) {
     if (other.id === agent.id || !visibleInCamera(other, agent, pose, camera.range)) continue;
-    const heightAt = (other.mobility ?? (other.role === 'drone' ? 'air' : 'ground')) === 'air' ? 16 : 1.5;
+    const heightAt = (other.mobility ?? (other.role === 'drone' ? 'air' : 'ground')) === 'air' ? (other.flightZ ?? 16) : 1.5;
     const point = projectPoint({x: other.x, y: other.y, z: heightAt}, pose, width, height);
     if (!point) continue;
     const color = other.disabled ? '#d67875' : other.status === 'working' ? '#88d3be' : '#bbc7e5';
