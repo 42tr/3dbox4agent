@@ -177,9 +177,8 @@
 .mc-settings-advanced[open] summary svg { transform: rotate(90deg); }
 .mc-settings-advanced-meta { margin-left: auto; color: #b3c0d4; font-size: 12px; font-weight: 400; }
 .mc-settings-advanced fieldset { margin: 4px 0 14px; }
-.mc-settings-advanced fieldset + fieldset, .mc-settings-advanced .mc-settings-offline { margin-top: 16px; }
+.mc-settings-advanced fieldset + fieldset { margin-top: 16px; }
 .mc-settings-advanced legend { margin: 0 0 8px; padding: 0; color: #d8dfeb; font-size: 12px; font-weight: 600; }
-.mc-settings-advanced .mc-settings-offline { margin-bottom: 14px; }
 .mc-settings-apply {
   flex: none;
   padding: 12px 22px 14px;

@@ -34,7 +34,15 @@ mod world_route;
 #[derive(Clone, Deserialize)]
 struct Block { id: Option<String>, x: f32, y: f32, w: f32, h: f32, height: f32 }
 #[derive(Clone, Deserialize)]
-struct Agent { id: String, x: f64, y: f64, role: String, mobility: Option<String> }
+struct Agent {
+    id: String,
+    x: f64,
+    y: f64,
+    role: String,
+    mobility: Option<String>,
+    #[serde(rename="flightZ")]
+    flight_z: Option<f64>,
+}
 #[derive(Clone, Deserialize)]
 struct State { #[serde(default="default_world_size",rename="worldSize")] world_size:f64, #[serde(default,rename="surfaceDomain",deserialize_with="surface_domain::present")] surface_domain:Option<surface_domain::Profile>, obstacles: Vec<Block>, agents: Vec<Agent>, #[serde(default)] roadblocks: Vec<Block>, #[serde(default,deserialize_with="heightfield::present")] heightfield:Option<heightfield::Heightfield> }
 
@@ -119,13 +127,16 @@ impl PhysicsWorld {
         }
         if let Some(p)=&world.surface_domain{for water_forbidden in [false,true]{for r in p.partition(!water_forbidden).into_iter().chain(surface_domain::world_bounds()){let h=world.colliders.insert(ColliderBuilder::cuboid(r.w as f32/2.0,2.0,r.h as f32/2.0).translation(vector![(r.x+r.w/2.0)as f32,1.0,(r.y+r.h/2.0)as f32]).build());world.domain_colliders.insert(h,water_forbidden);}}}
         for a in &state.agents {
-            if a.id.is_empty() || ![a.x,a.y].iter().all(|x|x.is_finite() && x.abs()<1.0e6) { return Err(Error::from_reason("invalid agent")); }
+            if a.id.is_empty() || ![a.x,a.y].iter().all(|x|x.is_finite() && x.abs()<1.0e6)
+                || a.flight_z.is_some_and(|z| !z.is_finite() || z.abs()>=1.0e6) {
+                return Err(Error::from_reason("invalid agent"));
+            }
             let mobility=a.mobility.as_deref().unwrap_or(if a.role=="drone"{"air"}else{"ground"});
             if !["air","ground","water"].contains(&mobility)||mobility=="water"&&world.surface_domain.is_none(){return Err(Error::from_reason("invalid surface mobility"))}
             if let Some(p)=&world.surface_domain{if !p.body_free(mobility,[a.x,a.y],0.8)?{return Err(Error::from_reason("agent outside surface domain"))}}
             let air=mobility=="air";if mobility=="water"{world.water.insert(a.id.clone());}
             if air{world.air.insert(a.id.clone());}
-            let elevation=if air{16.0}else{world.heightfield.as_ref().map_or(1.0,|h|h.proxy_height(a.x as f32 as f64,a.y as f32 as f64)as f32)};
+            let elevation=if air{a.flight_z.unwrap_or(16.0) as f32}else{world.heightfield.as_ref().map_or(1.0,|h|h.proxy_height(a.x as f32 as f64,a.y as f32 as f64)as f32)};
             let handle = world.colliders.insert(ColliderBuilder::ball(0.8).translation(vector![a.x as f32,elevation,a.y as f32]).build());
             if world.agents.insert(a.id.clone(),handle).is_some() { return Err(Error::from_reason("duplicate agent")); }
         }

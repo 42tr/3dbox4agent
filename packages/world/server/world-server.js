@@ -9,7 +9,7 @@ const E=require('../src/world-core');
 const DeviceTelemetry=require('../src/device-telemetry');
 const WorldRuntime=require('../src/world-runtime');
 const ControlApi=require('../src/control-api');
-const Elevation=require('../src/elevation');
+const Sensors=require('../src/sensors');
 const Replay=require('../src/replay');
 const Recording=require('../src/recording-context');
 const PublicExperimentAssets=require('./public-experiment-assets');
@@ -250,15 +250,21 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
    if(req.method==='POST'&&parts.length===5&&parts[2]==='agents'&&parts[4]==='lidar'){
     if(identity.role!=='admin'&&(identity.role!=='agent'||identity.agent!==parts[3]))return json(res,403,{error:'forbidden'});
     const input=await body(req);if(!stillAuthorized())return json(res,401,{error:'unauthorized'});
-    const agent=session.world.agents.find(a=>a.id===parts[3]);if(!agent)return json(res,404,{error:'agent_not_found'});
+    const world=session.world;
+    const agent=world.agents.find(a=>a.id===parts[3]);if(!agent)return json(res,404,{error:'agent_not_found'});
     if(agent.disabled)return json(res,409,{error:'agent_unavailable'});
-    if(!session.physics||typeof session.physics.lidar!=='function')return json(res,409,{error:'lidar_backend_unavailable'});
-    const count=input?.count??36,limit=Math.min(agent.sensorRange??session.world.sensorRange,1000),range=input?.range??Math.min(limit,30);
+    if(physicsBackend!=='rust')return json(res,409,{error:'lidar_backend_unavailable'});
+    const count=input?.count??36,limit=Math.min(agent.sensorRange??world.sensorRange,1000),range=input?.range??Math.min(limit,30);
     if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['count','range'].includes(k))||!Number.isInteger(count)||count<4||count>72||!Number.isFinite(range)||range<=0||range>limit)return json(res,400,{error:'invalid_lidar_parameters'});
-    const air=(agent.mobility??(agent.role==='drone'?'air':'ground'))==='air',height=air?16:1.5+Elevation.height(session.world.heightfield,agent.x,agent.y);
-    session.physics.syncRoadblocks(session.world.roadblocks||[]);
-    const distances=session.physics.lidar(agent,height,count,range);
-    return json(res,200,{version:1,agentId:agent.id,tick:session.world.tick,worldRevision:session.revision,origin:{x:agent.x,y:agent.y,z:height},maxRange:range,distances});
+    const {worldSize,obstacles,agents,roadblocks,heightfield,surfaceDomain}=world;
+    const origin=Sensors.position(agent,heightfield);
+    // A kinematic session only needs colliders while answering this scan.
+    const physics=session.physics??Physics.createPhysics({worldSize,obstacles,agents,roadblocks,heightfield,surfaceDomain});
+    try{
+     if(session.physics)physics.syncRoadblocks(roadblocks||[]);
+     const distances=physics.lidar(agent,origin.z,count,range);
+     return json(res,200,{version:1,agentId:agent.id,tick:world.tick,worldRevision:session.revision,origin,maxRange:range,distances});
+    }finally{if(!session.physics)physics.free()}
    }
    if(req.method==='GET'&&parts.length===5&&parts[2]==='agents'&&parts[4]==='camera'){
     if(identity.role!=='admin'&&identity.role!=='observer'&&(identity.role!=='agent'||identity.agent!==parts[3]))return json(res,403,{error:'forbidden'});

@@ -43,16 +43,14 @@ export function WorldSettingControls({context,standalone,runtimeControls,edit,su
   },[]);
   if (!context) return null;
 
-  const {key,current,values,rays} = context;
+  const {key,current,values} = context;
   const block = settingsBlock(context,'edit');
   const disabled = !!block || pending !== null;
   const invalid = validateSettings(context);
   const dispatchChanged = values.dispatchMode !== current.dispatchMode;
   const dispatchBlock = settingsBlock(context,'dispatch');
   const seedError = invalid === 'invalid_seed' && !block;
-  const advancedOverrides = advancedFields.filter(field => values[field] !== defaultWorldSettings[field]).length
-    + (context.server ? Number(values.physicsMode !== defaultWorldSettings.physicsMode)
-      + Number(values.sensorMode !== defaultWorldSettings.sensorMode) : 0);
+  const advancedOverrides = advancedFields.filter(field => values[field] !== defaultWorldSettings[field]).length;
   const validation = invalid && !block ? settingsMessage(invalid) : '';
   const status = feedback?.message || context.notice || (context.busy ? '正在处理世界操作…' : '');
 
@@ -79,12 +77,9 @@ export function WorldSettingControls({context,standalone,runtimeControls,edit,su
   }
 
   function field(id:SettingSelect,title:string) {
-    const rayError = id === 'sensorMode' && invalid === 'ray_requires_rapier' && !block;
     return <label>{title}
-      <select name={id} value={values[id]} onChange={event => change(id,event.target.value)}
-        aria-invalid={rayError || undefined} aria-describedby={rayError ? 'world-settings-validation' : undefined}>
-        {settingsOptions[id].map(([value,name]) => <option key={value} value={value}
-          disabled={id === 'sensorMode' && value === 'rapier' && !rays}>{name}</option>)}
+      <select name={id} value={values[id]} onChange={event => change(id,event.target.value)}>
+        {settingsOptions[id].map(([value,name]) => <option key={value} value={value}>{name}</option>)}
       </select>
     </label>;
   }
@@ -150,7 +145,7 @@ export function WorldSettingControls({context,standalone,runtimeControls,edit,su
               <CaretRight size={14} aria-hidden="true"/>
               <span>高级设置</span>
               <span className="mc-settings-advanced-meta">
-                {advancedOverrides ? advancedOverrides + ' 项非默认' : '分配、导航、通信与物理'}
+                {advancedOverrides ? advancedOverrides + ' 项非默认' : '分配、导航与通信'}
               </span>
             </summary>
             <fieldset disabled={disabled}>
@@ -172,15 +167,6 @@ export function WorldSettingControls({context,standalone,runtimeControls,edit,su
                 指令延迟 12 步，有效期 40 步。状态每 10 步上报，有效期 60 步。丢包率沿用场景配置。
               </p>}
             </fieldset>
-            {context.server ? <fieldset disabled={disabled}>
-              <legend>服务端仿真</legend>
-              <div className="mc-settings-grid">
-                {field('physicsMode','服务仿真')}
-                {field('sensorMode','服务端感知')}
-              </div>
-            </fieldset> : <p className="mc-settings-note mc-settings-offline">
-              当前使用浏览器运动学预览。从本机世界服务地址访问，可配置服务端碰撞与感知。
-            </p>}
           </details>
         </div>
       </div>

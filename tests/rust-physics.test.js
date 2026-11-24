@@ -21,6 +21,15 @@ const E=require('../src/engine'),P=require('../server/rust-physics'),{createServ
   assert.throws(()=>p.move(state.agents[0],1,0),/diverged/);
  }finally{p.free();q.free()}
  assert.throws(()=>p.move(state.agents[0],1,0),/closed/);
+ const elevated={obstacles:[],agents:[
+  {id:'scanner',role:'drone',x:1,y:4,flightZ:8},
+  {id:'target',role:'drone',x:4,y:4,flightZ:8},
+ ]};
+ const sensing=P.createPhysics(elevated);
+ try {
+  const east=sensing.lidar(elevated.agents[0],8,4,10)[0];
+  assert(Math.abs(east-2.2)<.001,'a scan at the current altitude should hit the other drone');
+ }finally{sensing.free()}
  function run(seed,fault){const s=E.create(seed,'nearest',E.scene,{physicsMode:'rapier'}),sim=P.createPhysics(s);let faulted=false;
   try{while(!s.done&&s.tick<1000){if(fault&&!faulted&&s.part.location==='carried'){assert(E.fault(s));faulted=true}E.step(s,sim);
    for(let i=0;i<s.agents.length;i++)for(let j=i+1;j<s.agents.length;j++){let a=s.agents[i],b=s.agents[j];if((a.role==='drone')===(b.role==='drone'))assert(Math.hypot(a.x-b.x,a.y-b.y)>1.55,`overlap ${seed}`)}}
@@ -38,6 +47,29 @@ const E=require('../src/engine'),P=require('../server/rust-physics'),{createServ
  denied=await fetch(base+root+'/agents/vehicle-1/lidar',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+at},body:JSON.stringify({range:1000})});assert.equal(denied.status,400);
  const coord=await request(root+'/coordinator/credentials','POST',{},token);denied=await fetch(base+root+'/agents/vehicle-1/lidar',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+coord.coordinatorToken},body:'{}'});assert.equal(denied.status,403);
  const unchanged=await request(root,'GET',undefined,token);assert.equal(unchanged.revision,0);assert.equal(unchanged.world.tick,0);const done=await request(root+'/step','POST',{count:1000},token);assert(done.world.done&&!done.world.failed);assert.equal(done.world.asset.condition,'operational');const history=await request(root+'/history?after=-1','GET',undefined,token);assert.equal(history.frames.at(-1).world.tick,done.world.tick);await request(root,'DELETE',undefined,token);
+
+ const preview=await request('/sessions','POST',{seed:42,dispatchMode:'external'});
+ const previewPath='/sessions/'+preview.sessionId;
+ const dronePath=previewPath+'/agents/drone-1';
+ try {
+  const {agentToken}=await request(dronePath+'/credentials','POST',{},preview.adminToken);
+  await request(dronePath+'/actions','POST',{
+   requestId:'climb-before-scan',type:'move',vertical:{deltaM:4},targetTick:1,expiresTick:20,
+  },agentToken);
+  const before=await request(previewPath+'/step','POST',{count:6},preview.adminToken);
+  assert.equal(before.world.physicsMode,'kinematic');
+  assert.equal(before.world.sensorModel,undefined);
+  const drone=before.world.agents.find(a=>a.id==='drone-1');
+  assert.equal(drone.flightZ,20);
+  const measurement=await request(dronePath+'/lidar','POST',{count:8},agentToken);
+  assert.equal(measurement.distances.length,8);
+  assert.deepEqual(measurement.origin,{x:drone.x,y:drone.y,z:20});
+  assert.equal(measurement.tick,before.world.tick);
+  assert.equal(measurement.worldRevision,before.revision);
+  const after=await request(previewPath,'GET',undefined,preview.adminToken);
+  assert.equal(after.revision,before.revision);
+  assert.deepEqual(after.world,before.world);
+ }finally{await request(previewPath,'DELETE',undefined,preview.adminToken)}
  }finally{await new Promise(r=>server.close(r))}
- console.log('native Rust Rapier collisions, roadblocks, isolation, recovery and server integration passed');
+ console.log('Native Rapier collisions, roadblocks, isolation, recovery, and read-only LiDAR at the current altitude in both movement modes passed');
 })().catch(e=>{console.error(e);process.exitCode=1});
