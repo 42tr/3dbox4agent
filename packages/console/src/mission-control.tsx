@@ -244,6 +244,7 @@ function App(){
  const [viewTools,setViewTools]=useState(false);
  const [assignmentRequest,setAssignmentRequest]=useState<AssignmentRequest|null>(null);
  const ready=s.frames>0,toolsOpen=!!toolRoute,toolTitle=toolRoute?.title??'实验与世界设置';
+ const worldSettingsOpen=toolTitle==='场景与世界设置';
  const stage=useRef<HTMLDivElement>(null),legacy=useRef<HTMLDivElement>(null),dialog=useRef<HTMLDialogElement>(null),feed=useRef<HTMLDivElement>(null);
  const deviceList=useRef<HTMLUListElement>(null);
  const positionedTool=useRef<string|null>(null);
@@ -307,7 +308,11 @@ function App(){
   if((id||section)&&!panel)return;
   body.scrollTop=panel?panel.getBoundingClientRect().top-body.getBoundingClientRect().top+body.scrollTop
    -body.clientTop-(parseFloat(getComputedStyle(panel).scrollMarginTop)||0):0;
-  const focus=panel?.querySelector<HTMLElement>('select:not(:disabled),input:not(:disabled),button:not(:disabled)')
+  const settingsContent=worldSettingsOpen?panel?.querySelector<HTMLElement>('.mc-settings-content'):null;
+  if(settingsContent)settingsContent.scrollTop=0;
+  const focus=(worldSettingsOpen
+   ?panel?.querySelector<HTMLElement>('select[name="scenario"]:not(:disabled), .mc-settings-notice button')
+   :panel?.querySelector<HTMLElement>('select:not(:disabled),input:not(:disabled),button:not(:disabled)'))
    ??panel?.querySelector<HTMLElement>('h2[tabindex],h3[tabindex]')??modal.querySelector<HTMLElement>('.mc-dialog-head button');
   focus?.focus({preventScroll:true});
   positionedTool.current=toolRoute.hash;
@@ -364,6 +369,13 @@ function App(){
  const recentEvents=s.events.slice(-3).reverse();
  const dispatchLabel=({rule:'规则调度',networked:'链路指挥',external:'外部指挥',networked_external:'外部指挥 / 链路',networked_reported:'外部指挥 / 延迟状态'} as Record<string,string>)[s.dispatchMode||'rule']||'任务调度';
  const commandSubmit=(e:React.FormEvent)=>{e.preventDefault();const text=command.trim();if(!text)return;if(['开始','运行','继续'].includes(text)){if(!s.running&&!s.playDisabled)act('play');setResponse('已请求开始运行。')}else if(['暂停','停止'].includes(text)){actions.pause?.();setResponse('已请求暂停世界。')}else if(text==='重置'){if(!s.resetDisabled)act('reset');setResponse('已请求重置。')}else{const a=s.agents.find(a=>a.id===text||a.name===text);if(a){select('view',a.id);setResponse('已切换至 '+a.name+' 的有限观察。')}else setResponse('支持：开始、暂停、重置，或输入设备 ID。更多任务操作请打开实验工具。')}setCommand('')};
+ const connectControl=s.connectAvailable&&<button type="button" className={'mc-pill'+(worldSettingsOpen?'':' violet')}
+  title={worldSettingsOpen&&!s.remoteSession?'使用下次运行设置连接世界服务':undefined}
+  disabled={s.connectDisabled} onClick={()=>act('connect')}>{s.connectLabel||'连接本地世界服务'}</button>;
+ const speedControl=<select id="mission-speed" value={String(s.speed||1)} disabled={s.speedDisabled||s.observer}
+  onChange={event=>select('speed',event.target.value)} title="影响推进速度，固定步长保持不变">
+  <option value="1">1×</option><option value="2">2×</option><option value="5">5×</option>
+ </select>;
  return <div className="mission-control">
   <header className="mc-header">
    <div className="mc-brand"><Planet size={26}/><span>3DBOX</span></div>
@@ -507,7 +519,45 @@ function App(){
     </div>
    </aside>
   </main>
-  <dialog className="mc-tool-dialog" ref={dialog} onCancel={event=>{event.preventDefault();closeTools()}}><div className="mc-dialog-head"><div><SlidersHorizontal size={18}/><strong>{toolTitle}</strong><span>3DBOX WORKSPACE</span></div><IconButton label="关闭实验工具" onClick={closeTools}><X size={20}/></IconButton></div><div className="mc-runner-tools" hidden={toolTitle!=='Runner 实验'}><RunnerPanel active={toolsOpen&&toolTitle==='Runner 实验'} canObserve={!s.remoteSession} openReplay={async load=>{await actions.openRunnerReplay(load);closeTools()}} openObserver={async access=>{await actions.openRunnerObserver(access);closeTools()}}/></div><div className="mc-agent-tools" hidden={toolTitle!=='Agent 任务'}><AgentRunPanel active={toolsOpen&&toolTitle==='Agent 任务'} canObserve={!s.remoteSession} openReplay={async load=>{await actions.openRunnerReplay(load);setTrace('agent');closeTools()}} openObserver={async access=>{await actions.openRunnerObserver(access);setTrace('agent');closeTools()}}/></div><div className="mc-standard-tools" hidden={toolTitle==='Runner 实验'||toolTitle==='Agent 任务'}><div className="mc-tools-quickbar">{s.connectAvailable&&<button className="mc-pill violet" disabled={s.connectDisabled} onClick={()=>act('connect')}>{s.connectLabel||'连接本地世界服务'}</button>}<label htmlFor="mission-speed">运行速度</label><select id="mission-speed" value={String(s.speed||1)} disabled={s.speedDisabled||s.observer} onChange={e=>select('speed',e.target.value)}><option value="1">1×</option><option value="2">2×</option><option value="5">5×</option></select><span>影响推进速度，不改变固定步长</span>{!focused&&<button className="mc-fault-control" disabled={s.faultDisabled??true} onClick={()=>act('fault')}>注入设备退出</button>}</div><div className="mc-tools-body"><WorldSettingControls key={'settings-'+(s.settings?.key||'unavailable')} context={s.settings} edit={(key,field,value)=>actions.editWorldSetting?.(key,field,value)||{ok:false,reason:'context_changed'}} submit={(key,op)=>actions.submitWorldSettings?.(key,op)||Promise.resolve({ok:false,reason:'context_changed'})} global={()=>select('view','global')} live={()=>act('live')}/><ManualAssignment key={'manual-'+(s.manual?.key||'unavailable')} context={s.manual} mode={s.executionMode} requested={assignmentRequest}/><NodeRegistryControls key={'nodes-'+(s.coordination?.key||'unavailable')} context={s.coordination} request={(key,op)=>actions.nodeRegistry?.(key,op)||Promise.resolve({ok:false,reason:'context_changed'})}/><PlanReviewControls key={'plan-'+(s.coordination?.key||'unavailable')} context={s.coordination} view={s.planReview} act={(key,op)=>actions.planReview?.(key,op)||Promise.resolve({ok:false,reason:'context_changed'})} pause={()=>actions.pause?.()}/><TaskCoordinationControls key={'coordination-'+(s.coordination?.key||'unavailable')} context={s.coordination} submit={(key,draft)=>actions.coordinate?.(key,draft)||Promise.resolve({ok:false,reason:'request_failed'})} issue={key=>actions.coordinatorCredential?.(key)||Promise.resolve({ok:false,reason:'request_failed'})} global={()=>select('view','global')} live={()=>act('live')} settings={()=>openTools('场景与世界设置')}/><DeviceControls key={'device-'+(s.device?.key||'unavailable')} context={s.device} submit={(key,agent,draft)=>actions.deviceAction?.(key,agent,draft)||Promise.resolve({ok:false,reason:'request_failed'})} reportSubmit={(key,agent,draft)=>actions.deviceReport?.(key,agent,draft)||Promise.resolve({ok:false,reason:'request_failed'})} credentialIssue={(key,agent,rescueSearch)=>actions.deviceCredential?.(key,agent,rescueSearch)||Promise.resolve({ok:false,reason:'request_failed'})} select={id=>select('deviceagent',id)} live={()=>act('live')}/><DeviceMessageControls key={'messages-'+(s.messages?.key||'unavailable')+':'+s.messages?.selected+':'+s.messages?.focused} context={s.messages} submit={(key,from,draft)=>actions.deviceMessage?.(key,from,draft)||Promise.resolve({ok:false,reason:'context_changed'})} select={id=>select('deviceagent',id)} live={()=>act('live')} data={()=>{setTab('data');closeTools()}}/><WorldDisturbanceControls key={'disturbances-'+(s.disturbances?.key||'unavailable')} context={s.disturbances} submit={(key,draft)=>actions.worldDisturbance?.(key,draft)||Promise.resolve({ok:false,reason:'request_failed'})} live={()=>act('live')} global={()=>select('view','global')}/><div className="mc-legacy-mount" ref={legacy}/></div></div></dialog>
+  <dialog className={'mc-tool-dialog'+(worldSettingsOpen?' mc-world-dialog':'')} ref={dialog} aria-labelledby="mc-tool-title"
+   onCancel={event=>{event.preventDefault();closeTools()}}>
+   <div className="mc-dialog-head">
+    <div><SlidersHorizontal size={18}/>{worldSettingsOpen
+     ?<h2 id="mc-tool-title">{toolTitle}</h2>
+     :<><strong id="mc-tool-title">{toolTitle}</strong><span>3DBOX WORKSPACE</span></>}</div>
+    <div>
+     {worldSettingsOpen&&connectControl}
+     <IconButton label="关闭实验工具" onClick={closeTools}><X size={20}/></IconButton>
+    </div>
+   </div>
+   <div className="mc-runner-tools" hidden={toolTitle!=='Runner 实验'}><RunnerPanel active={toolsOpen&&toolTitle==='Runner 实验'} canObserve={!s.remoteSession} openReplay={async load=>{await actions.openRunnerReplay(load);closeTools()}} openObserver={async access=>{await actions.openRunnerObserver(access);closeTools()}}/></div>
+   <div className="mc-agent-tools" hidden={toolTitle!=='Agent 任务'}><AgentRunPanel active={toolsOpen&&toolTitle==='Agent 任务'} canObserve={!s.remoteSession} openReplay={async load=>{await actions.openRunnerReplay(load);setTrace('agent');closeTools()}} openObserver={async access=>{await actions.openRunnerObserver(access);setTrace('agent');closeTools()}}/></div>
+   <div className="mc-standard-tools" hidden={toolTitle==='Runner 实验'||toolTitle==='Agent 任务'}>
+    {!worldSettingsOpen&&<div className="mc-tools-quickbar">
+     {connectControl}<label htmlFor="mission-speed">运行速度</label>{speedControl}<span>影响推进速度，不改变固定步长</span>
+     {!focused&&<button type="button" className="mc-fault-control" disabled={s.faultDisabled??true} onClick={()=>act('fault')}>注入设备退出</button>}
+    </div>}
+    <div className="mc-tools-body">
+     <WorldSettingControls key={'settings-'+(s.settings?.key||'unavailable')} context={s.settings} standalone={worldSettingsOpen}
+      runtimeControls={worldSettingsOpen&&<div className="mc-settings-runtime">
+       <label htmlFor="mission-speed">运行速度</label>{speedControl}
+      </div>}
+      edit={(key,field,value)=>actions.editWorldSetting?.(key,field,value)||{ok:false,reason:'context_changed'}}
+      submit={(key,op)=>actions.submitWorldSettings?.(key,op)||Promise.resolve({ok:false,reason:'context_changed'})}
+      global={()=>select('view','global')} live={()=>act('live')}/>
+     <div className="mc-other-tools" hidden={worldSettingsOpen}>
+      <ManualAssignment key={'manual-'+(s.manual?.key||'unavailable')} context={s.manual} mode={s.executionMode} requested={assignmentRequest}/>
+      <NodeRegistryControls key={'nodes-'+(s.coordination?.key||'unavailable')} context={s.coordination} request={(key,op)=>actions.nodeRegistry?.(key,op)||Promise.resolve({ok:false,reason:'context_changed'})}/>
+      <PlanReviewControls key={'plan-'+(s.coordination?.key||'unavailable')} context={s.coordination} view={s.planReview} act={(key,op)=>actions.planReview?.(key,op)||Promise.resolve({ok:false,reason:'context_changed'})} pause={()=>actions.pause?.()}/>
+      <TaskCoordinationControls key={'coordination-'+(s.coordination?.key||'unavailable')} context={s.coordination} submit={(key,draft)=>actions.coordinate?.(key,draft)||Promise.resolve({ok:false,reason:'request_failed'})} issue={key=>actions.coordinatorCredential?.(key)||Promise.resolve({ok:false,reason:'request_failed'})} global={()=>select('view','global')} live={()=>act('live')} settings={()=>openTools('场景与世界设置')}/>
+      <DeviceControls key={'device-'+(s.device?.key||'unavailable')} context={s.device} submit={(key,agent,draft)=>actions.deviceAction?.(key,agent,draft)||Promise.resolve({ok:false,reason:'request_failed'})} reportSubmit={(key,agent,draft)=>actions.deviceReport?.(key,agent,draft)||Promise.resolve({ok:false,reason:'request_failed'})} credentialIssue={(key,agent,rescueSearch)=>actions.deviceCredential?.(key,agent,rescueSearch)||Promise.resolve({ok:false,reason:'request_failed'})} select={id=>select('deviceagent',id)} live={()=>act('live')}/>
+      <DeviceMessageControls key={'messages-'+(s.messages?.key||'unavailable')+':'+s.messages?.selected+':'+s.messages?.focused} context={s.messages} submit={(key,from,draft)=>actions.deviceMessage?.(key,from,draft)||Promise.resolve({ok:false,reason:'context_changed'})} select={id=>select('deviceagent',id)} live={()=>act('live')} data={()=>{setTab('data');closeTools()}}/>
+      <WorldDisturbanceControls key={'disturbances-'+(s.disturbances?.key||'unavailable')} context={s.disturbances} submit={(key,draft)=>actions.worldDisturbance?.(key,draft)||Promise.resolve({ok:false,reason:'request_failed'})} live={()=>act('live')} global={()=>select('view','global')}/>
+      <div className="mc-legacy-mount" ref={legacy}/>
+     </div>
+    </div>
+   </div>
+  </dialog>
  </div>
 }
 const style=document.createElement('style');style.textContent=styles;document.head.append(style);
