@@ -1,4 +1,4 @@
-import React, {useEffect,useRef,useState} from 'react';
+import React, {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {CaretRight} from '@phosphor-icons/react';
 import {
   defaultWorldSettings, settingsBlock, settingsMessage, settingsOptions, validateSettings,
@@ -37,17 +37,31 @@ export function WorldSettingControls({context,standalone,runtimeControls,edit,su
   const [pending,setPending] = useState<Operation | null>(null);
   const [feedback,setFeedback] = useState<{message:string; error?:boolean}>();
   const alive = useRef(true);
+  const dispatchField = useRef<HTMLSelectElement>(null);
+  const dispatchButton = useRef<HTMLButtonElement>(null);
+  const restoreDispatchFocus = useRef(false);
+  const dispatchChanged = !!context && context.values.dispatchMode !== context.current.dispatchMode;
   useEffect(() => {
     alive.current = true;
     return () => {alive.current = false};
   },[]);
+  useLayoutEffect(() => {
+    const select = dispatchField.current;
+    if (dispatchChanged && select && document.activeElement === select) select.scrollIntoView({block:'nearest'});
+  },[dispatchChanged]);
+  useLayoutEffect(() => {
+    if(pending!==null||!restoreDispatchFocus.current)return;
+    restoreDispatchFocus.current=false;
+    if(document.activeElement===document.body&&dispatchField.current?.closest('dialog')?.open){
+      dispatchField.current.focus();
+    }
+  },[pending,dispatchChanged]);
   if (!context) return null;
 
   const {key,current,values} = context;
   const block = settingsBlock(context,'edit');
   const disabled = !!block || pending !== null;
   const invalid = validateSettings(context);
-  const dispatchChanged = values.dispatchMode !== current.dispatchMode;
   const dispatchBlock = settingsBlock(context,'dispatch');
   const seedError = invalid === 'invalid_seed' && !block;
   const advancedOverrides = advancedFields.filter(field => values[field] !== defaultWorldSettings[field]).length;
@@ -62,10 +76,12 @@ export function WorldSettingControls({context,standalone,runtimeControls,edit,su
   async function send(operation:Operation) {
     if (disabled) return;
     if (operation === 'restart' ? invalid : dispatchBlock || !dispatchChanged) return;
+    const restoreFocus = operation==='dispatch'&&document.activeElement===dispatchButton.current;
     setPending(operation);
     setFeedback({message:operation === 'restart' ? '正在创建新的运行…' : '正在切换指挥方式…'});
     try {
       const result = await submit(key,operation);
+      if (alive.current&&result.ok&&restoreFocus) restoreDispatchFocus.current=true;
       if (alive.current) setFeedback(result.ok
         ? {message:operation === 'restart' ? '新的运行已就绪。' : '指挥方式已切换。'}
         : {message:settingsMessage(result.reason),error:true});
@@ -78,7 +94,8 @@ export function WorldSettingControls({context,standalone,runtimeControls,edit,su
 
   function field(id:SettingSelect,title:string) {
     return <label>{title}
-      <select name={id} value={values[id]} onChange={event => change(id,event.target.value)}>
+      <select name={id} value={values[id]} ref={id==='dispatchMode'?dispatchField:undefined}
+        onChange={event => change(id,event.target.value)}>
         {settingsOptions[id].map(([value,name]) => <option key={value} value={value}>{name}</option>)}
       </select>
     </label>;
@@ -132,14 +149,6 @@ export function WorldSettingControls({context,standalone,runtimeControls,edit,su
             {field('executionMode','执行方式')}
             {field('dispatchMode','指挥方式')}
           </fieldset>
-          {dispatchChanged && !block && <div className="mc-settings-dispatch">
-            <p>{dispatchBlock ? settingsMessage(dispatchBlock) : '切换当前指挥方式会取消在途任务指令，已分配的任务继续执行。'}</p>
-            {dispatchBlock === 'history_view'
-              ? <button type="button" className="mc-pill" onClick={live}>返回实时视图</button>
-              : !dispatchBlock && <button type="button" className="mc-pill" disabled={disabled}
-                onClick={() => void send('dispatch')}>仅切换当前指挥方式</button>}
-          </div>}
-
           <details className="mc-settings-advanced">
             <summary>
               <CaretRight size={14} aria-hidden="true"/>
@@ -174,8 +183,15 @@ export function WorldSettingControls({context,standalone,runtimeControls,edit,su
       <footer className="mc-settings-apply">
         <p id="world-settings-validation" className="mc-settings-status is-error" role="status">{validation}</p>
         <p className={'mc-settings-status' + (feedback?.error ? ' is-error' : '')} role="status">{status}</p>
-        <div>
-          <p id="world-restart-note">新运行从 T+0 开始。需要保留本次过程时，请先导出回放。</p>
+        {dispatchChanged && !block && <div className="mc-settings-dispatch">
+          <p id="world-dispatch-note">{dispatchBlock ? settingsMessage(dispatchBlock) : '取消在途指令，已分配任务继续执行。'}</p>
+          {dispatchBlock === 'history_view'
+            ? <button type="button" className="mc-pill" onClick={live}>返回实时视图</button>
+            : !dispatchBlock && <button type="button" className="mc-pill" ref={dispatchButton} disabled={disabled}
+              aria-describedby="world-dispatch-note" onClick={() => void send('dispatch')}>仅切换当前指挥方式</button>}
+        </div>}
+        <div className="mc-settings-restart">
+          <p id="world-restart-note">新运行从 T+0 开始。保留过程请先导出回放。</p>
           <button className="mc-pill violet" type="submit" disabled={disabled || !!invalid} aria-describedby="world-restart-note">
             {pending === 'restart' ? '正在重新开始…' : '应用并重新开始'}
           </button>

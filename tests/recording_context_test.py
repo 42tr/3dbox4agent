@@ -76,6 +76,13 @@ class RecordingTests(unittest.TestCase):
         with self.assertRaises(ValueError): capture_recording_context(self.session, {**self.runtime,'taskBackend':'rust'})
         with self.assertRaises(ValueError): capture_recording_context(self.session, {**self.runtime,'sourceSha256':{'src/engine.js':'b'*64}})
 
+    def test_full_native_source_hashes_fit_recording_metadata(self):
+        session = copy.deepcopy(self.session)
+        source = {f'src/file-{i}.js': 'a'*64 for i in range(129)}
+        session['recordingContext']['runtime']['sourceSha256'] = source
+        result = capture_recording_context(session)
+        self.assertEqual(result['runtime']['sourceSha256'], source)
+
     def test_invalid_metadata_and_legacy(self):
         self.assertIsNone(capture_recording_context({'sessionId':self.sid}))
         for mutation in (lambda v:v.update(version=True), lambda v:v.update(runtime=None),

@@ -14,7 +14,7 @@ def normalize_runtime(value):
     if not isinstance(value, dict) or not _uuid(value.get('instanceId')):
         raise ValueError('invalid recording runtime')
     source = value.get('sourceSha256')
-    if not isinstance(source, dict) or not 1 <= len(source) <= 128:
+    if not isinstance(source, dict) or not 1 <= len(source) <= 256:
         raise ValueError('invalid recording source hashes')
     for name, digest in source.items():
         if (not isinstance(name, str) or len(name) > 240 or

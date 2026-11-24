@@ -36,11 +36,12 @@ import {createDeviceReportController,projectDeviceReports} from './device-report
 import {createDeviceCredentialController} from './device-credentials';
 import {assignmentBlock,assignmentTasks,assignmentAgents,assignmentSelection,assignmentMessage,createAssignmentController,type AssignmentContext,type AssignmentResult} from './manual-assignment';
 import {DeviceCapabilities} from './device-capabilities';
+import {DeviceLidar} from './device-lidar';
 type ThermalState={temperatureC:number;peakC:number;protected:boolean;trips:number;protectionTicks:number;tick:number};
 type CameraConfig={enabled?:boolean;mount?:number[];yaw?:number;pitch?:number;fov?:number;range?:number;updateTicks?:number;resolution?:[number,number]};
 type CameraFrame={version?:number;agentId:string;tick:number;width:number;height:number;mimeType?:string;yaw?:number;pitch?:number;fov?:number;svg?:string;url?:string};
 type Agent={rescue?:{workTicks:number};camera?:CameraConfig;mobility?:string;sensorRange?:number;communicationRange?:number;speed?:number;deployableRelay?:true;relayState?:{deployed:boolean;deployedTick?:number;taskId?:string;position?:[number,number]};thermal?:{limitC:number;resumeC:number};thermalState?:ThermalState;id:string;name:string;role:string;battery:number;status:string;disabled:boolean;x:number;y:number;taskId?:string;capabilities?:string[]};
-type Mission={cardTasks?:DeviceTask[];cardTaskTypes?:Pick<DeviceTask,'capability'|'behavior'>[];cameraFrames?:Record<string,CameraFrame>;constructionConfigured?:boolean;construction?:ConstructionView|null;materials?:MaterialView|null;heightfield?:{rows:number;cols:number;heights:number[];maxSlopeDegrees:number};replay?:ReplayView;chain?:TaskChainView;messages?:MessageContext;flow?:FlowView;sceneId:string;worldSize?:number;sceneName:string;tick:number;running:boolean;speed?:number;speedDisabled?:boolean;faultDisabled?:boolean;physicsMode?:string;executionMode?:string;playLabel?:string;statusLabel?:string;dispatchMode?:string;done:boolean;failed:boolean;selected:string;agents:Agent[];tasks:ExecutionTask[];events:ExecutionEvent[];frame:number;frames:number;is3d:boolean;available3d:boolean;graphicsFailure?:{code:string;title:string;body:string;help:string}|null;obstacles?:any[];source:string;connectAvailable?:boolean;connectDisabled?:boolean;connectLabel?:string;playDisabled:boolean;resetDisabled:boolean;sceneDisabled:boolean;observer:boolean;remoteSession?:boolean;manual?:AssignmentContext;device?:DeviceContext;disturbances?:DisturbanceContext;settings?:SettingsContext;coordination?:CoordinatorContext;commandNodes?:NodeView;planReview?:PlanView};
+type Mission={cardTasks?:DeviceTask[];cardTaskTypes?:Pick<DeviceTask,'capability'|'behavior'>[];cameraFrames?:Record<string,CameraFrame>;constructionConfigured?:boolean;construction?:ConstructionView|null;materials?:MaterialView|null;heightfield?:{rows:number;cols:number;heights:number[];maxSlopeDegrees:number};replay?:ReplayView;chain?:TaskChainView;messages?:MessageContext;flow?:FlowView;sceneId:string;worldSize?:number;sceneName:string;tick:number;running:boolean;speed?:number;speedDisabled?:boolean;faultDisabled?:boolean;physicsMode?:string;executionMode?:string;playLabel?:string;statusLabel?:string;dispatchMode?:string;done:boolean;failed:boolean;selected:string;agents:Agent[];tasks:ExecutionTask[];events:ExecutionEvent[];frame:number;frames:number;is3d:boolean;available3d:boolean;graphicsFailure?:{code:string;title:string;body:string;help:string}|null;obstacles?:any[];source:string;connectAvailable?:boolean;connectDisabled?:boolean;connectLabel?:string;playDisabled:boolean;resetDisabled:boolean;connectionError?:string;sessionCleanup?:{busy:boolean;mayBeRunning:boolean};lidarAvailable?:boolean;sceneDisabled:boolean;observer:boolean;remoteSession?:boolean;manual?:AssignmentContext;device?:DeviceContext;disturbances?:DisturbanceContext;settings?:SettingsContext;coordination?:CoordinatorContext;commandNodes?:NodeView;planReview?:PlanView};
 let snapshot:Mission={sceneId:DEFAULT_SCENE_ID,sceneName:'现代工业园区',tick:0,running:false,done:false,failed:false,selected:'global',agents:[],tasks:[],events:[],frame:0,frames:0,is3d:false,available3d:false,source:'浏览器仿真',playDisabled:true,resetDisabled:true,sceneDisabled:true,observer:false};
 let actions:any={};const subscribers=new Set<()=>void>();
 (window as any).SandboxMissionUI={update(next:Mission){snapshot=next;subscribers.forEach(f=>f())},setActions(next:any){actions=next},openMessaging(){window.dispatchEvent(new Event('sandbox-message-tools'))}};
@@ -246,6 +247,9 @@ function App(){
  const ready=s.frames>0,toolsOpen=!!toolRoute,toolTitle=toolRoute?.title??'实验与世界设置';
  const worldSettingsOpen=toolTitle==='场景与世界设置';
  const stage=useRef<HTMLDivElement>(null),legacy=useRef<HTMLDivElement>(null),dialog=useRef<HTMLDialogElement>(null),feed=useRef<HTMLDivElement>(null);
+ const restartDialog=useRef<HTMLDialogElement>(null);
+ const restartOrigin=useRef<HTMLElement|null>(null);
+ const restartKey=useRef<string | undefined>(undefined);
  const deviceList=useRef<HTMLUListElement>(null);
  const positionedTool=useRef<string|null>(null);
  useLayoutEffect(()=>{
@@ -368,15 +372,45 @@ function App(){
  const recentAttempts=trace==='attempts'?taskAttempts(s.tasks,s.events,s.tick,focused?s.selected:null).slice(-4):[];
  const recentEvents=s.events.slice(-3).reverse();
  const dispatchLabel=({rule:'规则调度',networked:'链路指挥',external:'外部指挥',networked_external:'外部指挥 / 链路',networked_reported:'外部指挥 / 延迟状态'} as Record<string,string>)[s.dispatchMode||'rule']||'任务调度';
- const commandSubmit=(e:React.FormEvent)=>{e.preventDefault();const text=command.trim();if(!text)return;if(['开始','运行','继续'].includes(text)){if(!s.running&&!s.playDisabled)act('play');setResponse('已请求开始运行。')}else if(['暂停','停止'].includes(text)){actions.pause?.();setResponse('已请求暂停世界。')}else if(text==='重置'){if(!s.resetDisabled)act('reset');setResponse('已请求重置。')}else{const a=s.agents.find(a=>a.id===text||a.name===text);if(a){select('view',a.id);setResponse('已切换至 '+a.name+' 的有限观察。')}else setResponse('支持：开始、暂停、重置，或输入设备 ID。更多任务操作请打开实验工具。')}setCommand('')};
+ const requestRestart=()=>{
+  if(s.resetDisabled||s.observer)return;
+  if(s.frames<=1&&s.tick===0){act('reset');return}
+  const modal=restartDialog.current;
+  if(!modal||modal.open)return;
+  const origin=document.activeElement;
+  restartOrigin.current=origin instanceof HTMLElement
+   ?origin.closest('.mc-menu')?.querySelector('summary')??origin:null;
+  restartKey.current=s.settings?.key;
+  modal.showModal();
+ };
+ const exportBeforeRestart=()=>{
+  if(snapshot.settings?.key!==restartKey.current)return;
+  if(snapshot.selected!=='global')select('view','global');
+  const replay=snapshot.replay;
+  if(replay?.canExport)actions.replayFile?.('export',replay.key,replay.base);
+ };
+ const confirmRestart=()=>{
+  restartDialog.current?.close();
+  if(!snapshot.resetDisabled&&!snapshot.observer&&snapshot.settings?.key===restartKey.current)act('reset');
+ };
+ const serviceFeedback=(s.connectionError||s.sessionCleanup)&&<div className="mc-service-feedback">
+  {s.connectionError&&<p className="mc-connection-error" role="alert">{s.connectionError}</p>}
+  {s.sessionCleanup&&<div className="mc-session-cleanup">
+   <p role="status">{s.sessionCleanup.busy?'正在关闭旧会话…':s.sessionCleanup.mayBeRunning
+    ?'旧会话尚未确认关闭，可能仍在运行。':'旧会话已暂停，尚未关闭。'}</p>
+   {!s.sessionCleanup.busy&&<button type="button" className="mc-pill" disabled={s.observer}
+    onClick={()=>actions.closeRetiredSessions?.()}>重试关闭旧会话</button>}
+  </div>}
+ </div>;
+ const commandSubmit=(e:React.FormEvent)=>{e.preventDefault();const text=command.trim();if(!text)return;if(['开始','运行','继续'].includes(text)){if(!s.running&&!s.playDisabled)act('play');setResponse('已请求开始运行。')}else if(['暂停','停止'].includes(text)){actions.pause?.();setResponse('已请求暂停世界。')}else if(text==='重置'){requestRestart();setResponse('')}else{const a=s.agents.find(a=>a.id===text||a.name===text);if(a){select('view',a.id);setResponse('已切换至 '+a.name+' 的有限观察。')}else setResponse('支持：开始、暂停、重置，或输入设备 ID。更多任务操作请打开实验工具。')}setCommand('')};
  const connectControl=s.connectAvailable&&<button type="button" className={'mc-pill'+(worldSettingsOpen?'':' violet')}
-  title={worldSettingsOpen&&!s.remoteSession?'使用下次运行设置连接世界服务':undefined}
+  title={!s.remoteSession?'按当前运行配置连接世界服务':undefined}
   disabled={s.connectDisabled} onClick={()=>act('connect')}>{s.connectLabel||'连接本地世界服务'}</button>;
  const speedControl=<select id="mission-speed" value={String(s.speed||1)} disabled={s.speedDisabled||s.observer}
   onChange={event=>select('speed',event.target.value)} title="影响推进速度，固定步长保持不变">
   <option value="1">1×</option><option value="2">2×</option><option value="5">5×</option>
  </select>;
- return <div className="mission-control">
+ return <div className={'mission-control'+(!toolsOpen&&serviceFeedback?' has-service-feedback':'')}>
   <header className="mc-header">
    <div className="mc-brand"><Planet size={26}/><span>3DBOX</span></div>
    <nav className="mc-navigation" aria-label="主导航">
@@ -406,11 +440,12 @@ function App(){
     </button>
     <WorkspaceMenu label="运行选项" icon>
      <span className="mc-source">{s.source}</span>
-     <button type="button" disabled={s.resetDisabled} onClick={()=>act('reset')}>重新开始</button>
+     <button type="button" disabled={s.resetDisabled} onClick={requestRestart}>重开当前运行</button>
      {s.connectAvailable&&<button type="button" disabled={s.connectDisabled} onClick={()=>act('connect')}>{s.connectLabel||'连接本地世界服务'}</button>}
     </WorkspaceMenu>
    </div>
   </header>
+  {!toolsOpen&&serviceFeedback}
   <main className="mc-workspace">
    <section className="mc-mission" aria-label="当前任务">
     <div className="mc-mission-title"><span>{sceneTitle}</span><h1>{displayTitle}</h1></div>
@@ -501,6 +536,12 @@ function App(){
          available3d={s.available3d} history={cameraHistory} onFrame={cameraMode==='remote'?actions.cameraFrame:undefined}/>
        </>}
        <button type="button" className="mc-device-open" onClick={()=>openDeviceTools(inspectedAgent)}>设备操作</button>
+       {s.lidarAvailable&&s.remoteSession&&<DeviceLidar
+        key={inspectorWorld+':'+s.selected+':'+cameraHistory+':'+inspectedAgent.id}
+        agentId={inspectedAgent.id}
+        unavailable={s.observer?'只读观察期间可查看设备状态。':cameraHistory?'返回实时视图后可读取测距。':
+         s.failed?'世界会话已停止。':inspectedAgent.disabled?'当前设备已退出运行。':''}
+        read={(agentId,signal)=>actions.readDeviceLidar(agentId,signal)}/>}
        <details className="mc-device-extra" key={inspectorWorld+':'+inspectedAgent.id}>
         <summary>能力与遥测</summary>
         <ThermalStatus agent={inspectedAgent}/><RelayStatus agent={inspectedAgent}/>
@@ -530,6 +571,7 @@ function App(){
      <IconButton label="关闭实验工具" onClick={closeTools}><X size={20}/></IconButton>
     </div>
    </div>
+   {toolsOpen&&serviceFeedback}
    <div className="mc-runner-tools" hidden={toolTitle!=='Runner 实验'}><RunnerPanel active={toolsOpen&&toolTitle==='Runner 实验'} canObserve={!s.remoteSession} openReplay={async load=>{await actions.openRunnerReplay(load);closeTools()}} openObserver={async access=>{await actions.openRunnerObserver(access);closeTools()}}/></div>
    <div className="mc-agent-tools" hidden={toolTitle!=='Agent 任务'}><AgentRunPanel active={toolsOpen&&toolTitle==='Agent 任务'} canObserve={!s.remoteSession} openReplay={async load=>{await actions.openRunnerReplay(load);setTrace('agent');closeTools()}} openObserver={async access=>{await actions.openRunnerObserver(access);setTrace('agent');closeTools()}}/></div>
    <div className="mc-standard-tools" hidden={toolTitle==='Runner 实验'||toolTitle==='Agent 任务'}>
@@ -556,6 +598,19 @@ function App(){
       <div className="mc-legacy-mount" ref={legacy}/>
      </div>
     </div>
+   </div>
+  </dialog>
+  <dialog className="mc-tool-dialog mc-restart-dialog" ref={restartDialog} aria-labelledby="mc-restart-title"
+   aria-describedby="mc-restart-notice" onClose={()=>restartOrigin.current?.focus()}>
+   <div className="mc-restart-content">
+    <h2 id="mc-restart-title">重开当前运行</h2>
+    <p id="mc-restart-notice">重开后，时间轴从 T+0 开始。可以先导出本次回放。</p>
+   </div>
+   <div className="mc-restart-actions">
+    <button type="button" className="mc-pill" autoFocus onClick={()=>restartDialog.current?.close()}>取消</button>
+    <button type="button" className="mc-pill" disabled={!s.replay||s.replay.busy||s.replay.pending}
+     onClick={exportBeforeRestart}>{focused?'返回全局并导出回放':'导出回放'}</button>
+    <button type="button" className="mc-pill violet" disabled={s.resetDisabled} onClick={confirmRestart}>确认重开</button>
    </div>
   </dialog>
  </div>

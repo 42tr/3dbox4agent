@@ -2,12 +2,13 @@
 (function(root){
 'use strict';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const MAX_SOURCE_HASHES=256;
 const BACKENDS={physicsBackend:['wasm','rust'],taskBackend:['js','rust'],communicationBackend:['js','rust'],navigationBackend:['js','rust'],worldLedgerBackend:['js','rust'],worldMotionBackend:['js','rust'],worldTasksBackend:['js','rust'],worldExecutionBackend:['js','rust'],worldActionsBackend:['js','rust'],worldPeerBackend:['js','rust'],worldReportsBackend:['js','rust'],worldDispatchBackend:['js','rust'],worldResourcesBackend:['js','rust'],worldPerceptionsBackend:['js','rust'],worldEnvironmentBackend:['js','rust'],worldRequestsBackend:['js','rust'],worldControlBackend:['js','rust']};
 function fail(){throw Error('录制环境信息格式无效')}
 function object(v){return !!v&&typeof v==='object'&&!Array.isArray(v)}
 function runtime(value){
  if(!object(value)||typeof value.instanceId!=='string'||!UUID.test(value.instanceId)||!object(value.sourceSha256))fail();
- const entries=Object.entries(value.sourceSha256);if(!entries.length||entries.length>128)fail();
+ const entries=Object.entries(value.sourceSha256);if(!entries.length||entries.length>MAX_SOURCE_HASHES)fail();
  for(const [name,hash] of entries)if(name.length>240||!/^[A-Za-z0-9_.\/-]+$/.test(name)||name.split('/').some(p=>!p||p==='.'||p==='..')||['__proto__','constructor','prototype'].includes(name)||typeof hash!=='string'||!/^[a-f0-9]{64}$/.test(hash))fail();
  const out={instanceId:value.instanceId,sourceSha256:Object.fromEntries(entries)};
  for(const [name,allowed] of Object.entries(BACKENDS))if(value[name]!==undefined){if(!allowed.includes(value[name]))fail();out[name]=value[name]}
