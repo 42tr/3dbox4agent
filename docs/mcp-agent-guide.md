@@ -158,7 +158,7 @@ JavaScript 运动学后端为飞行设备提供 `ascend`、`descend` 和 `move_t
 
 ## 运输和维修分步工序
 
-创建 MCP 运行时设置 `config.execution_mode: "primitive"`，或在 Console 的世界设置中选择「单体分步执行」。JavaScript 任务后端会在设备观察的 `assignedTasks[].workOperation` 中返回下一道工序、执行步数和当前阻塞原因。
+创建 MCP 运行时设置 `config.execution_mode: "primitive"`，或在 Console 的世界设置中选择「单体分步执行」。读取设备观察的 `taskOperationsAvailable` 判断能否提交细分工序。为 `true` 时，`assignedTasks[].workOperation` 会为支持细分工序的任务返回下一道工序、执行步数和当前阻塞原因。Rust 任务后端返回 `false`，此时到达作业范围后提交只带任务 ID 的通用 `work_task`。
 
 | 任务 | 工序顺序 |
 | --- | --- |
@@ -195,7 +195,7 @@ Console 可以暂停、恢复、停止运行或打开已归档回放。暂停、
 
 运行数据位于 `BOX_CONTROL_DATA_DIR`，缺省继承 `BOX_RUNNER_DATA_DIR`，再缺省为 `.3dbox/control`。事务数据库为 `control.sqlite3`；现有 Runner 状态首次启动时导入 SQLite，原 JSON 备份为 `runner-state.json.migrated`，旧回放文件保持可读。部署升级前保留整个数据目录的备份。首期只支持一个 Control 写实例。
 
-首期保留运行与幂等记录，不自动删除历史。新建运行总数上限 1000，单个运行达到 50000 条记录后拒绝新的执行命令；每个身份工具调用上限 120 次/秒，业务事件流并发上限 64。World 每个进程生命周期最多保留 128 个幂等创建键，达到上限后停止接受新键；可在所有活动会话结束后重启 World 释放记录。清理与保留期管理后续提供。
+历史运行和请求回执保留在 Control 中，创建配额按身份的活动运行数计算。创建结果未确认时，以相同 `request_id` 重试。World 的创建回执可在运行截止时间内重试，最长 30 分钟。会话关闭后释放快照和凭据，保留足以拒绝重复创建的记录。单个运行达到 50000 条记录后拒绝新的执行命令。每个身份工具调用上限为 120 次/秒，业务事件流并发上限为 64。
 
 ## 验证
 

@@ -7,7 +7,7 @@ const {createRegistry}=require('./creation-registry');
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,TOKEN=/^[A-Za-z0-9_-]{43}$/;
 function createSupervisor({maxWorkers=4,maxSessions=32,startTimeoutMs=10000,requestTimeoutMs=30000,failedSessionTtlMs=300000,worldOptions={},controlUrl}={}){
  for(const [name,n,max] of [['worker limit',maxWorkers,32],['session limit',maxSessions,32],['startup timeout',startTimeoutMs,60000],['request timeout',requestTimeoutMs,120000],['failed session TTL',failedSessionTtlMs,3600000]])if(!Number.isInteger(n)||n<1||n>max)throw Error('invalid '+name);
- const allowed=['maxHistoryBytes','catalogPath','physicsBackend','taskBackend','communicationBackend','navigationBackend','journalDir','replayJournal'];
+ const allowed=['maxHistoryBytes','catalogPath','physicsBackend','taskBackend','communicationBackend','navigationBackend','journalDir','replayJournal','sessionTtlMs'];
  if(!worldOptions||typeof worldOptions!=='object'||Array.isArray(worldOptions)||Object.keys(worldOptions).some(k=>!allowed.includes(k)))throw Error('invalid worker options');
  const creations=createRegistry();
  const options=structuredClone(worldOptions),control=createServer({...options,controlUrl}),routes=new Map(),workers=new Set();
@@ -18,7 +18,7 @@ function createSupervisor({maxWorkers=4,maxSessions=32,startTimeoutMs=10000,requ
  function responseHeaders(upstream){return {'content-type':upstream.headers['content-type']||'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}}
  function retire(entry){
   if(entry.retiring)return;entry.retiring=true;entry.state='retiring';clearTimeout(entry.failedTimer);
-  if(entry.sessionId&&routes.get(entry.sessionId)===entry)routes.delete(entry.sessionId);
+  if(entry.sessionId&&routes.get(entry.sessionId)===entry){routes.delete(entry.sessionId);creations.closeSession(entry.sessionId)}
   if(entry.exited)return;
   entry.child.kill('SIGTERM');const timer=setTimeout(()=>{if(!entry.exited)entry.child.kill('SIGKILL')},3500);timer.unref();entry.done.finally(()=>clearTimeout(timer));
  }
@@ -36,7 +36,8 @@ function createSupervisor({maxWorkers=4,maxSessions=32,startTimeoutMs=10000,requ
    child.once('error',()=>{clearTimeout(timer);retire(entry);reject(Object.assign(Error('world_worker_start_failed'),{status:503}))});
    child.once('exit',()=>{clearTimeout(timer);reject(Object.assign(Error('world_worker_start_failed'),{status:503}))});
   });
-  child.once('close',()=>{entry.exited=true;workers.delete(entry);if(!entry.retiring&&entry.sessionId&&routes.get(entry.sessionId)===entry){entry.state='failed';entry.failedTimer=setTimeout(()=>{if(routes.get(entry.sessionId)===entry)routes.delete(entry.sessionId)},failedSessionTtlMs);entry.failedTimer.unref();for(const client of wss.clients)if(client.worker===entry)client.close(1011,'world process exited')}finishExit()});
+  child.on('message',message=>{if(message?.type==='session_expired'&&(!entry.sessionId||message.sessionId===entry.sessionId))retire(entry)});
+  child.once('close',()=>{entry.exited=true;workers.delete(entry);if(!entry.retiring&&entry.sessionId&&routes.get(entry.sessionId)===entry){creations.closeSession(entry.sessionId);entry.state='failed';entry.failedTimer=setTimeout(()=>{if(routes.get(entry.sessionId)===entry)routes.delete(entry.sessionId)},failedSessionTtlMs);entry.failedTimer.unref();for(const client of wss.clients)if(client.worker===entry)client.close(1011,'world process exited')}finishExit()});
   child.send({type:'initialize',options},error=>{if(error)retire(entry)});return {entry,ready};
  }
  function readBody(req,limit){return new Promise((resolve,reject)=>{
@@ -61,7 +62,7 @@ function createSupervisor({maxWorkers=4,maxSessions=32,startTimeoutMs=10000,requ
    try{
     await ready;if(entry.retiring)throw Object.assign(Error('world_process_unavailable'),{status:503});
     const result=await createRequest(req,entry,body);
-    if(result.status>=200&&result.status<300){let value;try{value=JSON.parse(result.body)}catch{}if(!value||!UUID.test(value.sessionId)||typeof value.adminToken!=='string'||!TOKEN.test(value.adminToken)||routes.has(value.sessionId)||entry.exited)throw Object.assign(Error('invalid_world_response'),{status:502});entry.sessionId=value.sessionId;entry.adminHash=crypto.createHash('sha256').update(value.adminToken).digest('hex');entry.state='active';routes.set(entry.sessionId,entry)}else retire(entry);
+    if(result.status>=200&&result.status<300){let value;try{value=JSON.parse(result.body)}catch{}if(!value||!UUID.test(value.sessionId)||typeof value.adminToken!=='string'||!TOKEN.test(value.adminToken)||routes.has(value.sessionId)||entry.exited||entry.retiring)throw Object.assign(Error('invalid_world_response'),{status:502});entry.sessionId=value.sessionId;entry.adminHash=crypto.createHash('sha256').update(value.adminToken).digest('hex');entry.state='active';routes.set(entry.sessionId,entry);result.sessionId=entry.sessionId}else retire(entry);
     return result;
    }catch(error){retire(entry);throw error}finally{res.removeListener('close',cancel)}
   });

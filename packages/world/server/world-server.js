@@ -100,8 +100,8 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
  function readsWorld(identity){return identity.role==='admin'||identity.role==='observer'}
  function identify(session,req){const match=/^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization||'');return match?identifyDigest(session,digest(match[1])):null}
  function stop(session){if(session.timer){clearInterval(session.timer);session.timer=null}session.running=false}
- function destroySession(session,reason){stop(session);try{session.journal?.close(session.revision,reason)}catch{}for(const client of session.clients)client.close(1008,'session closed');try{session.physics?.free()}catch{}try{worldRuntime.dispose(session.world)}catch{}sessions.delete(session.id)}
- function sweepSessions(){const cutoff=Date.now()-sessionTtlMs;for(const session of [...sessions.values()])if(!session.running&&!session.clients.size&&session.lastActivity<cutoff)destroySession(session,'expired')}
+ function destroySession(session,reason){stop(session);try{session.journal?.close(session.revision,reason)}catch{}for(const client of session.clients)client.close(1008,'session closed');try{session.physics?.free()}catch{}try{worldRuntime.dispose(session.world)}catch{}sessions.delete(session.id);creations.closeSession(session.id)}
+ function sweepSessions(){const cutoff=Date.now()-sessionTtlMs;for(const session of [...sessions.values()])if(!session.running&&!session.clients.size&&session.lastActivity<cutoff){destroySession(session,'expired');server.emit('sessionExpired',session.id)}}
  function sweepJournals(){if(!journalDir)return;const cutoff=Date.now()-journalRetentionMs;try{for(const name of fs.readdirSync(journalDir)){const match=/^([0-9a-f-]{36})\.jsonl$/.exec(name);if(!match||sessions.has(match[1]))continue;const file=path.join(journalDir,name);try{if(fs.statSync(file).mtimeMs<cutoff)fs.unlinkSync(file)}catch{}}}catch{}}
  function sessionError(session){return session.simulationError||(session.journalFailed?'journal_write_failed':null)}
  function internalWorldFailure(error){return ['worldLedgerFailure','worldMotionFailure','worldTasksFailure','worldExecutionFailure','worldActionsFailure','worldPeerFailure','worldReportsFailure','worldDispatchFailure','worldResourcesFailure','worldPerceptionsFailure','worldEnvironmentFailure','worldRequestsFailure','worldControlFailure','worldTransactionFailure'].some(key=>error[key])}
@@ -116,11 +116,23 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
   return frames;
  }
  function withCameraFrames(world,frames){return frames&&Object.keys(frames).length?{...world,cameraFrames:frames}:world}
+ function historyFrame(revision,world,cameraFrames){
+  const frame={revision,world,cameraFrames};
+  return {...frame,bytes:Buffer.byteLength(JSON.stringify(frame))+1};
+ }
  function state(session){return {sessionId:session.id,...(session.forkedFrom?{forkedFrom:session.forkedFrom}:{}),revision:session.revision,statusRevision:session.statusRevision,running:session.running,speed:session.speed,...(sessionError(session)?{sessionError:sessionError(session)}:{}),...(session.simulationError?{simulationError:session.simulationError}:{}),...(session.journal?{journal:{...session.journal.info(),healthy:session.journal.info().healthy&&!session.journalFailed}}:{}),world:worldRuntime.snapshot(session.world),cameraFrames:session.cameraFrames,metrics:E.metrics(session.world)}}
  // Credential metadata is administrator-only and deliberately outside world
  // snapshots, replay and observations. A valid credential is not a live process.
  function coordinatorRoster(session){return {version:1,sessionId:session.id,rosterRevision:session.rosterRevision,worldRevision:session.revision,tick:session.world.tick,legacyCredentialActive:session.coordinatorHash!==null,named:[...session.coordinatorTokens.values()].sort().map(id=>({id}))}}
- function agentObservation(session,id){const view=session.frozenAgentObservations?JSON.parse(JSON.stringify(session.frozenAgentObservations.get(id)||null)):controlApi.observe(session.world,id),error=sessionError(session);return view&&error?{...view,sessionError:error,...(session.simulationError?{simulationError:session.simulationError}:{})}:view}
+ function agentObservation(session,id){
+  const view=session.frozenAgentObservations?JSON.parse(JSON.stringify(session.frozenAgentObservations.get(id)||null)):controlApi.observe(session.world,id);
+  if(!view)return null;
+  const error=sessionError(session);
+  if(view.executionMode==='primitive')view.taskOperationsAvailable=session.taskOperationsAvailable;
+  if(error)view.sessionError=error;
+  if(session.simulationError)view.simulationError=session.simulationError;
+  return view;
+ }
  function readAgentObservation(session,id,includeDevice){
   const view=agentObservation(session,id);if(!view)return null;
   if(!includeDevice)return view;
@@ -133,8 +145,8 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
  }
  function coordinatorObservation(session,coordinatorId){const view=session.frozenCoordinatorObservation?JSON.parse(JSON.stringify(session.frozenCoordinatorObservation)):E.coordinatorObservation(session.world);return {...view,...(coordinatorId?{coordinatorId}:{}),...(sessionError(session)?{sessionError:sessionError(session)}:{}),...(session.simulationError?{simulationError:session.simulationError}:{})}}
  function registerSession(world,scene,physics,forkedFrom=null){
-  const cameraFrames=captureCameraFrames(world,{},true);const id=crypto.randomUUID(),adminToken=newToken(),initial=worldRuntime.snapshot(world),initialBytes=Buffer.byteLength(JSON.stringify(initial)),session={id,world,scene,physics,forkedFrom,cameraFrames,lastActivity:Date.now(),adminHash:digest(adminToken),journal:null,journalFailed:false,simulationError:null,coordinatorHash:null,rosterRevision:0,coordinatorTokens:new Map(),agentTokens:new Map(),agentMemory:new Map(),observationTransport:{version:1,agent:{httpResponses:0,httpBodyBytes:0,streamMessages:0,streamPayloadBytes:0},coordinator:{httpResponses:0,httpBodyBytes:0,streamMessages:0,streamPayloadBytes:0}},revision:0,statusRevision:0,running:false,speed:1,timer:null,clients:new Set(),historyBytes:initialBytes,frames:[{revision:0,world:initial,bytes:initialBytes,cameraFrames}]};
-  session.stepReceipts=new Map();session.observerHash=null;session.recordingContext=Recording.capture(id,runtime,forkedFrom);
+  const cameraFrames=captureCameraFrames(world,{},true);const id=crypto.randomUUID(),adminToken=newToken(),initial=worldRuntime.snapshot(world),initialFrame=historyFrame(0,initial,cameraFrames),session={id,world,scene,physics,forkedFrom,cameraFrames,lastActivity:Date.now(),adminHash:digest(adminToken),journal:null,journalFailed:false,simulationError:null,coordinatorHash:null,rosterRevision:0,coordinatorTokens:new Map(),agentTokens:new Map(),agentMemory:new Map(),observationTransport:{version:1,agent:{httpResponses:0,httpBodyBytes:0,streamMessages:0,streamPayloadBytes:0},coordinator:{httpResponses:0,httpBodyBytes:0,streamMessages:0,streamPayloadBytes:0}},revision:0,statusRevision:0,running:false,speed:1,timer:null,clients:new Set(),historyBytes:initialFrame.bytes,frames:[initialFrame]};
+  session.stepReceipts=new Map();session.observerHash=null;session.taskOperationsAvailable=E.taskOperationsSupported(world);session.recordingContext=Recording.capture(id,runtime,forkedFrom);
   if(journalDir){try{session.journal=journalApi.create(journalDir,id,session.adminHash,{sceneId:world.sceneId,seed:world.seed,policy:world.policy,physicsMode:world.physicsMode,sensorModel:world.sensorModel??'geometry-v1',runtimeInstanceId:runtime.instanceId,runtime,...(forkedFrom?{forkedFrom}:{}),...(replayJournal?{scene}: {})},world.events,replayJournal?{initialWorld:initial}:{})}catch{physics?.free();worldRuntime.dispose(world);throw Object.assign(Error('journal_create_failed'),{status:503})}}
   sessions.set(id,session);return {session,adminToken};
  }
@@ -154,9 +166,9 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
  }
  function matchingRuntime(source){return !!source&&['physicsBackend','taskBackend','communicationBackend','navigationBackend','worldLedgerBackend','worldMotionBackend','worldTasksBackend','worldExecutionBackend','worldActionsBackend','worldPeerBackend','worldReportsBackend','worldDispatchBackend','worldResourcesBackend','worldPerceptionsBackend','worldEnvironmentBackend','worldRequestsBackend','worldControlBackend','worldRollbackVersion','worldRouteVersion','worldStationaryVersion','worldWorkVersion','worldActivationVersion','worldLifecycleVersion','worldAssignmentVersion','worldInterruptionVersion','worldRevocationVersion','worldProposalVersion','worldTimeVersion','worldEndingVersion','worldFinalizationVersion','worldTaskEventsVersion','worldRouteEventsVersion','worldStationaryEventsVersion','worldLifecycleEventsVersion','worldActivationEventsVersion','worldPeerEventsVersion','worldReportEventsVersion','worldDispatchEventsVersion','worldAutomaticDispatchVersion','worldCollisionReplanVersion','worldActivationPlanningVersion','worldAssignmentPlanningVersion','worldEnvironmentPlanningVersion','worldAgentObservationVersion','worldCoordinatorObservationVersion','worldTaskAdvanceVersion','worldActionAdvanceVersion','worldAdvanceVersion','worldInitializationVersion','node','platform','arch','rapierPackage'].every(k=>source[k]===runtime[k])&&JSON.stringify(source.sourceSha256)===JSON.stringify(runtime.sourceSha256)}
  function record(session){const previous=session.frames[session.frames.length-1];session.revision++;session.cameraFrames=captureCameraFrames(session.world,session.cameraFrames);let journalFailed=false;
-  const world=worldRuntime.snapshot(session.world),bytes=Buffer.byteLength(JSON.stringify(world));
+  const world=worldRuntime.snapshot(session.world),frame=historyFrame(session.revision,world,session.cameraFrames);
   if(session.journal){try{const count=session.journal.info().eventCount;if(previous.world.events.length!==count||JSON.stringify(previous.world.events)!==JSON.stringify(world.events.slice(0,count)))throw Error('journal_event_history_changed');session.journal.append(session.revision,world.events.slice(count),world)}catch{session.journal.invalidate?.();journalFailed=true;session.journalFailed=true;stop(session);session.statusRevision++}}
-  session.frames.push({revision:session.revision,world,bytes,cameraFrames:session.cameraFrames});session.historyBytes+=bytes;while(session.frames.length>1&&(session.frames.length>MAX_FRAMES||session.historyBytes>maxHistoryBytes))session.historyBytes-=session.frames.shift().bytes;broadcast(session,'frame',previous);if(journalFailed)throw Object.assign(Error('journal_write_failed'),{status:503})}
+  session.frames.push(frame);session.historyBytes+=frame.bytes;while(session.frames.length>1&&(session.frames.length>MAX_FRAMES||session.historyBytes>maxHistoryBytes))session.historyBytes-=session.frames.shift().bytes;broadcast(session,'frame',previous);if(journalFailed)throw Object.assign(Error('journal_write_failed'),{status:503})}
 
  function freezeFailedSession(session){stop(session);if(runtime.worldAgentObservationVersion===1){try{session.frozenAgentObservations=new Map(session.world.agents.map(a=>[a.id,controlApi.observe(session.world,a.id)]))}catch{session.frozenAgentObservations=null}}if(runtime.worldCoordinatorObservationVersion===1){try{session.frozenCoordinatorObservation=E.coordinatorObservation(session.world)}catch{session.frozenCoordinatorObservation=null}}worldRuntime.dispose(session.world);session.world=worldRuntime.snapshot(session.frames.at(-1).world);session.simulationError='world_step_failed';session.statusRevision++;broadcast(session,'status')}
  function advance(session){if(session.world.done){stop(session);return false}try{worldRuntime.step(session.world,session.physics)}catch{freezeFailedSession(session);throw Object.assign(Error('world_step_failed'),{status:503})}if(session.world.done){stop(session);session.statusRevision++}record(session);return true}
@@ -221,7 +233,7 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
     if(!journalDir)return json(res,404,{error:'journal_disabled'});const match=/^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization||'');if(!match)return json(res,401,{error:'unauthorized'});
     const a=url.searchParams.get('after')??'-1',l=url.searchParams.get('limit')??'25',t=url.searchParams.get('through'),after=Number(a),limit=Number(l),through=t===null?null:Number(t);
     if(!/^-?\d+$/.test(a)||!Number.isSafeInteger(after)||after< -1||!/^\d+$/.test(l)||!Number.isInteger(limit)||limit<1||limit>100||(t!==null&&(!/^\d+$/.test(t)||!Number.isSafeInteger(through)||through<0||after>through)))return json(res,400,{error:'invalid_replay_cursor'});
-    try{const result=journalApi.replay(journalDir,parts[1],digest(match[1]),after,limit,through),active=sessions.get(parts[1]);result.frames=result.frames.map(entry=>({...entry,cameraFrames:captureCameraFrames(entry.world,{},true)}));return json(res,200,{...result,active:!!active?.journal,healthy:active?.journal?(active.journal.info().healthy&&!active.journalFailed):null})}
+    try{const result=journalApi.replay(journalDir,parts[1],digest(match[1]),after,limit,through),active=sessions.get(parts[1]);if(url.searchParams.get('camera')!=='0')result.frames=result.frames.map(entry=>({...entry,cameraFrames:captureCameraFrames(entry.world,{},true)}));return json(res,200,{...result,active:!!active?.journal,healthy:active?.journal?(active.journal.info().healthy&&!active.journalFailed):null})}
     catch(error){return json(res,error.status||500,{error:error.status?error.message:'journal_replay_failed'})}
    }
    if(req.method==='GET'&&parts.length===2&&parts[0]==='event-journals'){
@@ -379,7 +391,20 @@ function createServer({maxSessions=MAX_SESSIONS,maxHistoryBytes=MAX_HISTORY_BYTE
    if(req.method==='GET'&&parts.length===3&&parts[2]==='recording-context')return json(res,200,{sessionId:session.id,recordingContext:session.recordingContext});
    if(req.method==='GET'&&parts.length===3&&parts[2]==='history'){
     const raw=url.searchParams.get('after')??'-1',after=Number(raw);if(!/^-?\d+$/.test(raw)||!Number.isSafeInteger(after)||after< -1)return json(res,400,{error:'invalid_revision'});
-    const first=session.frames[0].revision;return json(res,200,{sessionId:session.id,...(session.forkedFrom?{forkedFrom:session.forkedFrom}:{}),revision:session.revision,statusRevision:session.statusRevision,running:session.running,speed:session.speed,...(sessionError(session)?{sessionError:sessionError(session)}:{}),...(session.simulationError?{simulationError:session.simulationError}:{}),truncated:after<first-1,frames:session.frames.filter(f=>f.revision>after).map(({revision,world,cameraFrames})=>({revision,world,cameraFrames}))});
+    const limitParam=url.searchParams.get('limit'),throughParam=url.searchParams.get('through');
+    const limit=limitParam===null?MAX_FRAMES:Number(limitParam),through=throughParam===null?session.revision:Number(throughParam);
+    if(limitParam!==null&&(!/^\d+$/.test(limitParam)||limit<1||limit>100)||throughParam!==null&&(!/^\d+$/.test(throughParam)||!Number.isSafeInteger(through)||through>session.revision||through<after))return json(res,400,{error:'invalid_history_cursor'});
+    const camera=url.searchParams.get('camera')!=='0',first=session.frames[0].revision;
+    const frames=[];let bytes=0;
+    for(const frame of session.frames){
+     if(frame.revision<=after||frame.revision>through)continue;
+     if(frames.length===limit||limitParam!==null&&frames.length&&bytes+frame.bytes>8*1024*1024)break;
+     const {revision,world,cameraFrames}=frame;
+     frames.push(camera?{revision,world,cameraFrames}:{revision,world});
+     bytes+=frame.bytes;
+    }
+    const last=frames.at(-1)?.revision;
+    return json(res,200,{sessionId:session.id,...(session.forkedFrom?{forkedFrom:session.forkedFrom}:{}),revision:session.revision,statusRevision:session.statusRevision,running:session.running,speed:session.speed,...(sessionError(session)?{sessionError:sessionError(session)}:{}),...(session.simulationError?{simulationError:session.simulationError}:{}),truncated:after<first-1,...(limitParam!==null||throughParam!==null?{through,nextAfter:last!==undefined&&last<through?last:null}:{}),frames});
    }
    if(req.method==='GET'&&parts.length===4&&parts[2]==='observations'){const obs=readAgentObservation(session,parts[3],url.searchParams.get('include')==='device');return obs?json(res,200,obs):json(res,404,{error:'agent_not_found'})}
    if(parts[2]==='catalog'&&parts.length===3&&req.method==='GET'){

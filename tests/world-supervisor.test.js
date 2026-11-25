@@ -18,10 +18,21 @@ const {createSupervisor}=require('../server/world-supervisor'),Replay=require('.
   // Abort a request while a real worker is starting, then prove the slot is reclaimed.
   const pending=http.request(base+'/sessions',{method:'POST',headers:{'content-type':'application/json'}},r=>r.resume());pending.on('error',()=>{});pending.end('{}');await waitFor(()=>server.inspectWorkers().some(w=>!w.sessionId));pending.destroy();await waitFor(()=>!server.inspectWorkers().length);
   assert.equal((await req('/sessions','POST',{seed:-1}))[0],400);await waitFor(()=>!server.inspectWorkers().length);
+  const recoverable={seed:41,creationKey:'a'.repeat(64),creationExpiresAt:Date.now()+60_000};
+  const [made,replayed]=await Promise.all([ok('/sessions','POST',recoverable),ok('/sessions','POST',recoverable)]);
+  assert.equal(replayed.sessionId,made.sessionId);
+  assert.equal(replayed.adminToken,made.adminToken);
+  assert.equal(server.inspectWorkers().length,1);
+  assert.equal((await req('/sessions','POST',{...recoverable,seed:40}))[1].error,'creation_key_conflict');
+  assert.equal((await req('/sessions','POST',{...recoverable,creationExpiresAt:Date.now()-1}))[1].error,'creation_key_expired');
+  await ok('/sessions/'+made.sessionId,'DELETE',undefined,made.adminToken);
+  await waitFor(()=>!server.inspectWorkers().length);
   const a=await ok('/sessions','POST',{seed:42,physicsMode:'rapier'}),b=await ok('/sessions','POST',{seed:43,physicsMode:'rapier'}),aroot='/sessions/'+a.sessionId,broot='/sessions/'+b.sessionId;
   const workers=server.inspectWorkers();assert.equal(workers.length,2);assert.notEqual(workers[0].pid,workers[1].pid);assert(workers.every(w=>w.pid!==process.pid));
   assert.notEqual(a.recordingContext.runtime.instanceId,b.recordingContext.runtime.instanceId);assert.notEqual(a.recordingContext.runtime.instanceId,health.runtime.instanceId);
   assert.equal((await req('/sessions','POST',{}))[0],429);assert.equal((await req(broot,'GET',undefined,a.adminToken))[0],401);
+  const recoverableQuota={seed:44,creationKey:'b'.repeat(64),creationExpiresAt:Date.now()+60_000};
+  assert.equal((await req('/sessions','POST',recoverableQuota))[0],429);
   // Authentication can respond before the caller has finished uploading its body.
   const rejected=await new Promise((resolve,reject)=>{const pending=http.request(base+aroot+'/step',{method:'POST',headers:{authorization:'Bearer '+'x'.repeat(43),'content-type':'application/json','transfer-encoding':'chunked'}},response=>{response.resume();pending.end('1}');resolve(response.statusCode)});pending.on('error',reject);pending.write('{"count":')});assert.equal(rejected,401);
   // A slow download must not turn client backpressure into a world failure.
@@ -39,7 +50,7 @@ const {createSupervisor}=require('../server/world-supervisor'),Replay=require('.
   assert.equal(await adminStream.closed,1011);assert.equal(await viewStream.closed,1011);assert.equal((await req(aroot,'GET',undefined,a.adminToken))[1].error,'world_process_exited');
   assert.equal((await ok(broot+'/step','POST',{count:2},b.adminToken)).world.tick,9);assert.equal((await ok('/health')).worldProcesses.failed,1);
   const old=await ok('/event-journals/'+a.sessionId+'/replay?after=-1&limit=10','GET',undefined,a.adminToken);assert(!old.active);assert(!old.closed);assert.equal(old.metadata.runtime.instanceId,a.recordingContext.runtime.instanceId);assert.equal(old.frames.at(-1).revision,5);
-  const replacement=await ok('/sessions','POST',{seed:44});await ok('/sessions/'+replacement.sessionId,'DELETE',undefined,replacement.adminToken);await waitFor(()=>!server.inspectWorkers().some(w=>w.sessionId===replacement.sessionId));
+  const replacement=await ok('/sessions','POST',recoverableQuota);await ok('/sessions/'+replacement.sessionId,'DELETE',undefined,replacement.adminToken);await waitFor(()=>!server.inspectWorkers().some(w=>w.sessionId===replacement.sessionId));
   assert.equal((await req(aroot,'DELETE',undefined,observer))[0],401);await ok(aroot,'DELETE',undefined,a.adminToken);
   const fork=await ok('/event-journals/'+a.sessionId+'/fork','POST',{revision:5},a.adminToken),froot='/sessions/'+fork.sessionId;
   assert.equal(fork.recordingContext.forkedFrom.sessionId,a.sessionId);assert.notEqual(fork.recordingContext.runtime.instanceId,a.recordingContext.runtime.instanceId);assert.deepEqual(await ok(froot+'/catalog/'+saved.report.id,'GET',undefined,fork.adminToken),archive);

@@ -1,6 +1,6 @@
 'use strict';
 
-// Optional browser smoke test. Provide Playwright and, if needed, a Chrome executable.
+// Browser smoke test. Install Chromium with `npx playwright install chromium`.
 const {chromium} = require(process.env.BOX_PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const {spawn} = require('node:child_process');
@@ -28,7 +28,8 @@ async function dragCamera(page, camera) {
 
 (async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'box-task-browser-'));
-  const world = createServer({catalogPath: path.join(dir, 'catalog.sqlite3')});
+  const world = createServer({catalogPath: path.join(dir, 'catalog.sqlite3'),
+    journalDir: path.join(dir, 'journal'), replayJournal: true});
   await once(world.listen(0, '127.0.0.1'), 'listening');
   const worldUrl = 'http://127.0.0.1:' + world.address().port;
   let control, controlExit, browser, consoleServer;
@@ -101,9 +102,9 @@ async function dragCamera(page, camera) {
     await page.getByRole('button',{name:'登录',exact:true}).click();
     await page.waitForURL(observationUrl);
     const liveSource = page.locator('.mc-source').filter({hasText: /^只读世界服务$/});
-    await liveSource.waitFor({state:'attached'});
+    await liveSource.waitFor();
     await page.locator('#map3d').waitFor();
-    assert.equal(await page.locator('.mc-tool-dialog').evaluate(dialog => dialog.open), false);
+    assert.equal(await page.getByLabel('实验与世界设置', {exact: true}).evaluate(dialog => dialog.open), false);
     assert.equal(await page.getByLabel('管理令牌').count(),0);
     await page.reload();
     await liveSource.waitFor({state:'attached'});
@@ -194,11 +195,23 @@ async function dragCamera(page, camera) {
     await replayPage.goto(observationUrl);
     await replayPage.locator('.mc-source').filter({hasText: /^导入回放$/}).waitFor({state:'attached'});
     await replayPage.locator('#map3d').waitFor();
-    assert.equal(await replayPage.locator('.mc-tool-dialog').evaluate(dialog => dialog.open), false);
+    assert.equal(await replayPage.getByLabel('实验与世界设置', {exact: true}).evaluate(dialog => dialog.open), false);
     await replayPage.locator('.mc-feed').getByText(note,{exact:true}).waitFor();
     await replayPage.setViewportSize({width:390,height:844});
     await replayPage.locator(cameraSelector).scrollIntoViewIfNeeded();
     await replayPage.locator(`${cameraSelector}[data-ready]`).waitFor();
+    const replayFallback = await context.newPage();
+    await replayFallback.addInitScript(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (type, ...options) {
+        return type === 'webgl2' ? null : getContext.call(this, type, ...options);
+      };
+    });
+    await replayFallback.goto(observationUrl);
+    const replayImage = replayFallback.getByRole('img', {name:'drone-1 仿真摄像头画面', exact: true});
+    await replayImage.waitFor();
+    assert.match(await replayImage.getAttribute('src'), /^data:image\/svg\+xml/);
+    await replayFallback.close();
     const cookies=await page.context().cookies();
     const sessionCookie=cookies.find(cookie=>cookie.name==='threebox_console_session');
     assert(sessionCookie.httpOnly&&sessionCookie.sameSite==='Lax');
@@ -218,6 +231,22 @@ async function dragCamera(page, camera) {
     await replayPage.getByLabel('密码',{exact:true}).fill('browser-test-password');
     await replayPage.getByRole('button',{name:'登录',exact:true}).click();
     await replayPage.waitForURL(url+'/');
+    await replayPage.getByRole('button', {name: '场景', exact: true}).click();
+    const settings = replayPage.getByRole('dialog', {name: '场景与世界设置'});
+    await settings.getByLabel('随机种子').fill('77');
+    const created = replayPage.waitForResponse(response => response.request().method()==='POST' &&
+      new URL(response.url()).pathname==='/control/sessions');
+    await settings.getByRole('button', {name: '连接世界服务', exact: true}).click();
+    const receipt = await created;
+    assert.equal(receipt.status(), 201);
+    assert.equal(receipt.request().postDataJSON().seed, 77);
+    await settings.getByText('当前运行', {exact: true}).waitFor();
+    await settings.getByRole('button', {name: '切换浏览器预览', exact: true}).waitFor();
+    assert.match(await settings.locator('.mc-settings-current').innerText(), /种子\s+77/);
+    await settings.getByRole('button', {name: '关闭实验工具'}).click();
+    await replayPage.locator('.mc-header .mc-source').getByText('世界服务', {exact: true}).waitFor();
+    await replayPage.reload();
+    await replayPage.locator('.mc-header .mc-source').getByText('世界服务', {exact: true}).waitFor();
     assert.deepEqual(errors, []);
     console.log('Task browser: login, observer, SSE, live and replay cameras, SVG fallback, logout and safe redirects passed.');
   } finally {

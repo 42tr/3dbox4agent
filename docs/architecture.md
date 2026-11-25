@@ -32,7 +32,7 @@ BOX_PHYSICS_BACKEND=rust BOX_TASK_BACKEND=rust BOX_COMM_BACKEND=rust BOX_NAV_BAC
   BOX_WORLD_API_ONLY=1 npm start --workspace @42tr/3dbox4agent-world
 ```
 
-- World 使用 `WORLD_BIND`、`WORLD_PORT` 和 `BOX_WORLD_WORKERS`。默认最多 4 个并发 Worker。空闲且无实时订阅的会话默认 1 小时过期，可用 `BOX_SESSION_TTL_MS` 调整；持久日志默认保留 7 天，可用 `BOX_JOURNAL_RETENTION_MS` 调整。
+- World 使用 `WORLD_BIND`、`WORLD_PORT` 和 `BOX_WORLD_WORKERS`。默认最多 4 个并发 Worker。空闲且无实时订阅的会话默认 1 小时过期并释放 Worker，可用 `BOX_SESSION_TTL_MS` 调整。持久日志默认保留 7 天，可用 `BOX_JOURNAL_RETENTION_MS` 调整。
 - Console 使用 `CONSOLE_BIND`、`CONSOLE_PORT`、`BOX_CONTROL_URL` 和 `BOX_WORLD_URL`。如果修改上游端口，更新 Console 对应的 URL。Control 的设置见[接口指南](../packages/control-server/README.md)。
 - HTTP 服务默认接受 localhost 和 IP 形式的 Host。使用域名访问时，必须把域名加入逗号分隔的 `BOX_ALLOWED_HOSTS`，防止 DNS rebinding；Origin 仍必须与 Host 同源。
 
@@ -40,4 +40,4 @@ BOX_PHYSICS_BACKEND=rust BOX_TASK_BACKEND=rust BOX_COMM_BACKEND=rust BOX_NAV_BAC
 
 World 活动会话和凭据存在内存中，World 重启会结束这些会话。Control 使用 `control.sqlite3` 持久化 Runner 状态、外部 Agent 运行、凭据哈希、命令回执及事件；Control 重启可重新连接仍存活的 World 会话。Compose 将事件日志和实验目录 SQLite 存在 `world-data` 卷中，Runner 运行记录和回放存放在 `control-data` 卷。源码 Compose 可用 `BOX_REPLAY_JOURNAL=0` 只写事件。本地运行 World 时可用 `BOX_EVENT_JOURNAL_DIR` 启用日志，再设置 `BOX_REPLAY_JOURNAL=1` 保存可分支的快照。
 
-导出报告保留服务仍持有的历史，可能从中途开始。新版可以读取受支持格式的旧回放。从持久快照创建可继续推进的分支时，World 会核对运行时指纹，包括源码、依赖和后端。升级后需要继续旧实验时，保留原镜像或对应的运行时版本及日志访问凭据。
+实时历史是有限窗口，预算包含相机帧。`/sessions/:id/history` 支持 `after`、`limit`、`through` 分页，`camera=0` 省略派生画面。MCP 任务归档优先读取持久快照，Console 可根据快照渲染相机画面。日志快照不可用，或完整回放超过 v1 格式的 5000 帧或 50 MiB 上限时，归档使用实时历史窗口，并标记实际覆盖范围。新版可以读取受支持格式的旧回放。从持久快照创建可继续推进的分支时，World 会核对运行时指纹，包括源码、依赖和后端。升级后需要继续旧实验时，保留原镜像或对应的运行时版本及日志访问凭据。

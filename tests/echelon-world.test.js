@@ -1,5 +1,5 @@
 'use strict';
-const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),E=require('../src/engine'),Init=require('../server/rust-world-initialization'),P=require('../server/rust-physics'),D=require('../src/surface-domain'),Replay=require('../src/replay'),{bind}=require('./native-task-frame-support');
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),E=require('../src/engine'),Init=require('../server/rust-world-initialization'),P=require('../server/rust-physics'),D=require('../src/surface-domain'),Replay=require('../src/replay'),{bind,comparableAgentObservation}=require('./native-task-frame-support');
 const scene=require('../examples/scenes/shore-echelons.json');
 function differences(a,b,p=''){
  if(Object.is(a,b))return [];if(!a||!b||typeof a!=='object'||typeof b!=='object')return [{path:p,js:a,native:b}];
@@ -16,7 +16,7 @@ for(const physicsMode of ['kinematic','rapier'])for(const navigation of ['distan
   for(let i=0;i<1200&&!native.done;i++){
    if(executionMode!=='auto')for(const w of worlds)for(const a of w.agents){const o=E.observe(w,a.id),t=o.assignedTasks.find(t=>t.status==='active');if(!t||o.actions.some(x=>['pending','accepted'].includes(x.status)))continue;const common={requestId:'surface-'+a.id+'-'+w.tick,targetTick:w.tick+1,expiresTick:w.tick+40};let input;if(executionMode==='agent')input={...common,type:'execute_task',taskId:t.id};else if(t.withinReach)input={...common,type:'work_task',taskId:t.id};else{const point=Object.hasOwn(t,'approachPoint')?t.approachPoint:t.waypoint;if(!point)continue;input={...common,type:'move',target:{x:point[0],y:point[1]}}}const result=E.submitAction(w,a.id,input);assert(result.ok,JSON.stringify({mode:executionMode,physicsMode,tick:w.tick,agent:a.id,input,result}))}
    worlds.forEach((w,j)=>E.step(w,ps[j]));equal(E.snapshot(js),E.snapshot(native),physicsMode+'/'+navigation+'/'+native.tick);frames++;history.push(E.snapshot(native));
-   for(const a of native.agents){assert(D.bodyFree(native.surfaceDomain,a.mobility,[a.x,a.y]),a.id+' left its domain');equal(E.observe(js,a.id),E.observe(native,a.id),'observation/'+a.id+'/'+native.tick)}
+   for(const a of native.agents){assert(D.bodyFree(native.surfaceDomain,a.mobility,[a.x,a.y]),a.id+' left its domain');equal(comparableAgentObservation(js,a.id),comparableAgentObservation(native,a.id),'observation/'+a.id+'/'+native.tick)}
   }
   assert(native.done&&!native.failed,'mission must finish');assert.equal(native.tasks.filter(t=>t.status==='done').length,9);assert(native.agents.filter(a=>a.mobility==='water').some(a=>a.distance>20));assert(native.events.some(e=>e.kind==='part_loaded'));assert.equal(native.part.location,'consumed');
   if(physicsMode==='kinematic'&&executionMode==='auto'){
@@ -34,4 +34,4 @@ for(const physicsMode of ['kinematic','rapier'])for(const navigation of ['distan
   console.log(JSON.stringify({physicsMode,navigation,executionMode,tick:native.tick,complete:9,frames:history.length}));
  }finally{worlds.forEach(E.disposeWorld);ps.forEach(p=>p?.free())}
 }
-console.log('Echelon worlds: actual18-device9-task guide/water parallel preparation, dependency-gated deployment/consumable, exact JS/native frames and own observations, body legality and replay passed '+JSON.stringify({cases:18,frames}));
+console.log('Echelon worlds: actual18-device9-task guide/water parallel preparation, dependency-gated deployment/consumable, exact JS/native frames and common observations, body legality and replay passed '+JSON.stringify({cases:18,frames}));

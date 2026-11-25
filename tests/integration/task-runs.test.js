@@ -79,7 +79,10 @@ async function stdio(base, token) {
 
 (async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'box-task-runs-'));
-  const world = createSupervisor({maxWorkers: 4, worldOptions: {catalogPath: path.join(dir, 'catalog.sqlite3')}});
+  const world = createSupervisor({maxWorkers: 4, worldOptions: {
+    catalogPath: path.join(dir, 'catalog.sqlite3'), journalDir: path.join(dir, 'journal'),
+    replayJournal: true, maxHistoryBytes: 256 * 1024,
+  }});
   world.listen(0, '127.0.0.1'); await once(world, 'listening'); const worldUrl = 'http://127.0.0.1:' + world.address().port;
   let dropNextStep = false, dropNextCreation = false, rejectNextCreation = false;
   const proxy = httpServer.createServer((req, res) => {
@@ -238,7 +241,13 @@ async function stdio(base, token) {
     assert.equal(run.status, 'completed'); assert.equal(run.result.success, true); assert.equal(run.conditions.filter(c => c.done).length, 5);
     assert.equal(run.archive_status, 'ready', JSON.stringify(run));
     await http(base, `/runs/v1/runs/${id}/report`, token, undefined, 403);
-    const report = await http(base, `/runs/v1/runs/${id}/report`, operator); assert.equal(unwrapArchive(report).archive.frames.at(-1).done, true);
+    const report = await http(base, `/runs/v1/runs/${id}/report`, operator);
+    const {archive, coverage} = unwrapArchive(report);
+    assert.equal(archive.frames.at(-1).done, true);
+    assert.equal(coverage.start, 'complete');
+    assert.equal(archive.frames[0].tick, 0);
+    assert(archive.frames.length > 64);
+    assert(archive.frames.every(frame => !frame.cameraFrames));
     const events = await legacy.call('get_events', {run_id: id, limit: 200});
     assert(events.events.some(e => e.kind === 'agent.note')); assert(events.events.some(e => e.kind === 'tool.started'));
     assert(events.events.filter(e=>e.kind==='world.updated').every(e=>e.payload.scope==='console_only'));
@@ -255,8 +264,10 @@ async function stdio(base, token) {
     const primitiveArgs = {run_id: primitiveRun.run_id, control_epoch: primitiveRun.control_epoch};
     let workSerial = 0;
     async function primitiveObservation(agentId) {
-      return (await modern.call('observe', {run_id: primitiveRun.run_id, view: 'agent',
+      const observation = (await modern.call('observe', {run_id: primitiveRun.run_id, view: 'agent',
         agent_id: agentId, include_device: true})).observation;
+      assert.equal(observation.taskOperationsAvailable, true);
+      return observation;
     }
     async function primitiveAction(agentId, action, ticks) {
       const current = await primitiveObservation(agentId);

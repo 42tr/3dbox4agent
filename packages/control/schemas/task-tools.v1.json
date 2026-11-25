@@ -170,7 +170,7 @@
   },
   {
     "name": "box_observe",
-    "description": "Read scoped coordinator or device observation. Coordinator observations contain ready tasks and eligible devices.",
+    "description": "Read scoped coordinator or device observation. Coordinators see ready tasks and eligible devices. In primitive device observations, taskOperationsAvailable tells you whether work_task accepts a named operation. If false, submit work_task with the task ID and omit operation.",
     "inputSchema": {
       "type": "object",
       "properties": {

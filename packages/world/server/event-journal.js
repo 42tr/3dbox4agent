@@ -52,7 +52,7 @@ function parse(directory,id,tokenHash){
    revision=p.revision;if(p.type==='frame')lastFrame=p.revision;
    for(const event of p.events)if(!event||event.seq!==++eventCount)throw Error('journal_corrupt');records.push(p);
   }else if(p.type==='closed'){
-   if(!Number.isSafeInteger(p.revision)||p.revision<revision||(header.version===2&&p.revision!==lastFrame)||p.eventCount!==eventCount||!['deleted','server_shutdown'].includes(p.reason))throw Error('journal_corrupt');revision=p.revision;footer=p;
+   if(!Number.isSafeInteger(p.revision)||p.revision<revision||(header.version===2&&p.revision!==lastFrame)||p.eventCount!==eventCount||!['deleted','expired','server_shutdown'].includes(p.reason))throw Error('journal_corrupt');revision=p.revision;footer=p;
   }else throw Error('journal_corrupt');
  }
  return {header,records,partialTail,eventCount,revision,lastFrame,footer};

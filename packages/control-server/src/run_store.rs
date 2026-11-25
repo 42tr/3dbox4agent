@@ -63,6 +63,7 @@ impl Store {
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
           CREATE TABLE IF NOT EXISTS control_meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS task_runs(id TEXT PRIMARY KEY,owner TEXT NOT NULL,request TEXT NOT NULL,signature TEXT NOT NULL,body TEXT NOT NULL,UNIQUE(owner,request));
+          CREATE INDEX IF NOT EXISTS task_runs_active_owner ON task_runs(owner) WHERE json_extract(body,'$.status') IN ('starting','running','stopping');
           CREATE TABLE IF NOT EXISTS run_events(run TEXT NOT NULL,seq INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(run,seq));
           CREATE TABLE IF NOT EXISTS run_commands(run TEXT NOT NULL,tool TEXT NOT NULL,request TEXT NOT NULL,signature TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(run,tool,request));
           CREATE TABLE IF NOT EXISTS integrations(id TEXT PRIMARY KEY,hash TEXT NOT NULL UNIQUE,body TEXT NOT NULL);
@@ -99,12 +100,19 @@ impl Store {
         let rows = query.query_map([], |r| r.get::<_, String>(0))?;
         rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
     }
+    pub fn active_runs(&self) -> Result<Vec<Value>> {
+        let db = self.0.lock().unwrap();
+        let mut query = db.prepare("SELECT body FROM task_runs WHERE json_extract(body,'$.status') IN ('starting','running','stopping') ORDER BY rowid DESC")?;
+        let rows = query.query_map([], |r| r.get::<_, String>(0))?;
+        rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
+    }
     pub fn create(
         &self,
         mut run: Value,
         owner: &str,
         request: &str,
         signature: &str,
+        max_concurrency: u64,
     ) -> Result<(Value, bool)> {
         let mut db = self.0.lock().unwrap();
         let tx = db.transaction()?;
@@ -119,6 +127,12 @@ impl Store {
             anyhow::ensure!(hash == signature, "request_id_conflict");
             return Ok((serde_json::from_str(&body)?, false));
         }
+        let active: u64 = tx.query_row(
+            "SELECT COUNT(*) FROM task_runs WHERE owner=? AND json_extract(body,'$.status') IN ('starting','running','stopping')",
+            [owner],
+            |r| r.get(0),
+        )?;
+        anyhow::ensure!(active < max_concurrency, "run_concurrency_limit");
         append(&tx, &mut run, "run.created", json!({}))?;
         tx.execute(
             "INSERT INTO task_runs VALUES(?,?,?,?,?)",

@@ -1,7 +1,7 @@
 'use strict';
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const html=fs.readFileSync(process.argv[2]||'src/app.html','utf8');
-const start=html.lastIndexOf('\nreset();const catalogReplayHash=');
+const start=html.lastIndexOf('\nreset();restoreWorldSessionAfterReload();const catalogReplayHash=');
 assert(start>=0);
 const bootstrap=html.slice(start,html.indexOf('\n</script>',start));
 const transport=html.slice(html.indexOf('function controlFetch('),html.indexOf('function stopRemoteAccess('));
@@ -12,7 +12,7 @@ async function boot(address,{available=true,opener=false}={}){
  const context={
   location:new URL(address),window:{opener:opener?{}:null},
   $(id){if(!nodes.has(id))nodes.set(id,{hidden:true,textContent:''});return nodes.get(id)},
-  reset(){},render(){},loadReplay(){},history:{replaceState(){}},
+  reset(){},restoreWorldSessionAfterReload(){},render(){},loadReplay(){},history:{replaceState(){}},
   async fetch(route,options){requests.push({route,options});if(!available)throw Error('not a world service');return {ok:true,json:async()=>({protocol:3,features:{observerAccess:1,decisionPreconditions:1,worldProcessIsolation:1},worldProcesses:{limit:2},runtime:{physicsBackend:'rust',taskBackend:'rust',communicationBackend:'rust',navigationBackend:'rust'}})}},
   WebSocket:class {constructor(url){streams.push(url)}},
   remoteId:'session',remoteToken:'test-token',remoteObserver:false,observerEnded:false,remoteFailure:false,epoch:1,socket:null,

@@ -37,6 +37,7 @@ jobs:
           node tests/scene-native-contract.test.js
           node tests/kinematic-agent-collision.test.js
           node tests/camera-server.test.js
+          node tests/history-limit.test.js
           node tests/session-lifecycle.test.js
           node tests/rust-world-initialization-server.test.js
           node tests/charging.test.js
@@ -44,6 +45,8 @@ jobs:
           node tests/return-energy.test.js
           node tests/rust-world-advance.test.js
           node tests/rust-action-advance.test.js
+          node tests/surface-world.test.js
+          node tests/echelon-world.test.js
           node tests/evidence-mission.test.js
           node tests/openai-policy.test.js
           python3 tests/policy_compare_runtime_test.py
@@ -52,3 +55,8 @@ jobs:
           node tests/runner-token-reload.test.js
           node tests/integration/build-image.test.js
           node tests/integration/runner.test.js
+          node tests/integration/task-runs.test.js
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Console browser smoke test
+        run: node tests/integration/task-runs-browser.test.cjs

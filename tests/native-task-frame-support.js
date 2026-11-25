@@ -1,5 +1,7 @@
 'use strict';
+const assert=require('node:assert/strict');
 const crypto=require('node:crypto'),E=require('../src/engine'),C=require('../server/native-components'),NativeNav=require('../server/rust-navigation');
+const Operations=require('../packages/world/src/task-operations');
 const order=['execution','environment','tasks','actions','resources','peer','reports','perceptions','dispatch','requests','ledger'];
 function bind(w,p,{batch=true,probe,actionBatch=false,actionProbe,worldBatch=false,worldProbe}={}){
  const stores={},participants=[];
@@ -17,4 +19,17 @@ function bind(w,p,{batch=true,probe,actionBatch=false,actionProbe,worldBatch=fal
 }
 function raw(stores){return Object.fromEntries([...order,'control'].map(k=>[k,C.reference(stores[k],k).native]))}
 function hashes(stores,p,w){const rows=Object.entries(raw(stores)).map(([k,n])=>[k,crypto.createHash('sha256').update(k==='execution'?n.snapshot()+n.snapshotExecution():n.snapshot()).digest('hex')]);if(p)rows.push(['colliders',crypto.createHash('sha256').update(JSON.stringify(w.agents.map(a=>p.lidar(a,1.5,8,100)))).digest('hex')]);return rows}
-module.exports={bind,raw,hashes,order};
+function comparableAgentObservation(world,id){
+ const observation=E.observe(world,id),agent=world.agents.find(a=>a.id===id);
+ for(const row of observation.assignedTasks){
+  if(!row.behavior)continue;
+  const task=world.tasks.find(t=>t.id===row.id);
+  const detail=E.taskOperationsSupported(world)&&Operations.supported(task,agent)?E.describeTaskOperation(world,task,agent):undefined;
+  assert.deepEqual(row.workOperation,detail);
+  // Work-operation details are a feature of the rules backend. Compare the
+  // common primitive contract after checking the extension against its rules.
+  delete row.workOperation;
+ }
+ return observation;
+}
+module.exports={bind,raw,hashes,order,comparableAgentObservation};

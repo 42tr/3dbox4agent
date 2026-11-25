@@ -14,6 +14,10 @@ process.once('message',message=>{
  try{
   server=createServer({...message.options,maxSessions:1});
   server.on('error',()=>process.exit(1));
+  server.on('sessionExpired',sessionId=>{
+   if(!process.connected)return shutdown();
+   process.send({type:'session_expired',sessionId},error=>{if(error)shutdown()});
+  });
   server.listen(0,'127.0.0.1',()=>{if(!process.connected)return shutdown();process.send({type:'ready',port:server.address().port})});
  }catch{process.exit(1)}
 });

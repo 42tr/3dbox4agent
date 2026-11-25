@@ -27,6 +27,9 @@ use subtle::ConstantTimeEq;
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
+const MAX_ARCHIVE_BYTES: usize = 50 * 1024 * 1024;
+const MAX_ARCHIVE_FRAMES: usize = 5000;
+
 pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -246,6 +249,7 @@ impl RunService {
         for key in [
             "session",
             "creation_key",
+            "creation_expires_at",
             "credentials",
             "scene",
             "last_world_event",
@@ -575,22 +579,17 @@ impl RunService {
         );
         let request = field(&input, "request_id")?;
         let signature = hash(&input.to_string());
-        let runs = self.store.runs()?;
-        let existing = runs
-            .iter()
-            .any(|r| r["owner_id"] == p.id && r["request_id"] == request);
-        ensure!(
-            existing
-                || runs
-                    .iter()
-                    .filter(|r| r["owner_id"] == p.id && !terminal(r))
-                    .count()
-                    < (p.scopes["max_concurrency"].as_u64().unwrap_or(1) as usize),
-            "run_concurrency_limit"
-        );
-        ensure!(existing || runs.len() < 1000, "run_storage_limit");
-        let run = json!({"run_id":Uuid::new_v4().to_string(),"owner_id":p.id,"owner_label":p.scopes["label"],"request_id":request,"executor_kind":"external_mcp","scene_id":input["scene_id"],"objective_hash":hash(&objective.to_string()),"objective":objective,"config":config,"status":"starting","phase":"creating_world","control_epoch":1,"created_at":now(),"last_active":now(),"deadline":now()+config["max_wall_seconds"].as_u64().unwrap(),"event_cursor":0,"world_revision":0,"tick":0,"last_world_event":0,"creation_key":secret(),"credentials":{},"archive_status":"pending"});
-        let (r, _) = self.store.create(run, &p.id, request, &signature)?;
+        let created_at = now();
+        let deadline = created_at + config["max_wall_seconds"].as_u64().unwrap();
+        let creation_expires_at = deadline.min(created_at + 30 * 60) * 1000;
+        let run = json!({"run_id":Uuid::new_v4().to_string(),"owner_id":p.id,"owner_label":p.scopes["label"],"request_id":request,"executor_kind":"external_mcp","scene_id":input["scene_id"],"objective_hash":hash(&objective.to_string()),"objective":objective,"config":config,"status":"starting","phase":"creating_world","control_epoch":1,"created_at":created_at,"last_active":created_at,"deadline":deadline,"event_cursor":0,"world_revision":0,"tick":0,"last_world_event":0,"creation_key":secret(),"creation_expires_at":creation_expires_at,"credentials":{},"archive_status":"pending"});
+        let (r, _) = self.store.create(
+            run,
+            &p.id,
+            request,
+            &signature,
+            p.scopes["max_concurrency"].as_u64().unwrap_or(1),
+        )?;
         let id = field(&r, "run_id")?;
         let _guard = self.lock(id).lock_owned().await;
         let r = self.store.run(id)?;
@@ -609,7 +608,14 @@ impl RunService {
         let r = self.store.run(id)?;
         if r["session"].is_null() {
             let c = &r["config"];
-            let v=self.world("POST","/sessions",None,Some(json!({"creationKey":r["creation_key"],"sceneId":r["scene_id"],"seed":c["seed"],"physicsMode":c["physics_mode"],"executionMode":c["execution_mode"],"dispatchMode":"external"}))).await?;
+            let mut creation = json!({"creationKey":r["creation_key"],"sceneId":r["scene_id"],"seed":c["seed"],"physicsMode":c["physics_mode"],"executionMode":c["execution_mode"],"dispatchMode":"external"});
+            // Rows written by older Controls must retry with their original payload.
+            if let Some(expires_at) = r["creation_expires_at"].as_u64() {
+                creation["creationExpiresAt"] = json!(expires_at);
+            }
+            let v = self
+                .world("POST", "/sessions", None, Some(creation))
+                .await?;
             self.store.edit(
                 id,
                 |r| {
@@ -1080,6 +1086,101 @@ impl RunService {
     fn fail(&self, id: &str, reason: &str) -> Result<()> {
         self.stop(id, "failed", reason)
     }
+    async fn archive_frames(
+        &self,
+        run: &Value,
+        through: i64,
+        persisted: bool,
+        byte_limit: usize,
+    ) -> Result<(i64, Vec<Value>)> {
+        let session = field(&run["session"], "id")?;
+        let token = field(&run["session"], "admin_token")?;
+        let root = if persisted {
+            format!("/event-journals/{session}/replay")
+        } else {
+            format!("/sessions/{session}/history")
+        };
+        let mut after = -1;
+        let mut first = None;
+        let mut frames = Vec::new();
+        let mut bytes = 0;
+        loop {
+            let camera = if persisted { "&camera=0" } else { "" };
+            let route = format!("{root}?after={after}&through={through}&limit=64{camera}");
+            let page = self.world("GET", &route, Some(token), None).await?;
+            ensure!(page["sessionId"] == session, "invalid_world_history");
+            let rows = page["frames"].as_array().context("invalid_world_history")?;
+            ensure!(!rows.is_empty(), "invalid_world_history");
+            for row in rows {
+                let revision = row["revision"].as_i64().context("invalid_world_history")?;
+                if first.is_some() || persisted || page["truncated"] != true {
+                    ensure!(revision == after + 1, "invalid_world_history");
+                }
+                ensure!(
+                    revision >= 0 && revision <= through,
+                    "invalid_world_history"
+                );
+                first.get_or_insert(revision);
+                after = revision;
+                let mut world = row["world"].clone();
+                ensure!(world.is_object(), "invalid_world_history");
+                if row["cameraFrames"].is_object() {
+                    world["cameraFrames"] = row["cameraFrames"].clone();
+                }
+                bytes += serde_json::to_vec(&world)?.len() + 1;
+                ensure!(
+                    bytes <= byte_limit && frames.len() < MAX_ARCHIVE_FRAMES,
+                    "archive_too_large"
+                );
+                frames.push(world);
+            }
+            if after == through {
+                break;
+            }
+            ensure!(page["nextAfter"] == after, "invalid_world_history");
+        }
+        Ok((first.context("invalid_world_history")?, frames))
+    }
+    async fn archive(&self, id: &str, run: &Value) -> Result<String> {
+        let snapshot = self.snapshot(run).await?;
+        let through = snapshot["revision"]
+            .as_i64()
+            .context("invalid_world_history")?;
+        let world = &snapshot["world"];
+        let mut report = json!({
+            "format":"3dbox-prototype-v1", "source":"server", "recordingContext":run["recording_context"],
+            "config":{"seed":run["config"]["seed"],"policy":world["policy"],"sceneId":run["scene_id"],"scene":scene()},
+            "metrics":snapshot["metrics"], "events":world["events"],
+            "coverage":{"start":"partial", "end":if world["done"] == true {"finished"} else {"unfinished"},"revisionRange":[through,through]},
+            "frames":[]
+        });
+        let byte_limit = MAX_ARCHIVE_BYTES.saturating_sub(serde_json::to_vec(&report)?.len());
+        let persisted = snapshot["journal"]["snapshots"] == true
+            && snapshot["journal"]["healthy"] == true
+            && through < MAX_ARCHIVE_FRAMES as i64;
+        let (first, frames) = match self
+            .archive_frames(run, through, persisted, byte_limit)
+            .await
+        {
+            Err(error) if persisted => {
+                tracing::warn!(run_id = id, %error, "Full replay unavailable; using retained history");
+                self.archive_frames(run, through, false, byte_limit).await?
+            }
+            result => result?,
+        };
+        if first == 0 {
+            report["coverage"]["start"] = json!("complete");
+        }
+        report["coverage"]["revisionRange"][0] = json!(first);
+        report["frames"] = Value::Array(frames);
+        let bytes = serde_json::to_vec(&report)?;
+        ensure!(bytes.len() <= MAX_ARCHIVE_BYTES, "archive_too_large");
+        let digest = hash(std::str::from_utf8(&bytes)?);
+        let path = self.data_dir.join(format!("task-{id}.json"));
+        tokio::task::spawn_blocking(move || crate::run_store::write_artifact(&path, &bytes))
+            .await??;
+        Ok(digest)
+    }
     async fn finalize(&self, id: &str) -> Result<()> {
         let r = self.store.run(id)?;
         if r["status"] != "stopping" {
@@ -1100,15 +1201,7 @@ impl RunService {
         }
         if r["session"]["id"].is_string() {
             if r["archive_status"] == "pending" {
-                let archive=async {
-                    let snapshot=self.snapshot(&r).await?;
-                    let history=self.session_request(&r,"GET","/history",field(&r["session"],"admin_token")?,None).await?;
-                    let w=&snapshot["world"];let frames=history["frames"].as_array().context("invalid_world_history")?;
-                    let report=json!({"format":"3dbox-prototype-v1","source":"server","recordingContext":r["recording_context"],"config":{"seed":r["config"]["seed"],"policy":w["policy"],"sceneId":r["scene_id"],"scene":scene()},"metrics":snapshot["metrics"],"events":w["events"],"coverage":{"start":if frames.first().is_some_and(|f|f["revision"]==0){"complete"}else{"partial"},"end":if w["done"]==true{"finished"}else{"unfinished"},"revisionRange":[frames.first().map(|f|f["revision"].clone()).unwrap_or(Value::Null),snapshot["revision"]]},"frames":frames.iter().map(|f|{let mut world=f["world"].clone();if f["cameraFrames"].is_object(){world["cameraFrames"]=f["cameraFrames"].clone()}world}).collect::<Vec<_>>()});
-                    let bytes=serde_json::to_vec(&report)?;ensure!(bytes.len()<=50*1024*1024,"archive_too_large");
-                    crate::run_store::write_artifact(&self.data_dir.join(format!("task-{id}.json")),&bytes)?;
-                    Ok::<_,anyhow::Error>(hash(std::str::from_utf8(&bytes)?))
-                }.await;
+                let archive = self.archive(id, &r).await;
                 self.store.edit(
                     id,
                     |r| {
@@ -1158,7 +1251,7 @@ impl RunService {
         Ok(())
     }
     pub async fn recover(&self) -> Result<()> {
-        for r in self.store.runs()? {
+        for r in self.store.active_runs()? {
             if r["status"] == "starting" {
                 let id = field(&r, "run_id")?;
                 if let Err(error) = self.setup(id).await {
@@ -1226,7 +1319,14 @@ impl RunService {
             let mut last_probe = BTreeMap::<String, u64>::new();
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                let Ok(runs) = svc.store.runs() else { continue };
+                let Ok(runs) = svc.store.active_runs() else {
+                    continue;
+                };
+                last_probe.retain(|id, _| runs.iter().any(|r| r["run_id"] == id.as_str()));
+                svc.locks
+                    .lock()
+                    .unwrap()
+                    .retain(|_, lock| Arc::strong_count(lock) > 1);
                 for r in runs {
                     let Some(id) = r["run_id"].as_str() else {
                         continue;
@@ -1356,7 +1456,7 @@ impl RunService {
             .context("integration_not_found")?;
         b["revoked"] = json!(true);
         self.store.put_integration(id, &h, &b)?;
-        for r in self.store.runs()? {
+        for r in self.store.active_runs()? {
             if r["owner_id"] == id && !terminal(&r) {
                 self.stop(field(&r, "run_id")?, "cancelled", "integration_revoked")?
             }

@@ -478,6 +478,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
 .mc-header-actions { gap: 12px; margin-left: auto; white-space: nowrap; }
 .mc-header-account:empty { display: none; }
 .mc-header-account .mc-pill { min-height: 30px; font-size: 12px; }
+.mc-run-context { display: grid; gap: 2px; justify-items: end; font-size: .6875rem; line-height: 1.25; }
+.mc-source { color: var(--ink); }
 .mc-mission-state { color: var(--muted); }
 .mc-mission-state.running { color: #67e4a8; }
 .mc-mission-state.running::before {
@@ -551,7 +553,6 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  white-space: nowrap;
 }
 .mc-menu-items button:hover:not(:disabled), .mc-menu-items [aria-pressed="true"] { background: #373c55; color: #dadbff; }
-.mc-source { padding: 4px 10px; color: var(--muted); }
 .mc-workspace {
  display: grid;
  grid-template: auto minmax(0,1fr) / minmax(0,1fr) clamp(310px,30.4vw,500px);
