@@ -39,6 +39,7 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   controls.enableDamping=true;controls.dampingFactor=.08;controls.minDistance=18;controls.maxDistance=210;controls.zoomToCursor=true;
   controls.maxPolarAngle=Math.PI*.49;controls.target.set(0,0,0);
   let lunarCamera=false,industrial=false,modern=false,center=50,cameraFocus=null,overviewCamera=null;
+  let trackedAgentId='';
   let followRadius=Infinity,lastRequestedRadius=Infinity;
   const followTarget=new THREE.Vector3();
   const toWorld=p=>({x:p.x+center,y:p.z+center,z:p.y});
@@ -82,6 +83,32 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
     }
     controls.update();
     controls.enableDamping=true;
+  }
+  function updateCameraFocus(sceneChanged=false){
+    const nextFocus=agents.has(lastSelected)?lastSelected:agents.has(trackedAgentId)?trackedAgentId:null;
+    if(!sceneChanged&&cameraFocus===nextFocus)return false;
+    if(!sceneChanged&&!cameraFocus&&nextFocus){
+      overviewCamera={position:camera.position.clone(),target:controls.target.clone()};
+    }
+    cameraFocus=nextFocus;
+    if(!cameraFocus&&overviewCamera){
+      controls.enableDamping=false;
+      controls.update();
+      setCameraLimits(false);
+      camera.position.copy(overviewCamera.position);
+      controls.target.copy(overviewCamera.target);
+      controls.update();
+      controls.enableDamping=true;
+      overviewCamera=null;
+    }else{
+      resetCamera();
+    }
+    return true;
+  }
+  function setTrackedAgent(id){
+    if(trackedAgentId===id)return;
+    trackedAgentId=id;
+    updateCameraFocus();
   }
   const ambient=new THREE.HemisphereLight(0xc9d5e7,0x766148,2.0);scene.add(ambient);
   const sun=new THREE.DirectionalLight(0xfff2df,3.6);sun.position.set(-50,60,-40);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-110,right:110,top:110,bottom:-110,near:1,far:250});sun.shadow.bias=-.0004;sun.shadow.normalBias=.12;scene.add(sun);const lunarEnvironment=createLunarEnvironment(scene,renderer);
@@ -253,7 +280,15 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
     const hit=new THREE.Mesh(new THREE.BoxGeometry(5,5,5),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));hit.position.y=window.SandboxSensors.isAir(a)?0:2;hit.userData.agentId=a.id;g.add(hit);pickables.push(hit);scene.add(g);if(lastState?.sceneId?.startsWith('lunar')&&model!=='air')lunarEnvironment.agentModel(visual,a.role);agents.set(a.id,{group:g,hit,visualKey:a.role+'|'+model+'|'+(lastState?.sceneId?.startsWith('lunar')?'lunar':'other')});if(!lastState?.sceneId?.startsWith('lunar'))fitAgentVisual(visual,hit);
   }
   function focusTerrainEffects(state,selected){return state.agents.some(a=>a.id===selected)?[]:state.terrainEffects||[]}
-  function update(state,selected,showLinks=true,options={}){const previousDisplay=lastState;const smooth=motion.eligible(lastState,state,options.previous,selected,lastSelected,options.running,reducedMotion?.matches),same=state===lastState&&selected===lastSelected,now=performance.now();lastState=state;lastSelected=selected;const lunar=['lunar-base-v1','lunar-terrain-v1','lunar-sampling-v1','lunar-outpost-v1','lunar-heightfield-v1','lunar-thermal-v1','lunar-materials-v1','lunar-relay-v1','lunar-construction-v1','lunar-rescue-v1','lunar-power-v1'].includes(state.sceneId),shore=state.sceneId==='shore-coordination-v1'||!!state.surfaceDomain;const cameraLayout=lunar?(['lunar-outpost-v1','lunar-heightfield-v1','lunar-thermal-v1','lunar-materials-v1','lunar-relay-v1','lunar-construction-v1','lunar-rescue-v1','lunar-power-v1'].includes(state.sceneId)?'outpost':'lunar'):false;const sceneChanged=previousDisplay?.sceneId!==state.sceneId||previousDisplay?.worldSize!==state.worldSize||lunarCamera!==cameraLayout;
+  function update(state,selected,showLinks=true,options={}){
+    const previousDisplay=lastState;
+    const selectionChanged=selected!==lastSelected;
+    const movingLive=options.running||(options.liveObserver&&!!trackedAgentId);
+    const smooth=motion.eligible(lastState,state,options.previous,selected,lastSelected,movingLive,reducedMotion?.matches);
+    const same=state===lastState&&!selectionChanged,now=performance.now();
+    lastState=state;
+    lastSelected=selected;
+    const lunar=['lunar-base-v1','lunar-terrain-v1','lunar-sampling-v1','lunar-outpost-v1','lunar-heightfield-v1','lunar-thermal-v1','lunar-materials-v1','lunar-relay-v1','lunar-construction-v1','lunar-rescue-v1','lunar-power-v1'].includes(state.sceneId),shore=state.sceneId==='shore-coordination-v1'||!!state.surfaceDomain;const cameraLayout=lunar?(['lunar-outpost-v1','lunar-heightfield-v1','lunar-thermal-v1','lunar-materials-v1','lunar-relay-v1','lunar-construction-v1','lunar-rescue-v1','lunar-power-v1'].includes(state.sceneId)?'outpost':'lunar'):false;const sceneChanged=previousDisplay?.sceneId!==state.sceneId||previousDisplay?.worldSize!==state.worldSize||lunarCamera!==cameraLayout;
     lunarCamera=cameraLayout;
     industrial=isIndustrialPark(state.sceneId)&&!state.heightfield&&!shore&&((state.worldSize??100)===100||state.sceneId==='industrial-park-v2'&&state.worldSize===224);
     if(sceneChanged)overviewCamera=null;
@@ -268,29 +303,10 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
       park.setDetail(park.yard,quality.profile(qualityName).detail);
     }
     lunarEnvironment.root.visible=lunar;parkGround.visible=!industrial&&!lunar&&!state.heightfield;parkGround.scale.set((state.worldSize??100)/100,1,(state.worldSize??100)/100);updateField(state,lunar);if(lunar)lunarEnvironment.mount(state.obstacles,state.heightfield);roads.visible=!industrial&&!lunar&&!shore&&!state.heightfield&&center===50;trees.visible=!industrial&&!lunar&&!shore&&quality.profile(qualityName).detail;shoreWater.visible=shore&&!state.surfaceDomain;surfacePresentation.update(state.surfaceDomain,state.terrain||[],focusTerrainEffects(state,selected));ground.color.setHex(lunar?0x8b8985:shore?0xd8c9a5:0xc7dbd1);building.color.setHex(lunar?0xbcbcb6:shore?0xc4b89b:0xf4f7f3);roof.color.setHex(lunar?0x8b8f8c:shore?0x938f7d:0xb1c9bf);const backdrop=lunar?0x756754:industrial?0x758a94:0xdce9e4;renderer.setClearColor(backdrop);scene.fog.color.setHex(backdrop);updateBuildings(lunar&&state.obstacles.some(o=>o.id==='habitat')?[]:state.obstacles);scene.fog.near=lunar?160:modern?475:industrial?345:230;scene.fog.far=lunar?330:modern?610:industrial?485:400;const focus=state.agents.find(a=>a.id===selected);updateFixedSensors(state.fixedSensors||[],!focus);updateRoadblocks(state.roadblocks||[],!focus);updateRisk(focus?[]:state.riskZones||[]);updateTerrain(lunar?[]:(state.terrain||[]).filter(z=>!state.surfaceDomain||surfaceDomain.regionKind(state.surfaceDomain,z)!=='water'),focus?[]:state.terrainEffects||[]);const observation=focus?window.SandboxEngine.observe(state,focus.id):null,visibleIds=new Set(observation?.nearby.map(a=>a.id)||[]);updateConstruction(state,window.SandboxConstruction.visualPlan(state.construction,!!focus));updateLinks(focus?[]:window.SandboxLinks.activeHops(state),!focus&&showLinks);
-    for(const a of state.agents){const old=agents.get(a.id),model=window.SandboxAgentVisual.model(a,window.SandboxSensors.isAir(a)),key=a.role+'|'+model+'|'+(lastState?.sceneId?.startsWith('lunar')?'lunar':'other');if(old&&old.visualKey!==key){old.group.userData.releaseSurface?.();scene.remove(old.group);pickables.splice(pickables.indexOf(old.hit),1);old.group.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedAgentAsset&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()});old.hit.material.dispose();agents.delete(a.id)}if(!agents.has(a.id))createAgent(a);const {group}=agents.get(a.id),wasVisible=group.visible,visible=!focus||a.id===focus.id||visibleIds.has(a.id),height=window.SandboxSensors.isAir(a)?(a.flightZ??16):floor(a.x,a.y),target={x:a.x-center,y:a.y-center};if(smooth&&old&&old.visualKey===key&&wasVisible&&visible){transitions.set(a.id,{from:{x:group.position.x,y:group.position.z},to:target,start:now,duration:options.duration||50});group.position.y=height}else if(!same||!options.running){transitions.delete(a.id);group.position.set(target.x,height,target.y)}group.visible=visible;if((lunar||modern)&&model!=='air'){const previous=previousDisplay&&state.tick===previousDisplay.tick+1&&state.sceneId===previousDisplay.sceneId?previousDisplay.agents.find(p=>p.id===a.id):null;group.rotation.y=vehicleHeading.yaw(a,previous,group.rotation.y)}else group.rotation.y=model==='wheeled'?Math.PI/2:0;group.traverse(o=>{if(o.isMesh&&o!==agents.get(a.id).hit)o.material=a.disabled?disabledMaterial(o.material):restoreMaterial(o.material)});}
+    for(const a of state.agents){const old=agents.get(a.id),model=window.SandboxAgentVisual.model(a,window.SandboxSensors.isAir(a)),key=a.role+'|'+model+'|'+(lastState?.sceneId?.startsWith('lunar')?'lunar':'other');if(old&&old.visualKey!==key){old.group.userData.releaseSurface?.();scene.remove(old.group);pickables.splice(pickables.indexOf(old.hit),1);old.group.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedAgentAsset&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()});old.hit.material.dispose();agents.delete(a.id)}if(!agents.has(a.id))createAgent(a);const {group}=agents.get(a.id),wasVisible=group.visible,visible=!focus||a.id===focus.id||visibleIds.has(a.id),height=window.SandboxSensors.isAir(a)?(a.flightZ??16):floor(a.x,a.y),target={x:a.x-center,y:a.y-center};if(smooth&&old&&old.visualKey===key&&wasVisible&&visible){transitions.set(a.id,{from:{x:group.position.x,y:group.position.z},to:target,start:now,duration:options.duration||50});group.position.y=height}else if(!same||!movingLive){transitions.delete(a.id);group.position.set(target.x,height,target.y)}group.visible=visible;if((lunar||modern)&&model!=='air'){const previous=previousDisplay&&state.tick===previousDisplay.tick+1&&state.sceneId===previousDisplay.sceneId?previousDisplay.agents.find(p=>p.id===a.id):null;group.rotation.y=vehicleHeading.yaw(a,previous,group.rotation.y)}else group.rotation.y=model==='wheeled'?Math.PI/2:0;group.traverse(o=>{if(o.isMesh&&o!==agents.get(a.id).hit)o.material=a.disabled?disabledMaterial(o.material):restoreMaterial(o.material)});}
     const ids=new Set(state.agents.map(a=>a.id));for(const [id,v] of agents)if(!ids.has(id)){v.group.userData.releaseSurface?.();scene.remove(v.group);v.group.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedAgentAsset&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()});v.hit.material.dispose();pickables.splice(pickables.indexOf(v.hit),1);agents.delete(id);transitions.delete(id)}
-    const nextFocus=focus?.id||null;
-    const viewChanged=sceneChanged||cameraFocus!==nextFocus;
-    if(viewChanged){
-      if(!sceneChanged&&!cameraFocus&&nextFocus){
-        overviewCamera={position:camera.position.clone(),target:controls.target.clone()};
-      }
-      cameraFocus=nextFocus;
-      if(!cameraFocus&&overviewCamera){
-        controls.enableDamping=false;
-        controls.update();
-        setCameraLimits(false);
-        camera.position.copy(overviewCamera.position);
-        controls.target.copy(overviewCamera.target);
-        controls.update();
-        controls.enableDamping=true;
-        overviewCamera=null;
-      }else{
-        resetCamera();
-      }
-    }
-    if(viewChanged||options.thumbnailContext!==thumbnailContext){
+    const cameraChanged=updateCameraFocus(sceneChanged);
+    if(cameraChanged||selectionChanged||options.thumbnailContext!==thumbnailContext){
       thumbnailContext=options.thumbnailContext;
       refreshThumbnails();
     }
@@ -495,5 +511,5 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
     thumbnails(now);
   }
   requestAnimationFrame(animate);
-  return {update,resetCamera,setQuality};
+  return {update,resetCamera,setQuality,setTrackedAgent};
 };

@@ -1,5 +1,5 @@
 import {RunnerPanel} from './runner-panel';
-import {AgentRunLink,AgentRunPanel,AgentRunTimeline,readRunLink} from './agent-run-panel';
+import {AgentRunLink,AgentRunPanel,AgentRunTimeline,readRunLink,useRunOperationAgent} from './agent-run-panel';
 import {ConsoleAccount} from './console-session';
 import {createPlanReviewController,type PlanView} from './plan-review';
 import {PlanReviewControls} from './plan-review-panel';
@@ -11,7 +11,7 @@ import {projectMaterials,type MaterialView} from './material-view';
 import {MaterialPanel} from './material-panel';
 import React, {useState,useRef,useEffect,useLayoutEffect,useSyncExternalStore} from 'react';
 import {createRoot} from 'react-dom/client';
-import {flushSync} from 'react-dom';
+import {createPortal,flushSync} from 'react-dom';
 import {Planet, Cube, Play, Pause, Crosshair, CaretDown, ArrowUp, X, SlidersHorizontal, DotsThree, Drone, Robot, Truck, Check, Broadcast} from '@phosphor-icons/react';
 import styles from './mission-control.css';
 import {renderCameraFrame} from '../../world/server/camera-renderer.js';
@@ -42,7 +42,7 @@ type ThermalState={temperatureC:number;peakC:number;protected:boolean;trips:numb
 type CameraConfig={enabled?:boolean;mount?:number[];yaw?:number;pitch?:number;fov?:number;range?:number;updateTicks?:number;resolution?:[number,number]};
 type CameraFrame={version?:number;agentId:string;tick:number;width:number;height:number;mimeType?:string;yaw?:number;pitch?:number;fov?:number;svg?:string;url?:string};
 type Agent={rescue?:{workTicks:number};camera?:CameraConfig;mobility?:string;sensorRange?:number;communicationRange?:number;speed?:number;deployableRelay?:true;relayState?:{deployed:boolean;deployedTick?:number;taskId?:string;position?:[number,number]};thermal?:{limitC:number;resumeC:number};thermalState?:ThermalState;id:string;name:string;role:string;battery:number;status:string;disabled:boolean;x:number;y:number;taskId?:string;capabilities?:string[]};
-type Mission={cardTasks?:DeviceTask[];cardTaskTypes?:Pick<DeviceTask,'capability'|'behavior'>[];cameraFrames?:Record<string,CameraFrame>;renderReplayCamera?:(agentId:string)=>CameraFrame|undefined;constructionConfigured?:boolean;construction?:ConstructionView|null;materials?:MaterialView|null;heightfield?:{rows:number;cols:number;heights:number[];maxSlopeDegrees:number};replay?:ReplayView;chain?:TaskChainView;messages?:MessageContext;flow?:FlowView;sceneId:string;worldSize?:number;sceneName:string;tick:number;running:boolean;speed?:number;speedDisabled?:boolean;faultDisabled?:boolean;physicsMode?:string;executionMode?:string;playLabel?:string;statusLabel?:string;dispatchMode?:string;done:boolean;failed:boolean;selected:string;agents:Agent[];tasks:ExecutionTask[];events:ExecutionEvent[];frame:number;frames:number;is3d:boolean;available3d:boolean;graphicsFailure?:{code:string;title:string;body:string;help:string}|null;obstacles?:any[];source:string;connectAvailable?:boolean;connectDisabled?:boolean;connectLabel?:string;playDisabled:boolean;resetDisabled:boolean;connectionError?:string;creationPending?:boolean;sessionCleanup?:{busy:boolean;mayBeRunning:boolean};lidarAvailable?:boolean;sceneDisabled:boolean;observer:boolean;remoteSession?:boolean;manual?:AssignmentContext;device?:DeviceContext;disturbances?:DisturbanceContext;settings?:SettingsContext;coordination?:CoordinatorContext;commandNodes?:NodeView;planReview?:PlanView};
+type Mission={cardTasks?:DeviceTask[];cardTaskTypes?:Pick<DeviceTask,'capability'|'behavior'>[];cameraFrames?:Record<string,CameraFrame>;renderReplayCamera?:(agentId:string)=>CameraFrame|undefined;constructionConfigured?:boolean;construction?:ConstructionView|null;materials?:MaterialView|null;heightfield?:{rows:number;cols:number;heights:number[];maxSlopeDegrees:number};replay?:ReplayView;chain?:TaskChainView;messages?:MessageContext;flow?:FlowView;sceneId:string;worldSize?:number;sceneName:string;tick:number;running:boolean;speed?:number;speedDisabled?:boolean;faultDisabled?:boolean;physicsMode?:string;executionMode?:string;playLabel?:string;statusLabel?:string;dispatchMode?:string;done:boolean;failed:boolean;selected:string;agents:Agent[];tasks:ExecutionTask[];events:ExecutionEvent[];frame:number;frames:number;is3d:boolean;available3d:boolean;graphicsFailure?:{code:string;title:string;body:string;help:string}|null;obstacles?:any[];source:string;connectAvailable?:boolean;connectDisabled?:boolean;connectLabel?:string;playDisabled:boolean;resetDisabled:boolean;connectionError?:string;creationPending?:boolean;sessionCleanup?:{busy:boolean;mayBeRunning:boolean};lidarAvailable?:boolean;sceneDisabled:boolean;observer:boolean;observerRunId?:string;remoteSession?:boolean;manual?:AssignmentContext;device?:DeviceContext;disturbances?:DisturbanceContext;settings?:SettingsContext;coordination?:CoordinatorContext;commandNodes?:NodeView;planReview?:PlanView};
 let snapshot:Mission={sceneId:DEFAULT_SCENE_ID,sceneName:'现代工业园区',tick:0,running:false,done:false,failed:false,selected:'global',agents:[],tasks:[],events:[],frame:0,frames:0,is3d:false,available3d:false,source:'浏览器仿真',playDisabled:true,resetDisabled:true,sceneDisabled:true,observer:false};
 let actions:any={};const subscribers=new Set<()=>void>();
 (window as any).SandboxMissionUI={update(next:Mission){snapshot=next;subscribers.forEach(f=>f())},setActions(next:any){actions=next},renderReplayCamera(world:{agents:Agent[]},agentId:string){
@@ -89,12 +89,12 @@ const toolSections = new Map([
 const subscribe=(fn:()=>void)=>{subscribers.add(fn);return()=>{subscribers.delete(fn)}};
 const act=(id:string)=>actions.click?.(id);
 const select=(id:string,value:string)=>actions.select?.(id,value);
-async function openLinkedRun(kind:'observer'|'report',load:()=>Promise<unknown>,signal:AbortSignal){
+async function openLinkedRun(kind:'observer'|'report',load:()=>Promise<unknown>,signal:AbortSignal,runId:string){
  if(snapshot.remoteSession&&!snapshot.observer)throw Error('请先断开当前世界会话，或在新标签页打开观察链接。');
  if(kind==='observer'){
   const access=await load();
   if(signal.aborted)return;
-  await actions.openRunnerObserver(access,signal);
+  await actions.openRunnerObserver(access,signal,runId);
  }else{
   await actions.openRunnerReplay(load,signal);
  }
@@ -247,6 +247,7 @@ function App(){
  const [showCommand,setShowCommand]=useState(false);
  const [toolRoute,setToolRoute]=useState(readToolRoute);
  const [viewTools,setViewTools]=useState(false);
+ const [autoFollow,setAutoFollow]=useState(true);
  const [runChange,setRunChange]=useState<'reset'|'connect'|'retry'>('reset');
  const [assignmentRequest,setAssignmentRequest]=useState<AssignmentRequest|null>(null);
  const ready=s.frames>0,toolsOpen=!!toolRoute,toolTitle=toolRoute?.title??'实验与世界设置';
@@ -339,10 +340,16 @@ function App(){
  const focused=s.selected!=='global';
  const complete=s.tasks.filter(t=>t.status==='done').length;
  const cameraHistory=s.source==='导入回放'||s.frame<s.frames-1;
+ const operationAgentId=useRunOperationAgent(s.observerRunId);
+ const canAutoFollow=!!s.observerRunId&&s.is3d;
+ const followedAgentId=canAutoFollow&&autoFollow&&!focused&&!cameraHistory&&s.agents.some(a=>a.id===operationAgentId)?operationAgentId:'';
+ const viewToolbar=viewTools&&canAutoFollow?stage.current?.querySelector('.mc-world > .toolbar'):null;
+ useLayoutEffect(()=>{actions.followAgent?.(followedAgentId)},[followedAgentId]);
  const cameraMode=s.available3d?'webgl':s.remoteSession&&!cameraHistory?'remote':'still';
  const activeTask=s.tasks.find(t=>t.status==='active');
  const task=activeTask||s.tasks.find(t=>t.status!=='done');
  const taskAgent=activeTask?s.agents.find(a=>a.id===activeTask.assignee):undefined;
+ const stageAgentId=followedAgentId||taskAgent?.id;
  const orderedAgents=[...s.agents].sort((a,b)=>devicePriority(a,taskAgent)-devicePriority(b,taskAgent));
  const inspectorWorld=s.manual?.key||s.sceneId;
  const pinnedId=inspected?.world===inspectorWorld?inspected.id:null;
@@ -365,7 +372,7 @@ function App(){
  const displayTitle=task?.name||(s.done?s.failed?'任务失败':'任务完成':focused?'观察 '+s.selected:ready?'等待任务':'正在加载');
  const sceneTitle=s.sceneId==='lunar-outpost-v1'&&s.sceneName==='月面基地设施协作'?'月球基地 · 勘察与设施修复':s.sceneName;
  const status=s.statusLabel||(s.done?s.failed?'任务失败':'任务完成':s.running?'运行中':'等待运行');
- const viewLabel=focused?s.selected:s.is3d?'全局观察':'二维观察';
+ const viewLabel=focused?s.selected:followedAgentId?'跟随 '+followedAgentId:s.is3d?'全局观察':'二维观察';
  const openDeviceTools=(agent:Agent,rescue=false)=>{
   select('deviceagent',agent.id);
   openTools(rescue?'现场救援':'设备操作');
@@ -489,6 +496,8 @@ function App(){
       onClick={()=>setViewTools(!viewTools)} title={s.is3d?'拖动旋转 / 滚轮缩放':undefined}>
       <Crosshair size={17}/>{viewLabel}<CaretDown size={12}/>
      </button>
+     {viewToolbar&&createPortal(<button className="btn mc-follow-agent" type="button" aria-pressed={autoFollow}
+      onClick={()=>{if(!autoFollow&&focused)select('view','global');setAutoFollow(!autoFollow)}}>自动跟随 Agent</button>,viewToolbar)}
      {s.heightfield&&<div className="mc-terrain-legend">坡度上限 {s.heightfield.maxSlopeDegrees}° · 琥珀区域禁行</div>}
      {!s.available3d&&s.graphicsFailure&&<div className="mc-graphics-note" role="status">
       <Cube size={17}/><div><b>{s.graphicsFailure.title}</b><p>{s.graphicsFailure.body}</p><small>{s.graphicsFailure.help}</small></div>
@@ -497,7 +506,7 @@ function App(){
       <canvas key={inspectorWorld} data-device-camera={inspectedAgent.id} width="320" height="180"/>
       <span>{inspectedAgent.id}</span>
      </div>}
-     <span className="mc-stage-agent" data-stage-agent={s.is3d&&!focused?taskAgent?.id:undefined} aria-hidden="true">{taskAgent?.id}</span>
+     <span className="mc-stage-agent" data-stage-agent={s.is3d&&!focused?stageAgentId:undefined} aria-hidden="true">{stageAgentId}</span>
      <div className="mc-minimap"><canvas data-world-minimap width="220" height="170" role="img" aria-label="设备位置小地图"/></div>
     </section>
     <section className="mc-console" aria-label="运行记录">
@@ -600,7 +609,7 @@ function App(){
    </div>
    {toolsOpen&&serviceFeedback}
    <div className="mc-runner-tools" hidden={toolTitle!=='Runner 实验'}><RunnerPanel active={toolsOpen&&toolTitle==='Runner 实验'} canObserve={!s.remoteSession} openReplay={async load=>{await actions.openRunnerReplay(load);closeTools()}} openObserver={async access=>{await actions.openRunnerObserver(access);closeTools()}}/></div>
-   <div className="mc-agent-tools" hidden={toolTitle!=='Agent 任务'}><AgentRunPanel active={toolsOpen&&toolTitle==='Agent 任务'} canObserve={!s.remoteSession} openReplay={async load=>{await actions.openRunnerReplay(load);setTrace('agent');closeTools()}} openObserver={async access=>{await actions.openRunnerObserver(access);setTrace('agent');closeTools()}}/></div>
+   <div className="mc-agent-tools" hidden={toolTitle!=='Agent 任务'}><AgentRunPanel active={toolsOpen&&toolTitle==='Agent 任务'} canObserve={!s.remoteSession} observerRunId={s.observerRunId} openReplay={async load=>{await actions.openRunnerReplay(load);setTrace('agent');closeTools()}} openObserver={async (access,id)=>{await actions.openRunnerObserver(access,undefined,id);setTrace('agent');closeTools()}}/></div>
    <div className="mc-standard-tools" hidden={toolTitle==='Runner 实验'||toolTitle==='Agent 任务'}>
     {!worldSettingsOpen&&<div className="mc-tools-quickbar">
      {connectControl}<label htmlFor="mission-speed">运行速度</label>{speedControl}<span>影响推进速度，不改变固定步长</span>

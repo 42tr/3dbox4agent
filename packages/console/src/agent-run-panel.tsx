@@ -1,14 +1,20 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useRef, useState, useSyncExternalStore} from 'react';
 import {consoleFetch,useConsoleSession} from './console-session';
 
-type Run = {run_id:string; owner_label:string; status:string; phase:string; control_epoch:number; tick:number; world_revision:number; objective:{instruction:string}; conditions?:{task_id:string;done:boolean}[]; archive_status:string; can_observe:boolean; result?:{success:boolean;reason:string}; reason?:string};
+type Run = {run_id:string; owner_label:string; status:string; phase:string; control_epoch:number; tick:number; world_revision:number; event_cursor?:number; objective:{instruction:string}; conditions?:{task_id:string;done:boolean}[]; archive_status:string; can_observe:boolean; result?:{success:boolean;reason:string}; reason?:string};
 type RunEvent = {seq:number;run_id:string;kind:string;tick:number;world_revision:number;occurred_at_ms:number;payload:Record<string,any>};
 type Integration = {id:string;label:string;expires_at:number;revoked:boolean};
 type Access = {format:string;sessionId:string;observerToken:string};
-type View = {run:Run|null;events:RunEvent[];connection:string};
-let view:View={run:null,events:[],connection:''};
+type EventStream = {runId:string;events:RunEvent[];connection:string;operationAgentId:string};
+const emptyStream:EventStream={runId:'',events:[],connection:'',operationAgentId:''};
+type View = {run:Run|null;stream:EventStream;caughtUp:boolean};
+let view:View={run:null,stream:emptyStream,caughtUp:false};
 const listeners=new Set<()=>void>();
 function publish(next:View){view=next;listeners.forEach(fn=>fn())}
+function subscribe(fn:()=>void){listeners.add(fn);return()=>{listeners.delete(fn)}}
+export function useRunOperationAgent(runId?:string){
+  return useSyncExternalStore(subscribe,()=>view.caughtUp&&view.stream.runId===runId?view.stream.operationAgentId:'');
+}
 const labels:Record<string,string>={starting:'创建世界',running:'执行中',stopping:'正在归档',completed:'已完成',failed:'失败',cancelled:'已取消',timeout:'达到预算上限',waiting_for_agent:'等待 Agent 下一步',advancing:'世界正在推进',paused:'已暂停',reconciling:'正在确认上次操作',archiving:'正在归档',finished:'运行结束'};
 const kinds:Record<string,string>={'agent.note':'Agent 摘要','tool.started':'开始调用','tool.completed':'调用返回','tool.failed':'调用失败','tool.observed':'读取观察','world.updated':'World 变化','run.created':'创建运行','run.session_created':'世界已创建','run.recovered':'运行已恢复','run.recovery_unavailable':'等待连接 World','run.reconciling':'确认上次操作','run.idle_paused':'等待超时，已暂停','run.stopping':'准备结束运行','run.advancing':'推进世界','run.started':'运行就绪','objective.evaluated':'目标验收','run.finished':'运行结束','run.interrupted':'控制操作','run.advance_finished':'本段推进结束'};
 const terminal=(r:Run)=>['completed','failed','cancelled','timeout'].includes(r.status);
@@ -19,7 +25,7 @@ async function request<T>(route:string,options:RequestInit={}):Promise<T>{
   const data=await response.json();if(!response.ok)throw Error(data.code||data.error||'请求失败');return data;
 }
 
-type OpenRunLink = (kind:'observer'|'report',load:()=>Promise<unknown>,signal:AbortSignal)=>Promise<void>;
+type OpenRunLink = (kind:'observer'|'report',load:()=>Promise<unknown>,signal:AbortSignal,runId:string)=>Promise<void>;
 
 export function AgentRunLink({runId,open}:{runId:string;open:OpenRunLink}){
   const session=useConsoleSession(!!runId),{authenticated}=session;
@@ -36,13 +42,13 @@ export function AgentRunLink({runId,open}:{runId:string;open:OpenRunLink}){
         const run=await request<Run>(route,{signal});
         if(signal.aborted)return;
         if(run.archive_status==='ready'){
-          await open('report',()=>request(route+'/report',{signal}),signal);
+          await open('report',()=>request(route+'/report',{signal}),signal,runId);
         }else if(run.status==='starting'||run.status==='stopping'&&run.archive_status==='pending'){
           timer=setTimeout(connect,1000);
           return;
         }else if(run.can_observe&&run.status!=='stopping'){
           try{
-            await open('observer',()=>request(route+'/observer',{method:'POST',body:'{}',signal}),signal);
+            await open('observer',()=>request(route+'/observer',{method:'POST',body:'{}',signal}),signal,runId);
           }catch(e){
             if(signal.aborted)return;
             const latest=await request<Run>(route,{signal});
@@ -70,9 +76,12 @@ export function AgentRunLink({runId,open}:{runId:string;open:OpenRunLink}){
 }
 
 export function AgentRunTimeline({focusAgent,showEmpty=true}:{focusAgent?:(id:string)=>void;showEmpty?:boolean}){
-  const [current,setCurrent]=useState(view);
-  useEffect(()=>{const update=()=>setCurrent(view);listeners.add(update);update();return()=>{listeners.delete(update)}},[]);
-  const {run,events,connection}=current;
+  const {run,stream}=useSyncExternalStore(subscribe,()=>view);
+  return <RunTimeline run={run} stream={stream} focusAgent={focusAgent} showEmpty={showEmpty}/>;
+}
+
+function RunTimeline({run,stream,focusAgent,showEmpty=true}:{run:Run|null;stream:EventStream;focusAgent?:(id:string)=>void;showEmpty?:boolean}){
+  const {events,connection}=stream;
   if(!run)return showEmpty?<div className="mc-agent-empty">从左侧“Agent 任务”选择运行并打开实时观察，即可查看工具调用和任务进展。</div>:null;
   return <section className="mc-agent-timeline" aria-label="Agent 执行过程">
     <div className="mc-agent-run-heading"><b>{run.objective.instruction}</b><span>{terminal(run)?labels[run.status]:labels[run.phase]||run.phase} · T+{run.tick}</span></div>
@@ -88,34 +97,94 @@ export function AgentRunTimeline({focusAgent,showEmpty=true}:{focusAgent?:(id:st
   </section>;
 }
 
-export function AgentRunPanel({active,canObserve,openObserver,openReplay}:{active:boolean;canObserve:boolean;openObserver:(access:Access)=>Promise<void>;openReplay:(load:()=>Promise<unknown>)=>Promise<void>}){
+function useRunEvents(runId:string){
+  const [stream,setStream]=useState(emptyStream);
+  useEffect(()=>{
+    if(!runId)return;
+    const abort=new AbortController(),{signal}=abort;
+    let cursor=0,timer:ReturnType<typeof setTimeout>;
+    let current:EventStream={...emptyStream,runId,connection:'连接记录流…'};
+    // Device commands run under a per-run lock. Keep the most recent successful target between calls.
+    let pendingDeviceCall:{id:string;agentId:string}|undefined;
+    function update(changes:Partial<EventStream>){
+      current={...current,...changes};
+      setStream(current);
+    }
+    update({});
+    async function connect(){
+      try{
+        const response=await consoleFetch(`/runs/v1/runs/${encodeURIComponent(runId)}/events/stream?after=${cursor}`,{signal});
+        if(signal.aborted)return;
+        if(!response.ok||!response.body)throw Error('执行记录连接失败');
+        update({connection:'实时记录'});
+        const reader=response.body.getReader(),decoder=new TextDecoder();
+        let buffer='';
+        while(!signal.aborted){
+          const {value,done}=await reader.read();
+          if(done||signal.aborted)break;
+          buffer+=decoder.decode(value,{stream:true});
+          const events:RunEvent[]=[];
+          let operationAgentId=current.operationAgentId;
+          let boundary;
+          while((boundary=buffer.search(/\r?\n\r?\n/))>=0){
+            const frame=buffer.slice(0,boundary);
+            buffer=buffer.slice(boundary+(buffer[boundary]==='\r'?4:2));
+            const data=frame.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trim()).join('\n');
+            if(!data)continue;
+            const event=JSON.parse(data) as RunEvent;
+            if(event.run_id!==runId||event.seq<=cursor)continue;
+            cursor=event.seq;
+            events.push(event);
+            const {tool,call_id,command_id,agent_id}=event.payload;
+            const callId=call_id||command_id;
+            if(event.kind==='tool.started'&&callId&&typeof agent_id==='string'
+                &&['box_assign_task','box_submit_action','box_cancel_action'].includes(tool)){
+              pendingDeviceCall={id:callId,agentId:agent_id};
+            }else if(pendingDeviceCall&&pendingDeviceCall.id===callId){
+              if(event.kind==='tool.completed')operationAgentId=pendingDeviceCall.agentId;
+              if(event.kind==='tool.completed'||event.kind==='tool.failed')pendingDeviceCall=undefined;
+            }
+          }
+          if(events.length)update({events:[...current.events,...events].slice(-300),operationAgentId});
+        }
+      }catch(e){
+        if(!signal.aborted)update({connection:'连接中断，正在补拉记录…'});
+      }finally{
+        if(!signal.aborted)timer=setTimeout(connect,1000);
+      }
+    }
+    void connect();
+    return()=>{abort.abort();clearTimeout(timer)};
+  },[runId]);
+  return stream.runId===runId?stream:emptyStream;
+}
+
+export function AgentRunPanel({active,canObserve,observerRunId,openObserver,openReplay}:{active:boolean;canObserve:boolean;observerRunId?:string;openObserver:(access:Access,runId:string)=>Promise<void>;openReplay:(load:()=>Promise<unknown>)=>Promise<void>}){
   const [runs,setRuns]=useState<Run[]>([]),[selected,setSelected]=useState(readRunLink),[integrations,setIntegrations]=useState<Integration[]>([]),[label,setLabel]=useState('我的 Agent'),[issued,setIssued]=useState<{token:string;integration:Integration}|null>(null),[error,setError]=useState(''),[actionError,setActionError]=useState(''),[busy,setBusy]=useState(false);
   const session=useConsoleSession(active||!!selected),authenticated=session.authenticated;
-  const current=runs.find(r=>r.run_id===selected);const selectedRef=useRef(selected);selectedRef.current=selected;
+  const current=runs.find(r=>r.run_id===selected);
+  const workspaceRunId=observerRunId||selected;
+  const workspaceRun=runs.find(r=>r.run_id===workspaceRunId);
+  const stream=useRunEvents(authenticated?workspaceRunId:'');
+  const detailStream=useRunEvents(authenticated&&active&&selected!==workspaceRunId?selected:'');
+  useEffect(()=>{
+    const cursor=stream.events[stream.events.length-1]?.seq??0;
+    // Opening an existing run should land on its current target without following earlier calls.
+    const caughtUp=!!workspaceRun&&stream.runId===workspaceRun.run_id&&
+      (cursor>=(workspaceRun.event_cursor??0)||view.stream.runId===stream.runId&&view.caughtUp);
+    publish({run:workspaceRun||null,stream,caughtUp});
+  },[workspaceRun,stream]);
   const requests=useRef(new Map<string,string>());
   const endpoint=location.protocol==='file:'?'请从在线 Console 打开':location.origin+'/control/mcp/control';
   useEffect(()=>{const change=()=>{const id=readRunLink();if(id)setSelected(id)};window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change)},[]);
   useEffect(()=>{
     if(!authenticated||!active&&!selected)return;const abort=new AbortController();let timer:ReturnType<typeof setTimeout>;
-    async function update(){try{const data=await request<{runs:Run[]}>('/runs',{signal:abort.signal});if(abort.signal.aborted)return;setRuns(data.runs);setError('');const chosen=data.runs.find(r=>r.run_id===selectedRef.current);if(chosen)publish({...view,run:chosen});}catch(e){if(!abort.signal.aborted)setError(e instanceof Error?e.message:'无法读取运行')}finally{if(!abort.signal.aborted)timer=setTimeout(update,1000)}}
+    async function update(){try{const data=await request<{runs:Run[]}>('/runs',{signal:abort.signal});if(abort.signal.aborted)return;setRuns(data.runs);setError('');}catch(e){if(!abort.signal.aborted)setError(e instanceof Error?e.message:'无法读取运行')}finally{if(!abort.signal.aborted)timer=setTimeout(update,1000)}}
     void update();return()=>{abort.abort();clearTimeout(timer)};
   },[authenticated,active,selected]);
-  useEffect(()=>{
-    if(!authenticated||!selected)return;const abort=new AbortController();let cursor=0,timer:ReturnType<typeof setTimeout>;
-    publish({run:runs.find(r=>r.run_id===selected)||null,events:[],connection:'连接记录流…'});
-    async function connect(){try{
-      const response=await consoleFetch(`/runs/v1/runs/${encodeURIComponent(selected)}/events/stream?after=${cursor}`,{signal:abort.signal});
-      if(abort.signal.aborted)return;if(!response.ok||!response.body)throw Error('执行记录连接失败');publish({...view,connection:'实时记录'});
-      const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
-      while(!abort.signal.aborted){const {value,done}=await reader.read();if(done||abort.signal.aborted)break;buffer+=decoder.decode(value,{stream:true});let boundary;
-        while((boundary=buffer.search(/\r?\n\r?\n/))>=0){const frame=buffer.slice(0,boundary);buffer=buffer.slice(boundary+(buffer[boundary]==='\r'?4:2));const data=frame.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trim()).join('\n');if(!data)continue;const event=JSON.parse(data) as RunEvent;if(event.run_id!==selected||event.seq<=cursor)continue;cursor=event.seq;publish({...view,events:[...view.events,event].slice(-300)});}
-      }
-    }catch(e){if(!abort.signal.aborted)publish({...view,connection:'连接中断，正在补拉记录…'})}finally{if(!abort.signal.aborted)timer=setTimeout(connect,1000)}}
-    void connect();return()=>{abort.abort();clearTimeout(timer)};
-  },[authenticated,selected]);
   useEffect(()=>{if(active&&authenticated)void request<{integrations:Integration[]}>('/integrations').then(v=>setIntegrations(v.integrations)).catch(()=>setIntegrations([]))},[active,authenticated]);
   async function perform(fn:()=>Promise<void>){setBusy(true);setActionError('');try{await fn()}catch(e){setActionError(e instanceof Error?e.message:'操作失败')}finally{setBusy(false)}}
-  async function command(name:string){if(!current)return;const key=current.run_id+':'+name+':'+current.control_epoch;let id=requests.current.get(key);if(!id){id=crypto.randomUUID();requests.current.set(key,id)}const next=await request<Run>(`/runs/${current.run_id}/commands/${name}`,{method:'POST',body:JSON.stringify({control_epoch:current.control_epoch,request_id:id})});requests.current.delete(key);setRuns(rows=>rows.map(r=>r.run_id===next.run_id?next:r));publish({...view,run:next});}
+  async function command(name:string){if(!current)return;const key=current.run_id+':'+name+':'+current.control_epoch;let id=requests.current.get(key);if(!id){id=crypto.randomUUID();requests.current.set(key,id)}const next=await request<Run>(`/runs/${current.run_id}/commands/${name}`,{method:'POST',body:JSON.stringify({control_epoch:current.control_epoch,request_id:id})});requests.current.delete(key);setRuns(rows=>rows.map(r=>r.run_id===next.run_id?next:r));}
   return <section className="mc-runner-panel mc-agent-panel" aria-label="Agent 任务">
     <p>将 Control 配置为 MCP 服务，在外部 Agent 中提出任务。这里查看同一次运行的三维状态、工具记录和验收结果。</p>
     {!authenticated&&<p role="status">{session.loading?'正在检查登录状态…':session.error||'请联系管理员配置 Console 登录账号。'}</p>}
@@ -125,11 +194,11 @@ export function AgentRunPanel({active,canObserve,openObserver,openReplay}:{activ
     {authenticated&&!runs.length&&<p>暂无运行。签发接入凭据后，让外部 Agent 创建任务。</p>}
     {selected&&!current&&authenticated&&<p>正在查找链接中的运行。</p>}
     {current&&<div className="mc-agent-detail"><h2>{current.objective.instruction}</h2><div className="mc-runner-actions">
-      <button className="mc-pill violet" disabled={busy||!current.can_observe||!canObserve} onClick={()=>void perform(async()=>openObserver(await request<Access>(`/runs/${selected}/observer`,{method:'POST',body:'{}'})))}>打开三维观察与执行记录</button>
+      <button className="mc-pill violet" disabled={busy||!current.can_observe||!canObserve} onClick={()=>void perform(async()=>openObserver(await request<Access>(`/runs/${selected}/observer`,{method:'POST',body:'{}'}),selected))}>打开三维观察与执行记录</button>
       <button className="mc-pill" disabled={busy||current.archive_status!=='ready'} onClick={()=>void perform(()=>openReplay(()=>request(`/runs/${selected}/report`)))}>打开回放</button>
       <button className="mc-pill" disabled={busy||terminal(current)||current.status==='stopping'} onClick={()=>void perform(()=>command(current.phase==='paused'?'resume_run':'pause_run'))}>{current.phase==='paused'?'恢复':'暂停'}</button>
       <button className="mc-pill" disabled={busy||terminal(current)||current.status==='stopping'} onClick={()=>void perform(()=>command('cancel_run'))}>停止运行</button>
-    </div><AgentRunTimeline/></div>}
+    </div><RunTimeline run={current} stream={selected===workspaceRunId?stream:detailStream}/></div>}
     <details><summary>Agent 接入配置</summary><label>MCP 地址<input readOnly value={endpoint}/></label><p>支持 Streamable HTTP，认证头为 Authorization: Bearer &lt;接入令牌&gt;。外部 Agent 使用独立接入凭据。</p>
       <form className="mc-runner-form" onSubmit={e=>{e.preventDefault();void perform(async()=>{const value=await request<{token:string;integration:Integration}>('/integrations',{method:'POST',body:JSON.stringify({label})});setIssued(value);setIntegrations(rows=>[...rows,value.integration])})}}><label>Agent 名称<input value={label} maxLength={100} onChange={e=>setLabel(e.target.value)}/></label><button className="mc-pill violet" disabled={busy||!authenticated||!label.trim()}>签发接入凭据</button></form>
       {issued&&<div><p>令牌仅在本次签发后显示，请保存到 Agent 的凭据配置。</p><label>接入令牌<input readOnly type="password" value={issued.token}/></label><button className="mc-pill" onClick={()=>void perform(()=>navigator.clipboard.writeText(issued.token))}>复制令牌</button><details><summary>stdio 配置示例</summary><pre>{JSON.stringify({mcpServers:{'3dbox':{command:'/absolute/path/threebox-mcp-stdio',env:{BOX_CONTROL_URL:location.origin+'/control',BOX_CONTROL_TOKEN:'<接入令牌>'}}}},null,2)}</pre></details></div>}

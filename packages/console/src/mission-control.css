@@ -654,6 +654,8 @@ button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-v
  white-space: nowrap;
 }
 .mc-stage .toolbar > :is(#play,#reset,#connection,#fault,#speed,#importReplay) { display: none; }
+.mc-stage .toolbar > .mc-follow-agent:hover,
+.mc-stage .toolbar > .mc-follow-agent[aria-pressed="true"] { background: #373c55; color: #dadbff; }
 .mc-stage .mc-world > .timeline {
  display: flex !important;
  position: absolute;

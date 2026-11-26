@@ -26,6 +26,17 @@ async function dragCamera(page, camera) {
   await page.mouse.up();
 }
 
+async function waitForCenteredAgent(page, agentId) {
+  await page.waitForFunction(id => {
+    const marker = document.querySelector('.mc-stage-agent');
+    if (marker?.dataset.stageAgent !== id || getComputedStyle(marker).visibility !== 'visible') return false;
+    const agent = marker.getBoundingClientRect();
+    const map = document.querySelector('#map3d').getBoundingClientRect();
+    return Math.abs(agent.left - map.left - map.width / 2) < 35 &&
+      Math.abs(agent.top - map.top - map.height / 2) < 95;
+  }, agentId);
+}
+
 (async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'box-task-browser-'));
   const world = createServer({catalogPath: path.join(dir, 'catalog.sqlite3'),
@@ -69,6 +80,37 @@ async function dragCamera(page, camera) {
       return value;
     }
     const {token} = await api('/integrations', operator, {label: '园区运维 Agent'});
+    let rpcId = 0;
+    async function mcpTool(name, args, error) {
+      const protocol = '2026-07-28';
+      const id = ++rpcId;
+      const response = await fetch(base + '/mcp/control', {
+        method: 'POST',
+        headers: {authorization: 'Bearer ' + token, 'content-type': 'application/json',
+          accept: 'application/json, text/event-stream', 'mcp-protocol-version': protocol,
+          'mcp-method': 'tools/call', 'mcp-name': name},
+        body: JSON.stringify({jsonrpc: '2.0', id, method: 'tools/call', params: {
+          name, arguments: args, _meta: {'io.modelcontextprotocol/protocolVersion': protocol,
+            'io.modelcontextprotocol/clientInfo': {name: 'observer-browser-test', version: '1'},
+            'io.modelcontextprotocol/clientCapabilities': {}},
+        }}),
+        signal: AbortSignal.timeout(20000),
+      });
+      const body = await response.text();
+      assert.equal(response.status, 200, body);
+      const message = response.headers.get('content-type').includes('text/event-stream')
+        ? body.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => JSON.parse(line.slice(5))).find(message => message.id === id)
+        : JSON.parse(body);
+      assert(message?.result, body);
+      const result = message.result;
+      if (error) {
+        assert.equal(result.isError, true, body);
+        assert.equal(result.structuredContent.code, error);
+      } else {
+        assert(!result.isError, body);
+      }
+      return result.structuredContent;
+    }
     const run = await api('/tools/box_create_run', token, {
       request_id: 'browser-demo', scene_id: 'industrial-park-v2',
       objective: {type: 'scene_completed', instruction: '完成园区巡检、备件运输、维修和复核'},
@@ -113,12 +155,17 @@ async function dragCamera(page, camera) {
     await page.locator('.mc-feed').getByText(note, {exact: true}).waitFor();
     const camera = page.locator(cameraSelector);
     await page.locator(`${cameraSelector}[data-rendered-tick="0"]`).waitFor();
+    const stageView = page.locator('.mc-view-toggle');
+    await stageView.getByText('全局观察', {exact: true}).waitFor();
 
     const view = await api('/tools/box_observe', token, {run_id: run.run_id, view: 'coordinator'});
     const task = view.observation.tasks.find(task => task.candidates.length);
     const agent = task.candidates[0];
-    await api('/tools/box_assign_task', token, {...args, request_id: 'assign',
+    await mcpTool('box_assign_task', {...args, request_id: 'assign',
       expected_revision: view.world_revision, task_id: task.id, agent_id: agent.id});
+    const firstFollow = stageView.getByText('跟随 ' + agent.id, {exact: true});
+    await firstFollow.waitFor();
+    await waitForCenteredAgent(page, agent.id);
     const action = await api('/tools/box_submit_action', token, {...args, agent_id: agent.id,
       action: {requestId: 'execute', type: 'execute_task', taskId: task.id,
         targetTick: view.observation.tick + 1, expiresTick: view.observation.tick + 40}});
@@ -132,6 +179,7 @@ async function dragCamera(page, camera) {
       const inset = document.querySelector('.mc-scene-camera canvas');
       return card && card.dataset.renderedTick === inset?.dataset.renderedTick && card.toDataURL() === inset.toDataURL();
     }, latestCamera);
+    await waitForCenteredAgent(page, agent.id);
     if (process.env.BOX_BROWSER_SCREENSHOT) {
       await page.screenshot({path: process.env.BOX_BROWSER_SCREENSHOT, fullPage: true});
     }
@@ -146,8 +194,40 @@ async function dragCamera(page, camera) {
     assert.equal(cameraRequests.length, 0);
     await page.getByRole('slider', {name: '回放时间'}).fill('0');
     await page.locator(`${cameraSelector}[data-rendered-tick="0"]`).waitFor();
+    await stageView.getByText('全局观察', {exact: true}).waitFor();
     await page.getByRole('button', {name: '返回实时'}).click();
     await page.locator(latestCamera).waitFor();
+    await firstFollow.waitFor();
+
+    const otherAgentId = 'vehicle-1';
+    await mcpTool('box_observe', {run_id: run.run_id, view: 'agent', agent_id: otherAgentId});
+    await mcpTool('box_cancel_action', {...args, agent_id: otherAgentId,
+      request_id: 'cancel-missing', action_request_id: 'missing'}, 'action_not_found');
+    await page.locator('.mc-feed').getByText('action_not_found', {exact: true}).waitFor();
+    assert.equal(await firstFollow.count(), 1);
+    await mcpTool('box_submit_action', {...args, agent_id: otherAgentId,
+      action: {requestId: 'follow-scan', type: 'scan', targetTick: advance.end_tick + 1, expiresTick: advance.end_tick + 4}});
+    const secondFollow = stageView.getByText('跟随 ' + otherAgentId, {exact: true});
+    await secondFollow.waitFor();
+    await waitForCenteredAgent(page, otherAgentId);
+    assert.equal(await page.getByRole('button', {name: '返回全局观察'}).count(), 0);
+
+    const map = page.locator('#map3d');
+    await stageView.click();
+    const followToggle = page.getByRole('button', {name: '自动跟随 Agent', exact: true});
+    assert.equal(await followToggle.getAttribute('aria-pressed'), 'true');
+    const followingImage = await map.screenshot();
+    await followToggle.click();
+    await stageView.getByText('全局观察', {exact: true}).waitFor();
+    assert.equal(await followToggle.getAttribute('aria-pressed'), 'false');
+    assert.notDeepEqual(await map.screenshot(), followingImage);
+    await followToggle.click();
+    await secondFollow.waitFor();
+    await page.setViewportSize({width: 390, height: 844});
+    const toggleBox = await followToggle.boundingBox();
+    assert(toggleBox && toggleBox.x >= 0 && toggleBox.x + toggleBox.width <= 390);
+    await page.setViewportSize({width: 1440, height: 1000});
+    await stageView.click();
 
     const other = await api('/tools/box_create_run', token, {
       request_id: 'browser-other-run', scene_id: 'industrial-park-v2',
@@ -156,8 +236,10 @@ async function dragCamera(page, camera) {
     await page.goto(new URL(new URL(other.console_url).hash, url).href);
     await page.locator('.mc-feed').getByText(other.objective.instruction,{exact:true}).waitFor();
     await page.locator(`${cameraSelector}[data-rendered-tick="0"]`).waitFor();
+    await stageView.getByText('全局观察', {exact: true}).waitFor();
     await page.goto(observationUrl);
     await page.locator(latestCamera).waitFor();
+    await secondFollow.waitFor();
     await api('/tools/box_cancel_run', token, {
       run_id: other.run_id, control_epoch: other.control_epoch, request_id: 'cleanup-other',
     });
@@ -248,7 +330,7 @@ async function dragCamera(page, camera) {
     await replayPage.reload();
     await replayPage.locator('.mc-header .mc-source').getByText('世界服务', {exact: true}).waitFor();
     assert.deepEqual(errors, []);
-    console.log('Task browser: login, observer, SSE, live and replay cameras, SVG fallback, logout and safe redirects passed.');
+    console.log('Task browser: login, observer, MCP camera follow, live and replay cameras, SVG fallback, logout and safe redirects passed.');
   } finally {
     if (browser) await browser.close();
     if (control) {control.kill(); await controlExit;}
