@@ -114,6 +114,7 @@ async function waitForCenteredAgent(page, agentId) {
     const run = await api('/tools/box_create_run', token, {
       request_id: 'browser-demo', scene_id: 'industrial-park-v2',
       objective: {type: 'scene_completed', instruction: '完成园区巡检、备件运输、维修和复核'},
+      config: {speed: 1},
     });
     const observationLink = new URL(run.console_url);
     const observationPath = '/#run=' + run.run_id;
@@ -158,7 +159,9 @@ async function waitForCenteredAgent(page, agentId) {
     const stageView = page.locator('.mc-view-toggle');
     await stageView.getByText('全局观察', {exact: true}).waitFor();
 
-    const view = await api('/tools/box_observe', token, {run_id: run.run_id, view: 'coordinator'});
+    const feed = page.locator('.mc-feed');
+    const view = await mcpTool('box_observe', {run_id: run.run_id, view: 'coordinator'});
+    await feed.getByText('协调器视图', {exact: true}).first().waitFor();
     const task = view.observation.tasks.find(task => task.candidates.length);
     const agent = task.candidates[0];
     await mcpTool('box_assign_task', {...args, request_id: 'assign',
@@ -169,8 +172,16 @@ async function waitForCenteredAgent(page, agentId) {
     const action = await api('/tools/box_submit_action', token, {...args, agent_id: agent.id,
       action: {requestId: 'execute', type: 'execute_task', taskId: task.id,
         targetTick: view.observation.tick + 1, expiresTick: view.observation.tick + 40}});
-    const advance = await api('/tools/box_advance', token, {...args, request_id: 'advance',
-      expected_revision: action.world_revision, max_ticks: 20});
+    const advancing = mcpTool('box_advance', {...args, request_id: 'advance',
+      expected_revision: action.world_revision, max_ticks: 25, until: []});
+    const progress = feed.getByRole('progressbar');
+    await progress.waitFor();
+    await page.waitForFunction(() => document.querySelector('.mc-feed progress')?.value > 0);
+    const advance = await advancing;
+    await progress.waitFor({state: 'detached'});
+    await feed.getByText(new RegExp(`^已推进 ${advance.executed} 步`)).waitFor();
+    assert.doesNotMatch(await feed.locator('.mc-agent-run-heading').innerText(), /世界正在推进/);
+    assert.match(await feed.locator('.mc-agent-events li').first().innerText(), /推进世界/);
     await page.waitForFunction(() => document.querySelector('.mc-feed .mc-agent-meta')?.textContent.includes('1/5'));
     await page.locator('.mc-feed').getByText('World 变化', {exact: true}).first().waitFor();
     const latestCamera = `${cameraSelector}[data-rendered-tick="${advance.end_tick}"]`;
@@ -203,7 +214,7 @@ async function waitForCenteredAgent(page, agentId) {
     await mcpTool('box_observe', {run_id: run.run_id, view: 'agent', agent_id: otherAgentId});
     await mcpTool('box_cancel_action', {...args, agent_id: otherAgentId,
       request_id: 'cancel-missing', action_request_id: 'missing'}, 'action_not_found');
-    await page.locator('.mc-feed').getByText('action_not_found', {exact: true}).waitFor();
+    await feed.getByText(`${otherAgentId} · 找不到设备动作`, {exact: true}).waitFor();
     assert.equal(await firstFollow.count(), 1);
     await mcpTool('box_submit_action', {...args, agent_id: otherAgentId,
       action: {requestId: 'follow-scan', type: 'scan', targetTick: advance.end_tick + 1, expiresTick: advance.end_tick + 4}});
@@ -226,6 +237,7 @@ async function waitForCenteredAgent(page, agentId) {
     await page.setViewportSize({width: 390, height: 844});
     const toggleBox = await followToggle.boundingBox();
     assert(toggleBox && toggleBox.x >= 0 && toggleBox.x + toggleBox.width <= 390);
+    assert(await feed.evaluate(element => element.scrollWidth <= element.clientWidth));
     await page.setViewportSize({width: 1440, height: 1000});
     await stageView.click();
 

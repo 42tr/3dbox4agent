@@ -62,6 +62,17 @@ impl ServerHandler for TaskTools {
         req: CallToolRequestParams,
         ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        let progress_token = ctx.meta.get_progress_token();
+        if let Some(token) = progress_token.clone() {
+            let _ = ctx
+                .peer
+                .notify_progress(
+                    ProgressNotificationParam::new(token, 0.0)
+                        .with_total(1.0)
+                        .with_message(format!("开始调用 {}", req.name)),
+                )
+                .await;
+        }
         let input = Value::Object(req.arguments.unwrap_or_default());
         let result = match self {
             Self::Local(s) => {
@@ -98,6 +109,27 @@ impl ServerHandler for TaskTools {
                 }
             }
         };
+        if let Some(token) = progress_token {
+            let message = match &result {
+                Ok(v) if req.name == "box_advance" => {
+                    format!(
+                        "本段推进了 {} 步，停止原因 {}",
+                        v["executed"],
+                        v["stop_reason"].as_str().unwrap_or("unknown")
+                    )
+                }
+                Ok(_) => format!("{} 已返回结果", req.name),
+                Err(_) => format!("{} 调用失败", req.name),
+            };
+            let _ = ctx
+                .peer
+                .notify_progress(
+                    ProgressNotificationParam::new(token, 1.0)
+                        .with_total(1.0)
+                        .with_message(message),
+                )
+                .await;
+        }
         Ok(match result {
             Ok(v) => CallToolResult::structured(v),
             Err(e) => {

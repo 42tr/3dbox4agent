@@ -49,9 +49,9 @@ async function requestWithHost(url, options, host) {
 }
 function mcp(base, token, modern = false, host) {
   let session, sequence = 0;
-  async function rpc(method, params = {}, notification = false) {
+  async function rpc(method, params = {}, notification = false, progress) {
     const id = ++sequence;
-    if (modern) params._meta = {'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientInfo': {name: 'task-test', version: '1'}, 'io.modelcontextprotocol/clientCapabilities': {}};
+    if (modern) params._meta = {...params._meta, 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientInfo': {name: 'task-test', version: '1'}, 'io.modelcontextprotocol/clientCapabilities': {}};
     const response = await requestWithHost(base + '/mcp/control', {method: 'POST', headers: {
       authorization: 'Bearer ' + token, 'content-type': 'application/json', accept: 'application/json, text/event-stream',
       ...(session ? {'mcp-session-id': session, 'mcp-protocol-version': '2025-11-25'} : {}),
@@ -61,6 +61,10 @@ function mcp(base, token, modern = false, host) {
     const body = await response.text(); assert.equal(response.status, notification ? 202 : 200, body);
     if (notification) return;
     const frames = response.headers.get('content-type').includes('text/event-stream') ? body.split(/\r?\n/).filter(s => s.startsWith('data:')).map(s => s.slice(5).trim()).filter(Boolean).map(s => JSON.parse(s)) : [JSON.parse(body)];
+    if (progress) {
+      assert.equal(frames.at(-1)?.id, id, body);
+      progress.push(...frames.filter(frame => frame.method === 'notifications/progress').map(frame => frame.params));
+    }
     const msg = frames.find(m => m.id === id); assert(msg?.result, JSON.stringify(msg)); return msg.result;
   }
   return {rpc, async initialize() { if (modern) return rpc('server/discover'); await rpc('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'task-test', version: '1'}}); await rpc('notifications/initialized', {}, true); },
@@ -68,13 +72,18 @@ function mcp(base, token, modern = false, host) {
 }
 async function stdio(base, token) {
   const child = spawn(path.join(target, 'debug/threebox-mcp-stdio'), [], {env: {...process.env, BOX_CONTROL_URL: base, BOX_CONTROL_TOKEN: token}, stdio: ['pipe', 'pipe', 'pipe']});
-  const lines = createInterface({input: child.stdout}); const pending = new Map(); let seq = 0, errors = '';
+  const lines = createInterface({input: child.stdout}); const pending = new Map(); const progress = []; let seq = 0, errors = '';
   child.stderr.on('data', b => errors += b);
-  lines.on('line', line => { const v = JSON.parse(line); if (v.id) pending.get(v.id)?.(v); });
+  lines.on('line', line => { const v = JSON.parse(line); if (v.id) pending.get(v.id)?.(v); if (v.method === 'notifications/progress') progress.push(v.params); });
   async function rpc(method, params) { const id = ++seq; const response = new Promise((resolve, reject) => { const timer = setTimeout(() => reject(Error('stdio timeout: ' + errors)), 10000); pending.set(id, v => { clearTimeout(timer); pending.delete(id); resolve(v); }); }); child.stdin.write(JSON.stringify({jsonrpc: '2.0', id, method, params}) + '\n'); const r = await response; assert(r.result, JSON.stringify(r)); return r.result; }
   await rpc('initialize', {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'stdio-test', version: '1'}});
   child.stdin.write(JSON.stringify({jsonrpc: '2.0', method: 'notifications/initialized'}) + '\n');
-  return {rpc, async close() { const exit = once(child, 'close'); child.stdin.end(); await exit; }};
+  return {rpc, progress, async close() { const exit = once(child, 'close'); child.stdin.end(); await exit; }};
+}
+
+function assertProgress(progress, token) {
+  assert.deepEqual(progress.map(update => [update.progressToken, update.progress, update.total]), [[token, 0, 1], [token, 1, 1]]);
+  assert(progress.every(update => update.message.length > 0));
 }
 
 (async () => {
@@ -133,6 +142,20 @@ async function stdio(base, token) {
     assert((await legacy.rpc('tools/list')).tools.some(t => t.name === 'box_advance'));
     const modern = mcp(base, token, true); await modern.initialize();
     assert((await modern.call('get_capabilities', {})).scenes[0].tasks.length === 5);
+    for (const client of [legacy, modern]) {
+      const progress = [];
+      const result = await client.rpc('tools/call', {
+        name: 'box_get_capabilities', arguments: {}, _meta: {progressToken: 'capabilities'},
+      }, false, progress);
+      assert.equal(result.isError, false);
+      assertProgress(progress, 'capabilities');
+      const failed = await client.rpc('tools/call', {
+        name: 'box_observe', arguments: {}, _meta: {progressToken: 7},
+      }, false, progress);
+      assert.equal(failed.isError, true);
+      assertProgress(progress.slice(2), 7);
+      assert.match(progress.at(-1).message, /调用失败/);
+    }
     for (const host of ['threebox.example', 'threebox.example:8443']) {
       for (const protocol2026 of [false, true]) {
         const publicClient = mcp(base, token, protocol2026, host);
@@ -143,6 +166,11 @@ async function stdio(base, token) {
     bridge = await stdio(base, token);
     assert((await bridge.rpc('tools/list', {})).tools.some(t => t.name === 'box_create_run'));
     const caps = await bridge.rpc('tools/call', {name: 'box_get_capabilities', arguments: {}}); assert.equal(caps.isError, false);
+    assert.equal(bridge.progress.length, 0);
+    assert.equal((await bridge.rpc('tools/call', {
+      name: 'box_get_capabilities', arguments: {}, _meta: {progressToken: 'stdio-capabilities'},
+    })).isError, false);
+    assertProgress(bridge.progress, 'stdio-capabilities');
 
     const input = {request_id: 'park-001', scene_id: 'industrial-park-v2', objective: {instruction: '完成园区五任务链', type: 'scene_completed'}, config: {speed: 5}};
     rejectNextCreation = true;
@@ -250,6 +278,13 @@ async function stdio(base, token) {
     assert(archive.frames.every(frame => !frame.cameraFrames));
     const events = await legacy.call('get_events', {run_id: id, limit: 200});
     assert(events.events.some(e => e.kind === 'agent.note')); assert(events.events.some(e => e.kind === 'tool.started'));
+    const observed = events.events.find(e => e.kind === 'tool.observed' && e.payload.agent_id === 'drone-1');
+    assert(observed?.payload.call_id);
+    assert(events.events.some(e => e.kind === 'tool.started' && e.payload.call_id === observed.payload.call_id));
+    const advanced = events.events.find(e => e.kind === 'run.advance_finished');
+    const advancing = events.events.find(e => e.kind === 'run.advancing' && e.payload.call_id === advanced?.payload.call_id);
+    assert(advanced && advancing);
+    assert.equal(advanced.tick - advancing.payload.start_tick, advanced.payload.steps);
     assert(events.events.filter(e=>e.kind==='world.updated').every(e=>e.payload.scope==='console_only'));
     const streaming = new AbortController();
     const streamResponse = await fetch(base+`/runs/v1/runs/${id}/events/stream?after=0`,{headers:{authorization:'Bearer '+operator},signal:streaming.signal});
@@ -321,6 +356,8 @@ async function stdio(base, token) {
     assert.equal(paused.phase, 'paused');
     cancelled = await legacy.call('resume_run', {run_id: cancelled.run_id, control_epoch: paused.control_epoch, request_id: 'resume-1'});
     await legacy.call('record_note', {run_id: cancelled.run_id, control_epoch: 1, request_id: 'stale', kind: 'progress', text: 'stale'}, 'control_epoch_conflict');
+    const rejectedEvents = (await legacy.call('get_events', {run_id: cancelled.run_id})).events;
+    assert(rejectedEvents.some(e => e.kind === 'tool.failed' && e.payload.request_id === 'stale' && e.payload.code === 'control_epoch_conflict'));
     const inFlight = legacy.call('advance', {run_id: cancelled.run_id, control_epoch: cancelled.control_epoch, request_id: 'in-flight', expected_revision: 0, max_ticks: 100, until: []});
     await delay(150);
     const stop = await http(base, `/runs/v1/runs/${cancelled.run_id}/commands/cancel_run`, operator, {control_epoch: cancelled.control_epoch, request_id: 'cancel-1'}); assert.equal(stop.status, 'stopping');

@@ -29,6 +29,7 @@ use uuid::Uuid;
 
 const MAX_ARCHIVE_BYTES: usize = 50 * 1024 * 1024;
 const MAX_ARCHIVE_FRAMES: usize = 5000;
+const MAX_RUN_EVENTS: u64 = 50000;
 
 pub fn now() -> u64 {
     SystemTime::now()
@@ -425,71 +426,89 @@ impl RunService {
                 Value::Null,
             )?;
         }
-        let result = async { match name {
-            "box_get_run" => Ok(self.summary(&r)),
-            "box_get_events" => {
-                let mut events = self.store.events(
-                    &id,
-                    input["after_seq"].as_u64().unwrap_or(0),
-                    input["limit"].as_u64().unwrap_or(100),
-                )?;
-                if !p.operator {
-                    for event in &mut events {
-                        if event["kind"] == "world.updated" {
-                            event["payload"] = json!({"scope":"console_only"})
+        let result = async {
+            match name {
+                "box_get_run" => Ok(self.summary(&r)),
+                "box_get_events" => {
+                    let mut events = self.store.events(
+                        &id,
+                        input["after_seq"].as_u64().unwrap_or(0),
+                        input["limit"].as_u64().unwrap_or(100),
+                    )?;
+                    if !p.operator {
+                        for event in &mut events {
+                            if event["kind"] == "world.updated" {
+                                event["payload"] = json!({"scope":"console_only"})
+                            }
                         }
                     }
+                    let next = events
+                        .last()
+                        .map(|e| e["seq"].clone())
+                        .unwrap_or_else(|| json!(input["after_seq"].as_u64().unwrap_or(0)));
+                    Ok(json!({"events":events,"next_cursor":next,"event_cursor":r["event_cursor"]}))
                 }
-                let next = events
-                    .last()
-                    .map(|e| e["seq"].clone())
-                    .unwrap_or_else(|| json!(input["after_seq"].as_u64().unwrap_or(0)));
-                Ok(json!({"events":events,"next_cursor":next,"event_cursor":r["event_cursor"]}))
+                "box_observe" => {
+                    let _guard = self.lock(&id).lock_owned().await;
+                    self.observe(p, &id, &input).await
+                }
+                "box_cancel_run" | "box_pause_run" => self.interrupt(p, name, &input),
+                _ => {
+                    let _guard = self.lock(&id).lock_owned().await;
+                    self.command(p, name, &input).await
+                }
             }
-            "box_observe" => {
-                let _guard = self.lock(&id).lock_owned().await;
-                let r = self.authorized(p, &id)?;
-                ensure!(!terminal(&r), "run_not_writable");
-                let include = if input["include_device"] == true { "?include=device" } else { "" };
-                let v = if input["view"] == "agent" {
-                    let agent = field(&input, "agent_id")?;
-                    self.check_agent(p, &r, agent)?;
-                    let token = self.credential(&id, Some(agent)).await?;
-                    self.session_request(&r, "GET", &format!("/observations/{agent}{include}"), &token, None)
-                        .await?
-                } else {
-                    ensure!(p.operator || p.scopes["coordinator"] == true, "forbidden");
-                    let token = self.credential(&id, None).await?;
-                    self.session_request(&r, "GET", &format!("/coordinator/observation{include}"), &token, None)
-                        .await?
-                };
-                self.store.edit(
-                    &id,
-                    |r| {
-                        if !p.operator {
-                            r["last_active"] = json!(now())
-                        }
-                        Ok(())
-                    },
-                    "tool.observed",
-                    json!({"view":input["view"],"agent_id":input["agent_id"],"actor_id":p.id}),
-                )?;
-                Ok(
-                    json!({"run_id":id,"world_revision":r["world_revision"],"control_epoch":r["control_epoch"],"observation":v}),
-                )
-            }
-            "box_cancel_run" | "box_pause_run" => self.interrupt(p, name, &input),
-            _ => {
-                let _guard = self.lock(&id).lock_owned().await;
-                self.command(p, name, &input).await
-            }
-        } }.await;
+        }
+        .await;
         if result
             .as_ref()
             .err()
             .is_some_and(|e| e.to_string() == "world_session_lost")
         {
             self.fail(&id, "world_session_lost")?;
+        }
+        result
+    }
+    async fn observe(&self, p: &Principal, id: &str, input: &Value) -> Result<Value> {
+        let r = self.authorized(p, id)?;
+        let record = r["event_cursor"].as_u64().unwrap_or(0) < MAX_RUN_EVENTS;
+        let mut payload = json!({"tool":"box_observe","call_id":Uuid::new_v4(),"view":input["view"],"agent_id":input["agent_id"],"actor_id":p.id});
+        if record {
+            self.store
+                .edit(id, |_| Ok(()), "tool.started", payload.clone())?;
+        }
+        let result: Result<Value> = async {
+            ensure!(!terminal(&r), "run_not_writable");
+            let include = if input["include_device"] == true { "?include=device" } else { "" };
+            let (agent, path) = if input["view"] == "agent" {
+                let agent = field(input, "agent_id")?;
+                self.check_agent(p, &r, agent)?;
+                (Some(agent), format!("/observations/{agent}{include}"))
+            } else {
+                ensure!(p.operator || p.scopes["coordinator"] == true, "forbidden");
+                (None, format!("/coordinator/observation{include}"))
+            };
+            let token = self.credential(id, agent).await?;
+            let observation = self.session_request(&r, "GET", &path, &token, None).await?;
+            Ok(json!({"run_id":id,"world_revision":r["world_revision"],"control_epoch":r["control_epoch"],"observation":observation}))
+        }.await;
+        if let Err(error) = &result {
+            if record {
+                payload["code"] = json!(error.to_string());
+                self.store.edit(id, |_| Ok(()), "tool.failed", payload)?;
+            }
+        } else {
+            self.store.edit(
+                id,
+                |r| {
+                    if !p.operator {
+                        r["last_active"] = json!(now());
+                    }
+                    Ok(())
+                },
+                if record { "tool.observed" } else { "" },
+                payload,
+            )?;
         }
         result
     }
@@ -713,46 +732,82 @@ impl RunService {
         let mut cmd=self.store.command(id,name,request)?.unwrap_or_else(||json!({"signature":sig,"status":"pending","command_id":Uuid::new_v4().to_string(),"input":input,"started_at":now(),"steps":0}));
         cmd["actor_id"] = json!(p.id);
         cmd["call_id"] = json!(Uuid::new_v4().to_string());
-        ensure!(cmd["signature"] == sig, "request_id_conflict");
-        if cmd["status"] == "completed" {
-            return Ok(cmd["result"].clone());
-        }
-        if cmd["status"] == "failed" {
-            bail!("{}", cmd["error"].as_str().unwrap_or("command_failed"))
-        }
         let r = self.authorized(p, id)?;
-        ensure!(
-            now() < r["deadline"].as_u64().unwrap_or(0),
-            "budget_exhausted"
-        );
-        ensure!(
-            name == "box_resume_run"
-                || self
-                    .store
-                    .pending(id)?
-                    .iter()
-                    .all(|c| c["tool"] == name && c["request_id"] == request),
-            "run_reconciling"
-        );
-        ensure!(
-            r["event_cursor"].as_u64().unwrap_or(0) < 50000,
-            "run_event_limit"
-        );
-        if name == "box_resume_run" {
-            ensure!(
-                r["status"] == "running"
-                    && r["phase"] == "paused"
-                    && r["control_epoch"] == input["control_epoch"],
-                "run_not_writable"
-            )
-        } else if !(r["phase"] == "reconciling"
-            && r["pending_command"]["tool"] == name
-            && r["pending_command"]["request_id"] == request
-            && cmd["status"] == "pending")
-        {
-            self.writable(&r, input)?
+        let mut event = json!({"tool":name,"request_id":request,"command_id":cmd["command_id"],"call_id":cmd["call_id"],"actor_id":p.id});
+        if let Some(agent) = input["agent_id"].as_str() {
+            event["agent_id"] = json!(agent);
         }
-        self.store.write_command(id,name,request,&cmd,"tool.started",json!({"tool":name,"request_id":request,"command_id":cmd["command_id"],"call_id":cmd["call_id"],"actor_id":p.id,"agent_id":input["agent_id"],"task_id":input["task_id"]}))?;
+        if let Some(task) = input["task_id"]
+            .as_str()
+            .or_else(|| input["action"]["taskId"].as_str())
+        {
+            event["task_id"] = json!(task);
+        }
+        if let Some(action) = input["action"]["type"].as_str() {
+            event["action_type"] = json!(action);
+        }
+        let record = r["event_cursor"].as_u64().unwrap_or(0) < MAX_RUN_EVENTS;
+        let check = || -> Result<Option<Value>> {
+            ensure!(cmd["signature"] == sig, "request_id_conflict");
+            if cmd["status"] == "completed" {
+                return Ok(Some(cmd["result"].clone()));
+            }
+            if cmd["status"] == "failed" {
+                bail!("{}", cmd["error"].as_str().unwrap_or("command_failed"))
+            }
+            ensure!(
+                now() < r["deadline"].as_u64().unwrap_or(0),
+                "budget_exhausted"
+            );
+            ensure!(
+                name == "box_resume_run"
+                    || self
+                        .store
+                        .pending(id)?
+                        .iter()
+                        .all(|c| c["tool"] == name && c["request_id"] == request),
+                "run_reconciling"
+            );
+            ensure!(record, "run_event_limit");
+            if name == "box_resume_run" {
+                ensure!(
+                    r["status"] == "running"
+                        && r["phase"] == "paused"
+                        && r["control_epoch"] == input["control_epoch"],
+                    "run_not_writable"
+                )
+            } else if !(r["phase"] == "reconciling"
+                && r["pending_command"]["tool"] == name
+                && r["pending_command"]["request_id"] == request
+                && cmd["status"] == "pending")
+            {
+                self.writable(&r, input)?
+            }
+            Ok(None)
+        };
+        match check() {
+            Ok(Some(cached)) => {
+                if record {
+                    event["outcome"] = json!("cached");
+                    if let Err(error) = self.store.edit(id, |_| Ok(()), "tool.completed", event) {
+                        tracing::warn!(run_id = id, tool = name, %error, "could not record cached tool result");
+                    }
+                }
+                return Ok(cached);
+            }
+            Err(error) => {
+                if record {
+                    event["code"] = json!(error.to_string());
+                    if let Err(write_error) = self.store.edit(id, |_| Ok(()), "tool.failed", event) {
+                        tracing::warn!(run_id = id, tool = name, %write_error, "could not record rejected tool call");
+                    }
+                }
+                return Err(error);
+            }
+            Ok(None) => {}
+        }
+        self.store
+            .write_command(id, name, request, &cmd, "tool.started", event.clone())?;
         self.store.edit(
             id,
             |r| {
@@ -767,7 +822,17 @@ impl RunService {
             Ok(v) => {
                 cmd["status"] = json!("completed");
                 cmd["result"] = v.clone();
-                self.store.write_command(id,name,request,&cmd,"tool.completed",json!({"tool":name,"request_id":request,"command_id":cmd["command_id"],"call_id":cmd["call_id"],"actor_id":p.id,"elapsed_seconds":now()-cmd["started_at"].as_u64().unwrap_or(now()),"outcome":"accepted"}))?;
+                event["elapsed_seconds"] =
+                    json!(now().saturating_sub(cmd["started_at"].as_u64().unwrap_or(now())));
+                event["outcome"] = json!("accepted");
+                if let Some(status) = v["action"]["status"]
+                    .as_str()
+                    .or_else(|| v["decision"]["status"].as_str())
+                {
+                    event["world_status"] = json!(status);
+                }
+                self.store
+                    .write_command(id, name, request, &cmd, "tool.completed", event)?;
                 Ok(v)
             }
             Err(e) => {
@@ -776,7 +841,10 @@ impl RunService {
                 let uncertain = code == "outcome_unknown" && name != "box_resume_run";
                 cmd["status"] = json!(if uncertain { "pending" } else { "failed" });
                 cmd["error"] = json!(code);
-                self.store.write_command(id,name,request,&cmd,"tool.failed",json!({"tool":name,"request_id":request,"command_id":cmd["command_id"],"call_id":cmd["call_id"],"actor_id":p.id,"code":code,"retryable":uncertain}))?;
+                event["code"] = json!(code);
+                event["retryable"] = json!(uncertain);
+                self.store
+                    .write_command(id, name, request, &cmd, "tool.failed", event)?;
                 if uncertain {
                     self.store.edit(
                         id,
@@ -951,7 +1019,7 @@ impl RunService {
                 Ok(())
             },
             "run.advancing",
-            json!({}),
+            json!({"tool":"box_advance","call_id":cmd["call_id"],"max_ticks":input["max_ticks"],"start_tick":cmd["start_tick"]}),
         )?;
         let start = std::time::Instant::now();
         let mut stop = "max_ticks";
@@ -1059,7 +1127,7 @@ impl RunService {
                 Ok(())
             },
             "run.advance_finished",
-            json!({"stop_reason":stop,"steps":cmd["steps"]}),
+            json!({"tool":"box_advance","call_id":cmd["call_id"],"stop_reason":stop,"steps":cmd["steps"],"max_ticks":input["max_ticks"]}),
         )?;
         Ok(
             json!({"run":self.summary(&self.store.run(id)?),"world_revision":snapshot["revision"],"start_tick":cmd["start_tick"],"end_tick":snapshot["world"]["tick"],"executed":cmd["steps"],"stop_reason":stop}),

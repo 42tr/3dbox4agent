@@ -5,8 +5,9 @@ type Run = {run_id:string; owner_label:string; status:string; phase:string; cont
 type RunEvent = {seq:number;run_id:string;kind:string;tick:number;world_revision:number;occurred_at_ms:number;payload:Record<string,any>};
 type Integration = {id:string;label:string;expires_at:number;revoked:boolean};
 type Access = {format:string;sessionId:string;observerToken:string};
-type EventStream = {runId:string;events:RunEvent[];connection:string;operationAgentId:string};
-const emptyStream:EventStream={runId:'',events:[],connection:'',operationAgentId:''};
+type Advance = {callId:string;startTick:number;maxTicks:number};
+type EventStream = {runId:string;events:RunEvent[];cursor:number;tick:number;connection:string;operationAgentId:string;advance?:Advance};
+const emptyStream:EventStream={runId:'',events:[],cursor:0,tick:0,connection:'',operationAgentId:''};
 type View = {run:Run|null;stream:EventStream;caughtUp:boolean};
 let view:View={run:null,stream:emptyStream,caughtUp:false};
 const listeners=new Set<()=>void>();
@@ -15,8 +16,27 @@ function subscribe(fn:()=>void){listeners.add(fn);return()=>{listeners.delete(fn
 export function useRunOperationAgent(runId?:string){
   return useSyncExternalStore(subscribe,()=>view.caughtUp&&view.stream.runId===runId?view.stream.operationAgentId:'');
 }
-const labels:Record<string,string>={starting:'创建世界',running:'执行中',stopping:'正在归档',completed:'已完成',failed:'失败',cancelled:'已取消',timeout:'达到预算上限',waiting_for_agent:'等待 Agent 下一步',advancing:'世界正在推进',paused:'已暂停',reconciling:'正在确认上次操作',archiving:'正在归档',finished:'运行结束'};
+const labels:Record<string,string>={starting:'创建世界',creating_world:'创建世界',running:'执行中',stopping:'正在归档',completed:'已完成',failed:'失败',cancelled:'已取消',timeout:'达到预算上限',waiting_for_agent:'等待 Agent 下一步',advancing:'世界正在推进',paused:'已暂停',reconciling:'正在确认上次操作',archiving:'正在归档',finished:'运行结束'};
 const kinds:Record<string,string>={'agent.note':'Agent 摘要','tool.started':'开始调用','tool.completed':'调用返回','tool.failed':'调用失败','tool.observed':'读取观察','world.updated':'World 变化','run.created':'创建运行','run.session_created':'世界已创建','run.recovered':'运行已恢复','run.recovery_unavailable':'等待连接 World','run.reconciling':'确认上次操作','run.idle_paused':'等待超时，已暂停','run.stopping':'准备结束运行','run.advancing':'推进世界','run.started':'运行就绪','objective.evaluated':'目标验收','run.finished':'运行结束','run.interrupted':'控制操作','run.advance_finished':'本段推进结束'};
+const tools:Record<string,string>={
+  box_observe:'读取观察',box_assign_task:'分配任务',box_submit_action:'提交设备动作',
+  box_cancel_action:'取消设备动作',box_advance:'推进世界',box_record_note:'提交 Agent 摘要',
+  box_pause_run:'暂停运行',box_resume_run:'恢复运行',box_cancel_run:'停止运行',
+};
+const stopReasons:Record<string,string>={
+  max_ticks:'已达到本次步数上限',event:'已触发停止条件',terminal:'世界执行已结束',
+  interrupted:'运行已中断',budget_exhausted:'运行预算已用尽',wall_budget:'已达到本次调用的时间上限',
+  reconciled:'已确认上次推进结果',
+};
+const toolErrors:Record<string,string>={
+  revision_conflict:'世界状态已变化，请重新观察',control_epoch_conflict:'运行控制状态已变化',
+  run_not_writable:'当前运行状态不允许此操作',run_reconciling:'正在确认上一次操作的结果',
+  outcome_unknown:'结果待确认，请使用原请求重试',action_not_found:'找不到设备动作',
+  decision_rejected:'World 拒绝了任务分配',request_id_conflict:'请求 ID 已用于不同参数',
+  agent_not_found:'找不到设备',forbidden:'接入凭据没有此操作的权限',
+};
+const actionTypes:Record<string,string>={execute_task:'执行任务',work_task:'执行工序',move:'移动',scan:'扫描',charge:'充电'};
+const worldStatuses:Record<string,string>={pending:'等待 World 执行',accepted:'World 已接受',completed:'World 已完成',cancelled:'World 已取消',rejected:'World 已拒绝',failed:'World 执行失败'};
 const terminal=(r:Run)=>['completed','failed','cancelled','timeout'].includes(r.status);
 export function readRunLink(){return /^#run=([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/.exec(location.hash)?.[1]||''}
 
@@ -80,19 +100,50 @@ export function AgentRunTimeline({focusAgent,showEmpty=true}:{focusAgent?:(id:st
   return <RunTimeline run={run} stream={stream} focusAgent={focusAgent} showEmpty={showEmpty}/>;
 }
 
+function eventSummary({kind,payload}:RunEvent){
+  if(kind==='agent.note')return payload.text;
+  if(kind==='objective.evaluated')return payload.success?'World 已确认目标完成':'World 验收未通过';
+  if(kind==='run.advancing'&&typeof payload.max_ticks==='number')return `本次最多推进 ${payload.max_ticks} 步`;
+  if(kind==='run.advance_finished'){
+    return [`已推进 ${payload.steps} 步`,stopReasons[payload.stop_reason]||payload.stop_reason].filter(Boolean).join(' · ');
+  }
+  const context=[payload.view==='coordinator'?'协调器视图':'',payload.agent_id,payload.task_id,actionTypes[payload.action_type]||payload.action_type];
+  const result=payload.outcome==='cached'?'已返回原请求结果':toolErrors[payload.code]||payload.code||payload.reason||worldStatuses[payload.world_status]||payload.world_status;
+  return [...context,result].filter(Boolean).join(' · ');
+}
+
 function RunTimeline({run,stream,focusAgent,showEmpty=true}:{run:Run|null;stream:EventStream;focusAgent?:(id:string)=>void;showEmpty?:boolean}){
-  const {events,connection}=stream;
+  const {events,connection,advance}=stream;
   if(!run)return showEmpty?<div className="mc-agent-empty">从左侧“Agent 任务”选择运行并打开实时观察，即可查看工具调用和任务进展。</div>:null;
+  const tick=Math.max(run.tick,stream.tick);
+  const advancing=advance&&!terminal(run)&&run.status!=='stopping';
+  const steps=advance?Math.max(0,Math.min(advance.maxTicks,stream.tick-advance.startTick)):0;
+  const latest=events.slice().reverse();
+  const advanceEnded=run.phase==='advancing'&&latest.some(e=>e.kind==='run.advance_finished'&&e.seq>(run.event_cursor??0));
+  const status=terminal(run)?labels[run.status]:advancing?labels.advancing:advanceEnded?kinds['run.advance_finished']:labels[run.phase]||run.phase;
   return <section className="mc-agent-timeline" aria-label="Agent 执行过程">
-    <div className="mc-agent-run-heading"><b>{run.objective.instruction}</b><span>{terminal(run)?labels[run.status]:labels[run.phase]||run.phase} · T+{run.tick}</span></div>
+    <div className="mc-agent-run-heading"><b>{run.objective.instruction}</b><span>{status} · T+{tick}</span></div>
     <p className="mc-agent-meta">{run.owner_label} · {run.conditions?.filter(c=>c.done).length||0}/{run.conditions?.length||0} 个目标完成 · {connection}</p>
     {run.result&&<p className={run.result.success?'mc-agent-success':''}>验收：{run.result.success?'World 已确认目标完成':run.result.reason}</p>}
-    <ol className="mc-agent-events">{events.filter(e=>e.kind!=='world.updated'||e.payload.events?.length).slice(-150).map(e=><li key={e.seq}>
-      <time title={new Date(e.occurred_at_ms).toLocaleString()}>T+{e.tick??0}</time><div><b>{kinds[e.kind]||e.kind}</b><span>{e.payload.tool||e.payload.kind||''}</span>
-      {e.kind==='agent.note'?<p>{e.payload.text}</p>:e.kind==='world.updated'?e.payload.events?.map((w:any,i:number)=><p key={i}>{w.message||w.kind}</p>):<p>{e.payload.code||e.payload.stop_reason||e.payload.reason||e.payload.outcome||''}</p>}
-      {e.payload.agent_id&&focusAgent&&<button className="mc-pill" onClick={()=>focusAgent(e.payload.agent_id)}>查看 {e.payload.agent_id}</button>}
-      <details><summary>记录详情 · #{e.seq}</summary><pre>{JSON.stringify(e.payload,null,2)}</pre></details></div>
-    </li>)}</ol>
+    {advancing&&<label className="mc-agent-advance">
+      <span>本次推进 {steps} / {advance.maxTicks} 步</span>
+      <progress value={steps} max={advance.maxTicks}/>
+    </label>}
+    <ol className="mc-agent-events" reversed>{latest.map(e=>{
+      const tool=tools[e.payload.tool]||e.payload.tool;
+      const kind=kinds[e.kind]||e.kind;
+      const summary=eventSummary(e);
+      const timestamp=new Date(e.occurred_at_ms);
+      return <li key={e.seq}>
+        <time dateTime={timestamp.toISOString()} title={timestamp.toLocaleString()}>T+{e.tick??0}</time>
+        <div>
+          <b>{tool||kind}</b>{tool&&tool!==kind&&<span className={e.kind==='tool.failed'?'mc-agent-event-error':undefined}>{kind}</span>}
+          {e.kind==='world.updated'?e.payload.events?.map((w:any,i:number)=><p key={i}>{w.message||w.kind}</p>):summary&&<p>{summary}</p>}
+          {e.payload.agent_id&&focusAgent&&e.kind==='tool.started'&&<button className="mc-pill" onClick={()=>focusAgent(e.payload.agent_id)}>查看 {e.payload.agent_id}</button>}
+          <details><summary>记录详情 · #{e.seq}</summary><pre>{JSON.stringify(e.payload,null,2)}</pre></details>
+        </div>
+      </li>;
+    })}</ol>
     <small>工具返回“接受”后，执行结果由 World 后续事件确认。摘要为 Agent 提交的说明。</small>
   </section>;
 }
@@ -102,7 +153,7 @@ function useRunEvents(runId:string){
   useEffect(()=>{
     if(!runId)return;
     const abort=new AbortController(),{signal}=abort;
-    let cursor=0,timer:ReturnType<typeof setTimeout>;
+    let timer:ReturnType<typeof setTimeout>;
     let current:EventStream={...emptyStream,runId,connection:'连接记录流…'};
     // Device commands run under a per-run lock. Keep the most recent successful target between calls.
     let pendingDeviceCall:{id:string;agentId:string}|undefined;
@@ -113,7 +164,7 @@ function useRunEvents(runId:string){
     update({});
     async function connect(){
       try{
-        const response=await consoleFetch(`/runs/v1/runs/${encodeURIComponent(runId)}/events/stream?after=${cursor}`,{signal});
+        const response=await consoleFetch(`/runs/v1/runs/${encodeURIComponent(runId)}/events/stream?after=${current.cursor}`,{signal});
         if(signal.aborted)return;
         if(!response.ok||!response.body)throw Error('执行记录连接失败');
         update({connection:'实时记录'});
@@ -124,7 +175,7 @@ function useRunEvents(runId:string){
           if(done||signal.aborted)break;
           buffer+=decoder.decode(value,{stream:true});
           const events:RunEvent[]=[];
-          let operationAgentId=current.operationAgentId;
+          let {advance,cursor,tick,operationAgentId}=current;
           let boundary;
           while((boundary=buffer.search(/\r?\n\r?\n/))>=0){
             const frame=buffer.slice(0,boundary);
@@ -134,8 +185,18 @@ function useRunEvents(runId:string){
             const event=JSON.parse(data) as RunEvent;
             if(event.run_id!==runId||event.seq<=cursor)continue;
             cursor=event.seq;
-            events.push(event);
-            const {tool,call_id,command_id,agent_id}=event.payload;
+            tick=event.tick;
+            const {tool,call_id,command_id,agent_id,max_ticks,start_tick}=event.payload;
+            // The advance result already has a timeline entry with the executed steps and stop reason.
+            const repeatsAdvanceResult=event.kind==='tool.completed'&&tool==='box_advance'&&event.payload.outcome==='accepted';
+            if(!repeatsAdvanceResult&&(event.kind!=='world.updated'||event.payload.events?.length))events.push(event);
+            if(event.kind==='run.advancing'&&typeof call_id==='string'&&typeof start_tick==='number'&&typeof max_ticks==='number'&&max_ticks>0){
+              advance={callId:call_id,startTick:start_tick,maxTicks:max_ticks};
+            }else if(advance&&(event.kind==='run.advance_finished'||event.kind==='tool.failed')&&call_id===advance.callId){
+              advance=undefined;
+            }else if(['run.interrupted','run.recovered','run.reconciling','run.stopping','run.finished'].includes(event.kind)){
+              advance=undefined;
+            }
             const callId=call_id||command_id;
             if(event.kind==='tool.started'&&callId&&typeof agent_id==='string'
                 &&['box_assign_task','box_submit_action','box_cancel_action'].includes(tool)){
@@ -145,7 +206,8 @@ function useRunEvents(runId:string){
               if(event.kind==='tool.completed'||event.kind==='tool.failed')pendingDeviceCall=undefined;
             }
           }
-          if(events.length)update({events:[...current.events,...events].slice(-300),operationAgentId});
+          if(cursor!==current.cursor)update({events:events.length?[...current.events,...events].slice(-150):current.events,
+            cursor,tick,advance,operationAgentId});
         }
       }catch(e){
         if(!signal.aborted)update({connection:'连接中断，正在补拉记录…'});
@@ -168,10 +230,9 @@ export function AgentRunPanel({active,canObserve,observerRunId,openObserver,open
   const stream=useRunEvents(authenticated?workspaceRunId:'');
   const detailStream=useRunEvents(authenticated&&active&&selected!==workspaceRunId?selected:'');
   useEffect(()=>{
-    const cursor=stream.events[stream.events.length-1]?.seq??0;
     // Opening an existing run should land on its current target without following earlier calls.
     const caughtUp=!!workspaceRun&&stream.runId===workspaceRun.run_id&&
-      (cursor>=(workspaceRun.event_cursor??0)||view.stream.runId===stream.runId&&view.caughtUp);
+      (stream.cursor>=(workspaceRun.event_cursor??0)||view.stream.runId===stream.runId&&view.caughtUp);
     publish({run:workspaceRun||null,stream,caughtUp});
   },[workspaceRun,stream]);
   const requests=useRef(new Map<string,string>());
