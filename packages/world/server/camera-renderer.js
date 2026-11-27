@@ -132,10 +132,10 @@ function renderCameraFrame(world, agent, options = {}) {
     const point = projectPoint({x: other.x, y: other.y, z: heightAt}, pose, width, height);
     if (!point) continue;
     const color = other.disabled ? '#d67875' : other.status === 'working' ? '#88d3be' : '#bbc7e5';
-    agentMarkup.push(`<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4" fill="${color}" stroke="#ffffff" stroke-opacity=".7"/><text x="${(point.x + 6).toFixed(1)}" y="${(point.y - 5).toFixed(1)}" fill="#ecf3f7" font-size="7">${escapeXml(other.id)}</text>`);
+    agentMarkup.push(`<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4" fill="${color}" stroke="#ffffff" stroke-opacity=".7"/><text x="${(point.x + 6).toFixed(1)}" y="${(point.y - 5).toFixed(1)}" fill="#ecf3f7" font-size="7">${escapeXml(other.name || other.id)}</text>`);
   }
   const disabled = agent.disabled;
-  const status = disabled ? 'OFFLINE' : `T+${world.tick}`;
+  const status = disabled ? '已退出' : `T+${world.tick}`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#243a4b"/><stop offset=".58" stop-color="#557b86"/><stop offset=".59" stop-color="#24332f"/><stop offset="1" stop-color="#10191d"/></linearGradient></defs>
 <rect width="${width}" height="${height}" fill="url(#sky)"/><path d="M0 ${height * .59} H${width}" stroke="#9dc0c4" stroke-opacity=".24"/>
@@ -143,7 +143,7 @@ ${wallMarkup.join('')}${agentMarkup.join('')}
 <path d="M${width / 2 - 9} ${height / 2} h18 M${width / 2} ${height / 2 - 9} v18" stroke="#e5f1ea" stroke-opacity=".68" stroke-width="1"/>
 <rect x="5" y="5" width="${width - 10}" height="${height - 10}" rx="3" fill="none" stroke="#d7e7e8" stroke-opacity=".24"/>
 <rect x="7" y="${height - 22}" width="${width - 14}" height="15" rx="2" fill="#0b1116" fill-opacity=".68"/>
-<text x="12" y="${height - 12}" fill="#d7e8e7" font-size="8" font-family="monospace">SIM CAM · ${escapeXml(agent.id)} · ${status}</text>
+<text x="12" y="${height - 12}" fill="#d7e8e7" font-size="8" font-family="sans-serif">仿真相机 · ${escapeXml(agent.name || agent.id)} · ${status}</text>
 <text x="${width - 12}" y="${height - 12}" text-anchor="end" fill="#b9c9d2" font-size="7" font-family="monospace">${pose.yaw.toFixed(0)}° / ${pose.pitch.toFixed(0)}° · F${pose.fov.toFixed(0)}</text>
 </svg>`;
   return {

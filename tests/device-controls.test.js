@@ -14,6 +14,23 @@ function local(w){let serial=0,busy=false,writes=0,reads=0,frames=[E.snapshot(w)
  {const c=context(world());let release,writes=0;const gate=new Promise(r=>release=r),submit=D.createDeviceController({read:()=>c,id:()=> 'one',setBusy(v){c.busy=v},async send(){writes++;await gate;return {ok:true}},cancel(){throw Error('unexpected')},refresh(){}}),first=submit('one','worker-1',{type:'scan'});assert.equal((await submit('one','worker-1',{type:'scan'})).reason,'busy');release();assert((await first).ok);assert.equal(writes,1)}
  {let c=context(world()),releaseOld,releaseNew,reads=0;const oldGate=new Promise(r=>releaseOld=r),newGate=new Promise(r=>releaseNew=r),submit=D.createDeviceController({read:()=>c,id:()=> 'id',setBusy(v){c.busy=v},async send(){const k=c.key;await(k==='one'?oldGate:newGate);return {ok:true}},cancel(){throw Error('unexpected')},refresh(){reads++}}),old=submit('one','worker-1',{type:'scan'});c={...context(world()),key:'two'};const fresh=submit('two','worker-1',{type:'scan'});releaseOld();assert.equal((await old).reason,'context_changed');assert.equal(c.busy,true);assert.equal(reads,0);releaseNew();assert((await fresh).ok);assert.equal(reads,1);assert.equal(c.busy,false)}
  {const c=context(world());let writes=0;const submit=D.createDeviceController({read:()=>c,id:()=> 'id',setBusy(v){c.busy=v},send(){writes++;return {ok:true}},cancel(){throw Error('unexpected')},refresh(){throw Error('read lost')},onError(){}}),r=await submit('one','worker-1',{type:'scan'});assert(r.ok&&r.refreshPending);assert.equal(writes,1)}
+ for(const running of [false,true]){
+  const w=world();let busy=false,advances=0;
+  const submit=D.createDeviceController({read:()=>({...context(w),running,busy}),id:()=> 'direct-scan',setBusy(value){busy=value},
+   send:(agentId,intent)=>E.submitAction(w,agentId,intent),cancel:(agentId,id)=>E.cancelAction(w,agentId,id),refresh(){},
+   async advancePausedAction(key,agentId,requestId){
+    assert(busy);assert.equal(key,'one');advances++;
+    const action=()=>w.actions.find(a=>a.agentId===agentId&&a.requestId===requestId);
+    for(let i=0;i<5&&['pending','accepted'].includes(action().status);i++)E.step(w);
+    assert.equal(action().status,'completed');
+   }});
+  assert((await submit('one','worker-1',{type:'scan'})).ok);
+  assert.equal(advances,running?0:1);
+  assert.equal(w.actions[0].status,running?'pending':'completed');
+  if(running)assert((await submit('one','worker-1',{type:'cancel',requestId:'direct-scan'})).cancelled);
+  assert.equal(advances,running?0:1);
+  assert.equal(busy,false);
+ }
  for(const reason of ['constructor','__proto__','toString','private token'])assert.equal(typeof D.deviceMessage(reason),'string');
  console.log('Typed device controls: five real local action completions, pending/accepted cancellation and same-tick snapshots; six blocked modes, invalid coordinates/schedules/scope, primitive reach, duplicate starts, single-flight and independent world-key locks, accepted-but-unsynced result and bounded diagnostics passed');
 })().catch(e=>{console.error(e);process.exitCode=1});

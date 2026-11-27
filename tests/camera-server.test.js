@@ -33,7 +33,7 @@ function request(port, path, method = 'GET', body, token) {
     const initial = await request(server.address().port, route, 'GET', undefined, session.adminToken);
     assert.equal(initial.status, 200);
     assert.match(initial.headers['content-type'], /^image\/svg\b/);
-    assert.match(initial.body.toString('utf8'), /SIM CAM/);
+    assert.match(initial.body.toString('utf8'), /仿真相机 · 无人机 1 · T\+0/);
     const rotated = await request(server.address().port, `${route}?yaw=45&pitch=-12`, 'GET', undefined, session.adminToken);
     assert.equal(rotated.status, 200);
     assert.match(rotated.body.toString('utf8'), /45° \/ -12°/);

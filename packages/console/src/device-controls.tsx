@@ -182,16 +182,18 @@ export function DeviceControls({context:c,submit,reportSubmit,credentialIssue,se
    const r=await submit(c.key,id,draft);
    if(!alive.current)return;
    const text=r.ok?(r.refreshPending?'世界已接收本次请求，状态同步尚未完成，请查看实时动作记录。'
-    :r.cancelled?'取消请求已处理，请查看动作终态。':`意图已提交，计划在T+${r.targetTick}处理；执行结果见动作记录。`)
+    :r.executionNotice==='paused'?'手动操作已暂停。开始运行可继续执行。'
+    :r.executionNotice==='unconfirmed'?'动作已提交，执行状态待确认。请查看动作记录。'
+    :r.cancelled?'取消请求已处理，请查看动作终态。':'已发送操作，执行结果见动作记录。')
     :deviceMessage(r.reason);
-   setFeedback({agent:id,text,requestId:r.ok&&!r.refreshPending?r.requestId:undefined});
+   setFeedback({agent:id,text,requestId:r.ok&&!r.refreshPending&&!r.executionNotice?r.requestId:undefined});
   }catch{
    if(alive.current)setFeedback({agent:id,text:deviceMessage()});
   }finally{
    if(alive.current)setPending(false);
   }
  };
- const showFeedback=feedback?.agent===c.selected&&(!block||pending&&block==='busy')
+ const showFeedback=feedback?.agent===c.selected&&!c.executing&&(!block||pending&&block==='busy')
   &&(!inline||!feedback.requestId||!rows.some(action=>action.requestId===feedback.requestId));
  const history=<>
   {rows.length?<ul>{rows.map(a=><li key={a.requestId}>
@@ -205,7 +207,7 @@ export function DeviceControls({context:c,submit,reportSubmit,credentialIssue,se
  return <section className={inline?'mc-inline-device-actions':'mc-device-actions'} aria-label="设备操作">
   {inline?<div className="mc-inspector-heading"><h4>设备操作</h4><span>{inspectorName}</span></div>
    :<div className="mc-assignment-heading"><Robot size={16}/><h2>设备操作</h2><span>移动、扫描、补能与任务执行</span></div>}
-  {block&&!(block==='busy'&&pending)&&<p className={inline?'mc-inspector-note':'mc-assignment-notice'}>{deviceMessage(block)} {block==='history_view'&&<button type="button" className="mc-pill" onClick={live}>返回设备实时视图</button>}</p>}
+  {block&&!(block==='busy'&&(pending||c.executing))&&<p className={inline?'mc-inspector-note':'mc-assignment-notice'}>{deviceMessage(block)} {block==='history_view'&&<button type="button" className="mc-pill" onClick={live}>返回设备实时视图</button>}</p>}
   {!inline&&select&&<div className="mc-device-action-select"><label>操作设备<select aria-label="操作设备" value={c.selected} disabled={pending||c.busy||!c.agents.length} onChange={e=>{select(e.target.value);setFeedback(null);setTaskId('');setZ('');setLimit(20)}}>{c.agents.length?c.agents.map(a=><option key={a.id} value={a.id}>{a.name} · {a.id}{a.disabled?' · 已退出':''}</option>):<option value="">暂无可见设备</option>}</select></label>{actor&&<span>{actor.status}{c.flight&&` · ${flightStates[c.flight.state]}`}{actor.mobility==='water'?' · 水面设备':''} · 电量{Math.round(actor.battery)}% · 位置 {actor.x.toFixed(1)} / {actor.y.toFixed(1)}{actor.flightZ!==undefined&&` / ${actor.flightZ.toFixed(1)}`} m{actor.maxSpeedMPerTick!==undefined&&` · 上限 ${actor.maxSpeedMPerTick} m/步`}</span>}</div>}
   {inline&&<>
    <div className="mc-inline-shortcuts">
@@ -256,7 +258,7 @@ export function DeviceControls({context:c,submit,reportSubmit,credentialIssue,se
    </form>}
    {show('flight')&&actor&&c.flight&&<FlightControlForm key={actor.id} actor={actor} limits={c.flight} worldSize={c.worldSize??100}
     disabled={disabled||actor.disabled||active.length>0} send={send} unavailable={inline&&!block?unavailable:undefined}/>}
-   {!inline&&<div className={c.directionRange?'mc-task-control':undefined}><h3>感知与补能</h3><div className="mc-device-action-buttons">{actor&&canDeviceScan(actor)&&<button className="mc-pill" disabled={disabled} onClick={()=>void send({type:'scan'})}>提交扫描意图</button>}<button className="mc-pill" disabled={disabled} onClick={()=>void send({type:'charge'})}>提交补能意图</button></div><p>意图先入队，设备状态与执行条件在目标步再次校验。</p></div>}
+   {!inline&&<div className={c.directionRange?'mc-task-control':undefined}><h3>感知与补能</h3><div className="mc-device-action-buttons">{actor&&canDeviceScan(actor)&&<button className="mc-pill" disabled={disabled} onClick={()=>void send({type:'scan'})}>扫描周边</button>}<button className="mc-pill" disabled={disabled} onClick={()=>void send({type:'charge'})}>返站补能</button></div><p>世界根据设备状态与现场条件执行操作，结果见动作记录。</p></div>}
    {show('survey')&&actor&&c.roverSurvey&&<RoverSurveyControls key={c.key+':'+actor.id} context={c} actor={actor}
     disabled={disabled||active.length>0} send={send}/>}
    {show('task')&&<div className="mc-task-control"><h3>已分配任务</h3><select aria-label="设备已分配任务" value={task?.id||''} disabled={disabled||!tasks.length} onChange={e=>setTaskId(e.target.value)}>{tasks.length?tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>):<option value="">暂无活动任务</option>}</select><div className="mc-device-action-buttons"><button className="mc-pill violet" disabled={disabled||!!taskBlock||(inline&&!!unavailable(work?.operation||(c.mode==='primitive'?'work_task':'execute_task')))} onClick={()=>task&&void send({type:c.mode==='primitive'?'work_task':'execute_task',taskId:task.id,operation:work?.operation})}>{work?('提交'+work.label):c.mode==='primitive'?'提交当前位置作业':'提交任务启动意图'}</button>{c.mode==='primitive'&&<button className="mc-pill" disabled={disabled||!taskPoint} onClick={()=>{if(taskPoint){setSection('target');setX(String(taskPoint[0]));setY(String(taskPoint[1]));setZ('');setFeedback({agent:c.selected,text:task?.approachPoint?'已填入合法接近点，请提交移动意图。':'已填入作业地点，请提交移动意图。'})}}}>{task?.approachPoint!==undefined?'填入合法接近点':'填入设备作业地点'}</button>}</div><p>{taskBlock?deviceMessage(taskBlock):work?`当前工序需要 ${work.durationTicks} 个仿真步。`:c.mode==='primitive'?'已到达作业范围，可以提交作业意图。':'任务将在接受启动意图后执行。'}</p></div>}

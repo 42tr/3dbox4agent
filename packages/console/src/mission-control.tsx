@@ -45,7 +45,7 @@ type CameraConfig={enabled?:boolean;mount?:number[];yaw?:number;pitch?:number;fo
 type CameraFrame={version?:number;agentId:string;tick:number;width:number;height:number;mimeType?:string;yaw?:number;pitch?:number;fov?:number;svg?:string;url?:string};
 type Agent={rescue?:{workTicks:number};camera?:CameraConfig;mobility?:string;sensorRange?:number;communicationRange?:number;speed?:number;deployableRelay?:true;relayState?:{deployed:boolean;deployedTick?:number;taskId?:string;position?:[number,number]};thermal?:{limitC:number;resumeC:number};thermalState?:ThermalState;id:string;name:string;role:string;battery:number;status:string;disabled:boolean;x:number;y:number;taskId?:string;capabilities?:string[]};
 type InspectorDevice={context:DeviceContext;telemetry:Parameters<typeof projectDeviceObservations>[0]&{availableActions:DeviceAvailability[]}};
-type Mission={inspectDevice?:(id:string)=>InspectorDevice|undefined;fixedSensors?:FixedSensor[];cardTaskTypes?:Pick<DeviceTask,'capability'|'behavior'>[];cameraFrames?:Record<string,CameraFrame>;renderReplayCamera?:(agentId:string)=>CameraFrame|undefined;constructionConfigured?:boolean;construction?:ConstructionView|null;materials?:MaterialView|null;heightfield?:{rows:number;cols:number;heights:number[];maxSlopeDegrees:number};replay?:ReplayView;chain?:TaskChainView;messages?:MessageContext;flow?:FlowView;sceneId:string;worldSize?:number;sceneName:string;tick:number;running:boolean;speed?:number;speedDisabled?:boolean;faultDisabled?:boolean;physicsMode?:string;executionMode?:string;playLabel?:string;statusLabel?:string;dispatchMode?:string;done:boolean;failed:boolean;selected:string;agents:Agent[];tasks:ExecutionTask[];events:ExecutionEvent[];frame:number;frames:number;is3d:boolean;available3d:boolean;graphicsFailure?:{code:string;title:string;body:string;help:string}|null;obstacles?:any[];source:string;connectAvailable?:boolean;connectDisabled?:boolean;connectLabel?:string;playDisabled:boolean;resetDisabled:boolean;connectionError?:string;creationPending?:boolean;sessionCleanup?:{busy:boolean;mayBeRunning:boolean};lidarAvailable?:boolean;sceneDisabled:boolean;observer:boolean;observerRunId?:string;remoteSession?:boolean;manual?:AssignmentContext;device?:DeviceContext;disturbances?:DisturbanceContext;settings?:SettingsContext;coordination?:CoordinatorContext;commandNodes?:NodeView;planReview?:PlanView};
+type Mission={inspectDevice?:(id:string)=>InspectorDevice|undefined;fixedSensors?:FixedSensor[];cardTaskTypes?:Pick<DeviceTask,'capability'|'behavior'>[];cameraFrames?:Record<string,CameraFrame>;renderReplayCamera?:(agentId:string)=>CameraFrame|undefined;constructionConfigured?:boolean;construction?:ConstructionView|null;materials?:MaterialView|null;heightfield?:{rows:number;cols:number;heights:number[];maxSlopeDegrees:number};replay?:ReplayView;chain?:TaskChainView;messages?:MessageContext;flow?:FlowView;sceneId:string;worldSize?:number;sceneName:string;tick:number;running:boolean;manualExecuting?:boolean;speed?:number;speedDisabled?:boolean;faultDisabled?:boolean;physicsMode?:string;executionMode?:string;playLabel?:string;statusLabel?:string;dispatchMode?:string;done:boolean;failed:boolean;selected:string;agents:Agent[];tasks:ExecutionTask[];events:ExecutionEvent[];frame:number;frames:number;is3d:boolean;available3d:boolean;graphicsFailure?:{code:string;title:string;body:string;help:string}|null;obstacles?:any[];source:string;connectAvailable?:boolean;connectDisabled?:boolean;connectLabel?:string;playDisabled:boolean;resetDisabled:boolean;connectionError?:string;creationPending?:boolean;sessionCleanup?:{busy:boolean;mayBeRunning:boolean};lidarAvailable?:boolean;sceneDisabled:boolean;observer:boolean;observerRunId?:string;remoteSession?:boolean;manual?:AssignmentContext;device?:DeviceContext;disturbances?:DisturbanceContext;settings?:SettingsContext;coordination?:CoordinatorContext;commandNodes?:NodeView;planReview?:PlanView};
 let snapshot:Mission={sceneId:DEFAULT_SCENE_ID,sceneName:'现代工业园区',tick:0,running:false,done:false,failed:false,selected:'global',agents:[],tasks:[],events:[],frame:0,frames:0,is3d:false,available3d:false,source:'浏览器仿真',playDisabled:true,resetDisabled:true,sceneDisabled:true,observer:false};
 let actions:any={};const subscribers=new Set<()=>void>();
 (window as any).SandboxMissionUI={update(next:Mission){snapshot=next;subscribers.forEach(f=>f())},setActions(next:any){actions=next},renderReplayCamera(world:{agents:Agent[]},agentId:string){
@@ -113,7 +113,7 @@ const deviceTypeNames=new Map([
  ['relay','中继车'],
  ['boat','作业船'],
 ]);
-const statusName:Record<string,string>={deployed:'中继驻留',idle:'就绪',working:'执行中',assigned:'已分配',manual:'执行指令',charging:'充电中',returning:'返航中',disabled:'已退出'};
+const statusName:Record<string,string>={deployed:'中继驻留',idle:'就绪',working:'执行中',assigned:'已分配',manual:'执行指令',charging:'充电中',returning:'返航中',fault:'故障',disabled:'已退出'};
 const traceLabels = {
  trace:'执行轨迹', attempts:'任务执行详情', agent:'Agent 过程', tasks:'任务链', nodes:'指挥节点', replay:'事件回放'
 };
@@ -151,10 +151,10 @@ function deviceTitle(agent:Agent) {
 
 function DeviceRow({agent,selected,onSelect}:{agent:Agent;selected:boolean;onSelect:()=>void}) {
  const DeviceIcon=agent.role==='drone'?Drone:agent.role==='robot'?Robot:['vehicle','rover','relay'].includes(agent.role)?Truck:Cube;
- const status=agent.disabled?'已退出':agent.thermalState?.protected?'热保护':agent.battery<=5?'低电量':statusName[agent.status]||agent.status;
+ const status=agent.disabled?'已退出':agent.thermalState?.protected?'热保护':agent.battery<=5?'低电量':statusName[agent.status]||'状态未知';
  const alert=agent.disabled||agent.thermalState?.protected||agent.battery<=5;
  return <li><button type="button" className="mc-device-row" aria-pressed={selected} onClick={onSelect}>
-  <span className="mc-device-row-name"><DeviceIcon size={19}/><span title={agent.id}>{agent.id}</span></span>
+  <span className="mc-device-row-name"><DeviceIcon size={19} aria-hidden="true"/><span title={agent.id}>{deviceTitle(agent)}</span></span>
   <span className={alert?'mc-device-alert':undefined}>{status}</span>
   <span className="mc-device-row-power">{Math.round(agent.battery)}%</span>
  </button></li>;
@@ -209,7 +209,8 @@ function DeviceCamera({agent,frame,available3d,history,onFrame}:{agent:Agent;fra
   return()=>{clearTimeout(timer);controller.abort()};
  },[agent.id,onFrame,frame?.tick,view]);
  const image=available3d?null:(remoteUrl||cameraSource(frame));
- const label=agent.id+' 仿真摄像头画面';
+ const name=deviceTitle(agent);
+ const label=name+' 仿真摄像头画面';
  const updatePointer=(event:React.PointerEvent)=>{
   const start=drag.current;
   if(!start||start.id!==event.pointerId)return;
@@ -227,7 +228,7 @@ function DeviceCamera({agent,frame,available3d,history,onFrame}:{agent:Agent;fra
  }} onPointerMove={updatePointer} onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={endDrag} onClick={event=>event.stopPropagation()}>
   {available3d?<canvas data-device-camera={agent.id} data-camera-yaw={view?.yaw} data-camera-pitch={view?.pitch} width="320" height="180" role="img" aria-label={label}/>:image?<img src={image} width="320" height="180" draggable={false} alt={label}/>:null}
   {!image&&<div className="mc-camera-placeholder">等待摄像头画面</div>}
-  {available3d&&<><div className="mc-camera-corners"/><span>{agent.id} · SIM CAM</span></>}
+  {available3d&&<><div className="mc-camera-corners"/><span>{name} · 仿真相机</span></>}
   <small>{error||(view?`${Math.round(view.yaw)}° / ${Math.round(view.pitch)}°`:canRotate?'拖动旋转':history&&image?'历史帧':'')}</small>
  </div>
 }
@@ -470,11 +471,11 @@ function App(){
     <div className="mc-header-account"><ConsoleAccount/></div>
     <div className="mc-run-context">
      <span className="mc-source">{s.source}</span>
-     <span className={'mc-mission-state'+(s.running?' running':'')}>{status}</span>
+     <span className={'mc-mission-state'+(s.running||s.manualExecuting?' running':'')}>{status}</span>
     </div>
     <span className="mc-tick">T+{String(s.tick).padStart(4,'0')}</span>
     <button type="button" className="mc-run" disabled={s.playDisabled} onClick={()=>act('play')}>
-     {s.running?<Pause size={16} weight="fill"/>:<Play size={16} weight="fill"/>}
+     {s.running||s.manualExecuting?<Pause size={16} weight="fill"/>:<Play size={16} weight="fill"/>}
      {s.playLabel||(s.running?'暂停':'运行')}
     </button>
     <WorkspaceMenu label="运行选项" icon>
@@ -571,7 +572,7 @@ function App(){
         <span className="mc-device-row-power">{sensor.reading?'T+'+sensor.reading.observedTick:'—'}</span>
        </button></li>)}
       </ul>}
-      {inspectedAgent?<section className="mc-device-detail" aria-label={inspectedAgent.id+' 详情'}>
+      {inspectedAgent?<section className="mc-device-detail" aria-label={deviceTitle(inspectedAgent)+' 详情'}>
        <div className="mc-device-detail-heading">
         <h3>{deviceTitle(inspectedAgent)}</h3>
         {!focused&&<button type="button" className="mc-follow-device" onClick={()=>select('view',inspectedAgent.id)}><Crosshair size={15}/> 跟随观察</button>}

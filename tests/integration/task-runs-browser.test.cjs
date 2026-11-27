@@ -270,16 +270,16 @@ async function waitForCenteredAgent(page, agentId) {
       };
     });
     await fallback.goto(observationUrl);
-    const fallbackImage = fallback.getByRole('img', {name: 'drone-1 仿真摄像头画面', exact: true});
+    const fallbackImage = fallback.getByRole('img', {name: '无人机 1 仿真摄像头画面', exact: true});
     await fallbackImage.waitFor();
     assert.match(await fallbackImage.getAttribute('src'), /^data:image\/svg\+xml/);
     assert.equal(await fallback.locator('.mc-camera > span').count(), 0);
     const rotation = fallback.waitForResponse(response => new URL(response.url()).pathname.endsWith('/drone-1/camera'));
     await dragCamera(fallback, fallbackImage);
     assert((await rotation).ok());
-    await fallback.locator('.mc-camera img[alt="drone-1 仿真摄像头画面"][src^="blob:"]').waitFor();
+    await fallback.locator('.mc-camera img[alt="无人机 1 仿真摄像头画面"][src^="blob:"]').waitFor();
     await fallback.getByRole('slider', {name: '回放时间'}).fill('0');
-    await fallback.locator('.mc-camera img[alt="drone-1 仿真摄像头画面"][src^="data:"]').waitFor();
+    await fallback.locator('.mc-camera img[alt="无人机 1 仿真摄像头画面"][src^="data:"]').waitFor();
     await fallback.close();
 
     await api('/tools/box_cancel_run', token, {...args, request_id: 'cleanup'});
@@ -307,7 +307,7 @@ async function waitForCenteredAgent(page, agentId) {
       };
     });
     await replayFallback.goto(observationUrl);
-    const replayImage = replayFallback.getByRole('img', {name:'drone-1 仿真摄像头画面', exact: true});
+    const replayImage = replayFallback.getByRole('img', {name:'无人机 1 仿真摄像头画面', exact: true});
     await replayImage.waitFor();
     assert.match(await replayImage.getAttribute('src'), /^data:image\/svg\+xml/);
     await replayFallback.close();
@@ -350,7 +350,10 @@ async function waitForCenteredAgent(page, agentId) {
     await replayPage.setViewportSize({width:1536,height:1028});
 
     const roster = replayPage.getByRole('list', {name:'设备列表',exact:true});
-    await roster.getByRole('button', {name:/drone-3/}).click();
+    const droneRow=roster.getByRole('button',{name:/^无人机 3\b/});
+    await droneRow.click();
+    assert.equal(await droneRow.getByText('无人机 3',{exact:true}).getAttribute('title'),'drone-3');
+    await replayPage.getByText('无人机 3 · 仿真相机',{exact:true}).waitFor();
     const operations = replayPage.getByRole('region', {name:'设备操作',exact:true});
     const observations = replayPage.getByRole('region', {name:'观测数据',exact:true});
     await operations.getByRole('button', {name:'定向移动',exact:true}).click();
@@ -367,15 +370,17 @@ async function waitForCenteredAgent(page, agentId) {
     assert(submittedResponse.ok());
     const {action:scanAction}=await submittedResponse.json();
     assert.equal(scanAction.type,'scan');
-    await operations.getByText('扫描周边 · 等待执行',{exact:true}).waitFor();
+    await operations.getByText('扫描周边 · 已完成',{exact:true}).waitFor();
+    await replayPage.getByRole('button',{name:'开始运行',exact:true}).waitFor();
     const sessionRoute=`${worldUrl}/sessions/${editableSession.sessionId}`;
     const worldHeaders={authorization:`Bearer ${editableSession.adminToken}`,'content-type':'application/json'};
-    const stepped=await fetch(sessionRoute+'/step',{method:'POST',headers:worldHeaders,body:JSON.stringify({count:5})});
-    if(!stepped.ok)throw Error(`Could not advance test world (${stepped.status})`);
     const read=await fetch(sessionRoute+'/observations/drone-3?include=device',{headers:worldHeaders});
     assert(read.ok);
     const latestScan=(await read.json()).device.actions.find(action=>action.requestId===scanAction.requestId);
     assert.equal(latestScan.status,'completed');
+    const sessionState=await (await fetch(sessionRoute,{headers:worldHeaders})).json();
+    assert.equal(sessionState.running,false);
+    assert.equal(sessionState.world.tick,latestScan.result.observedTick);
     const scanRow=observations.getByRole('row').filter({hasText:'主动扫描'});
     await scanRow.getByText(`T+${latestScan.result.observedTick}`,{exact:true}).waitFor();
     assert.match(await scanRow.innerText(),new RegExp(({anomaly:'发现异常',normal:'状态正常',not_detected:'未探测到目标'})[latestScan.result.kind]));
@@ -393,14 +398,42 @@ async function waitForCenteredAgent(page, agentId) {
     assert(await scan.isDisabled());
     await replayPage.getByRole('button',{name:'返回实时',exact:true}).click();
     await scanRow.waitFor();
-    await roster.getByRole('button',{name:/vehicle-1/}).click();
+    await roster.getByRole('button',{name:/^运输车 1\b/}).click();
     await scanRow.waitFor({state:'detached'});
     assert.equal(await operations.getByRole('button',{name:'飞行控制',exact:true}).count(),0);
     await replayPage.setViewportSize({width:390,height:844});
     await observations.scrollIntoViewIfNeeded();
     assert(await observations.evaluate(element=>element.scrollWidth<=element.clientWidth));
+
+    const local=await browser.newPage({viewport:{width:1440,height:1000}});
+    local.on('pageerror',error=>errors.push(error.message));
+    await local.goto(url+'/');
+    await local.getByRole('list',{name:'设备列表'}).getByRole('button',{name:/^无人机 3\b/}).click();
+    const localControls=local.getByRole('region',{name:'设备操作',exact:true});
+    await localControls.getByRole('button',{name:'扫描周边',exact:true}).click();
+    await localControls.getByText('扫描周边 · 已完成',{exact:true}).waitFor();
+    await local.getByRole('region',{name:'观测数据',exact:true}).getByText('主动扫描',{exact:true}).waitFor();
+    await localControls.getByRole('button',{name:'定向移动',exact:true}).click();
+    await localControls.getByLabel('距离（m）').fill('1');
+    await localControls.getByRole('button',{name:'提交定向移动',exact:true}).click();
+    await localControls.getByText('定向移动 · 已完成',{exact:true}).waitFor();
+    await localControls.locator('.mc-inline-action-history summary').click();
+    await localControls.getByText(/已移动 1\.0 \/ 1 m/).waitFor();
+    await localControls.locator('.mc-inline-action-history summary').click();
+    await localControls.getByRole('button',{name:'飞行控制',exact:true}).click();
+    await localControls.getByLabel('飞行操作').selectOption('hover');
+    await localControls.getByLabel('悬停时长（步）').fill('30');
+    await localControls.getByRole('button',{name:'提交悬停',exact:true}).click();
+    await local.getByRole('button',{name:'暂停操作',exact:true}).click();
+    await localControls.getByText('手动操作已暂停。开始运行可继续执行。',{exact:true}).waitFor();
+    const pausedTick=await local.locator('.mc-tick').innerText();
+    await localControls.locator('.mc-inline-action-history summary').click();
+    await localControls.getByRole('button',{name:/取消动作 panel-/}).click();
+    await localControls.getByText('悬停 · 已取消',{exact:true}).waitFor();
+    assert.equal(await local.locator('.mc-tick').innerText(),pausedTick);
+    await local.close();
     assert.deepEqual(errors, []);
-    console.log('Task browser: login, MCP camera follow, readonly observer, live device controls, scoped observations, replay, SVG fallback and safe redirects passed.');
+    console.log('Task browser: login, MCP camera follow, readonly observer, direct device execution in both worlds, pause, replay and scoped observations passed.');
   } finally {
     if (browser) await browser.close();
     if (control) {control.kill(); await controlExit;}

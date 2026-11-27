@@ -15,7 +15,10 @@ assert.equal(frame.tick, 0);
 assert.equal(frame.width, 320);
 assert.equal(frame.height, 180);
 assert.match(frame.svg, /^<svg\b/);
-assert.match(frame.svg, new RegExp(agent.id));
+assert(frame.svg.includes(`仿真相机 · ${agent.name} · T+0`));
+
+const offline = Camera.renderCameraFrame(world, {...agent, disabled: true});
+assert(offline.svg.includes(`仿真相机 · ${agent.name} · 已退出`));
 
 const rotated = Camera.renderCameraFrame(world, agent, {yaw: 45, pitch: -12});
 assert.equal(rotated.yaw, 45);
