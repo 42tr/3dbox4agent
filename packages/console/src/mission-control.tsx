@@ -336,7 +336,6 @@ function App(){
  useEffect(()=>{const open=()=>openTools('设备通信');window.addEventListener('sandbox-message-tools',open);return()=>window.removeEventListener('sandbox-message-tools',open)},[]);
  const openTaskAssignment=(taskId:string)=>{if(!s.manual||assignmentBlock(s.manual)||!assignmentTasks(s.manual.tasks).some(t=>t.id===taskId))return;setAssignmentRequest(old=>({key:s.manual!.key,taskId,serial:(old?.serial||0)+1}));openTools('人工任务分配')};
  const focused=s.selected!=='global';
- const complete=s.tasks.filter(t=>t.status==='done').length;
  const cameraHistory=s.source==='导入回放'||s.frame<s.frames-1;
  const operationAgentId=useRunOperationAgent(s.observerRunId);
  const canAutoFollow=!!s.observerRunId&&s.is3d;
@@ -345,7 +344,6 @@ function App(){
  useLayoutEffect(()=>{actions.followAgent?.(followedAgentId)},[followedAgentId]);
  const cameraMode=s.available3d?'webgl':s.remoteSession&&!cameraHistory?'remote':'still';
  const activeTask=s.tasks.find(t=>t.status==='active');
- const task=activeTask||s.tasks.find(t=>t.status!=='done');
  const taskAgent=activeTask?s.agents.find(a=>a.id===activeTask.assignee):undefined;
  const stageAgentId=followedAgentId||taskAgent?.id;
  const orderedAgents=[...s.agents].sort((a,b)=>devicePriority(a,taskAgent)-devicePriority(b,taskAgent));
@@ -377,8 +375,6 @@ function App(){
   return actions.inspectedDeviceAction?.(key,agentId,draft)||Promise.resolve({ok:false,reason:'request_failed'});
  };
  const focusedAgent=focused?s.agents[0]:undefined;
- const displayTitle=task?.name||(s.done?s.failed?'任务失败':'任务完成':focused?'观察 '+s.selected:ready?'等待任务':'正在加载');
- const sceneTitle=s.sceneId==='lunar-outpost-v1'&&s.sceneName==='月面基地设施协作'?'月球基地 · 勘察与设施修复':s.sceneName;
  const status=s.statusLabel||(s.done?s.failed?'任务失败':'任务完成':s.running?'运行中':'等待运行');
  const viewLabel=focused?s.selected:followedAgentId?'跟随 '+followedAgentId:s.is3d?'全局观察':'二维观察';
  const openDeviceTools=()=>{
@@ -452,7 +448,7 @@ function App(){
  </select>;
  return <div className={'mission-control'+(!toolsOpen&&serviceFeedback?' has-service-feedback':'')}>
   <header className="mc-header">
-   <div className="mc-brand"><Planet size={26}/><span>3DBOX</span></div>
+   <h1 className="mc-brand"><Planet size={26} aria-hidden="true"/><span>3DBOX</span></h1>
    <nav className="mc-navigation" aria-label="主导航">
     <button type="button" aria-current={!toolsOpen?'page':undefined} onClick={()=>{closeTools();selectTrace('trace');setTab('devices')}}>工作台</button>
     <button type="button" onClick={()=>openTools('场景与世界设置')}>场景</button>
@@ -489,13 +485,6 @@ function App(){
   </header>
   {!toolsOpen&&serviceFeedback}
   <main className="mc-workspace">
-   <section className="mc-mission" aria-label="当前任务">
-    <div className="mc-mission-title"><span>{sceneTitle}</span><h1>{displayTitle}</h1></div>
-    <div className="mc-mission-meta">
-     <div>任务进度 <strong>{complete} / {s.tasks.length}</strong></div>
-     <div>执行设备 {taskAgent?<button type="button" onClick={()=>inspectDevice(taskAgent.id)}>{deviceTitle(taskAgent)}</button>:<strong>—</strong>}</div>
-    </div>
-   </section>
    <div className="mc-left">
     <section className={'mc-stage'+(viewTools?' controls-open':'')+(s.heightfield?' has-heightfield':'')}
      aria-label="仿真场景" data-latest-frame={s.frame>=s.frames-1?true:undefined}>

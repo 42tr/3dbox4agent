@@ -413,7 +413,9 @@ async function verifyCompletedReplay(page) {
     const activeTask=sessionState.world.tasks.find(task=>task.status==='active');
     const executingAgent=sessionState.world.agents.find(device=>device.id===activeTask?.assignee);
     assert(executingAgent && executingAgent.id!=='drone-1');
-    await replayPage.locator('.mc-mission-meta').getByRole('button',{name:executingAgent.name,exact:true}).waitFor();
+    const executingRow=roster.getByRole('button').filter({has:replayPage.getByText(executingAgent.name,{exact:true})});
+    await executingRow.waitFor({state:'attached'});
+    assert.equal(await executingRow.getAttribute('aria-pressed'),'false');
     assert.equal(await droneRow.getAttribute('aria-pressed'),'true');
     assert(await scan.isEnabled());
     const scanRow=observations.getByRole('row').filter({hasText:'主动扫描'});
