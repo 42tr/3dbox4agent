@@ -226,7 +226,7 @@ function DeviceCamera({agent,frame,available3d,history,onFrame}:{agent:Agent;fra
   drag.current={id:event.pointerId,x:event.clientX,y:event.clientY};
   event.currentTarget.setPointerCapture(event.pointerId);
  }} onPointerMove={updatePointer} onPointerUp={endDrag} onPointerCancel={endDrag} onLostPointerCapture={endDrag} onClick={event=>event.stopPropagation()}>
-  {available3d?<canvas data-device-camera={agent.id} data-camera-yaw={view?.yaw} data-camera-pitch={view?.pitch} width="320" height="180" role="img" aria-label={label}/>:image?<img src={image} width="320" height="180" draggable={false} alt={label}/>:null}
+  {available3d?<canvas data-device-camera={agent.id} data-camera-yaw={view?.yaw} data-camera-pitch={view?.pitch} role="img" aria-label={label}/>:image?<img src={image} width="320" height="180" draggable={false} alt={label}/>:null}
   {!image&&<div className="mc-camera-placeholder">等待摄像头画面</div>}
   {available3d&&<><div className="mc-camera-corners"/><span>{name} · 仿真相机</span></>}
   <small>{error||(view?`${Math.round(view.yaw)}° / ${Math.round(view.pitch)}°`:canRotate?'拖动旋转':history&&image?'历史帧':'')}</small>
@@ -511,7 +511,7 @@ function App(){
       <Cube size={17}/><div><b>{s.graphicsFailure.title}</b><p>{s.graphicsFailure.body}</p><small>{s.graphicsFailure.help}</small></div>
      </div>}
      {s.observer&&s.available3d&&inspectedAgent&&<div className="mc-scene-camera">
-      <canvas key={inspectorWorld} data-device-camera={inspectedAgent.id} width="320" height="180"/>
+      <canvas key={inspectorWorld} data-device-camera={inspectedAgent.id}/>
       <span>{inspectedAgent.id}</span>
      </div>}
      <span className="mc-stage-agent" data-stage-agent={s.is3d&&!focused?stageAgentId:undefined} aria-hidden="true">{stageAgentId}</span>

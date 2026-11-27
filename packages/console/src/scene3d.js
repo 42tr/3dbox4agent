@@ -378,12 +378,15 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
     const hit=ray.intersectObjects(pickables,false).find(h=>h.object.parent.visible);
     if(hit&&lastState)onSelect(hit.object.userData.agentId);
   });
-  function setQuality(name){quality.profile(name);qualityName=name;renderer.setPixelRatio(quality.pixelRatio(name,window.devicePixelRatio));for(const g of buildingGroups)g.traverse(o=>{if(o.userData.decorative)o.visible=quality.profile(name).detail});const lunar=['lunar-base-v1','lunar-terrain-v1','lunar-sampling-v1','lunar-outpost-v1','lunar-heightfield-v1','lunar-thermal-v1','lunar-materials-v1','lunar-relay-v1','lunar-construction-v1','lunar-rescue-v1','lunar-power-v1'].includes(lastState?.sceneId),shore=lastState?.sceneId==='shore-coordination-v1'||!!lastState?.surfaceDomain;park.setDetail(park.yard,quality.profile(name).detail);trees.visible=!!lastState&&!industrial&&!lunar&&!shore&&quality.profile(name).detail;nextRenderAt=-Infinity;renderer.shadowMap.needsUpdate=true}
-  const thumbnailWidth=320,thumbnailHeight=180;
-  const thumbnailTarget=new THREE.WebGLRenderTarget(thumbnailWidth,thumbnailHeight);
-  const thumbnailSource=new THREE.WebGLRenderTarget(thumbnailWidth,thumbnailHeight,{type:renderer.extensions.has('EXT_color_buffer_float')?THREE.HalfFloatType:THREE.UnsignedByteType});
-  const thumbnailOutput=new OutputPass(),thumbnailCamera=new THREE.PerspectiveCamera(48,thumbnailWidth/thumbnailHeight,.1,500);
-  const pixels=new Uint8Array(thumbnailWidth*thumbnailHeight*4),thumbnailImage=new ImageData(thumbnailWidth,thumbnailHeight);
+  function setQuality(name){quality.profile(name);qualityName=name;renderer.setPixelRatio(quality.pixelRatio(name,window.devicePixelRatio));for(const g of buildingGroups)g.traverse(o=>{if(o.userData.decorative)o.visible=quality.profile(name).detail});const lunar=['lunar-base-v1','lunar-terrain-v1','lunar-sampling-v1','lunar-outpost-v1','lunar-heightfield-v1','lunar-thermal-v1','lunar-materials-v1','lunar-relay-v1','lunar-construction-v1','lunar-rescue-v1','lunar-power-v1'].includes(lastState?.sceneId),shore=lastState?.sceneId==='shore-coordination-v1'||!!lastState?.surfaceDomain;park.setDetail(park.yard,quality.profile(name).detail);trees.visible=!!lastState&&!industrial&&!lunar&&!shore&&quality.profile(name).detail;nextRenderAt=-Infinity;renderer.shadowMap.needsUpdate=true;refreshThumbnails()}
+  const gl=renderer.getContext(),thumbnailFloat=renderer.extensions.has('EXT_color_buffer_float');
+  const thumbnailColorSamples=gl.getInternalformatParameter(gl.RENDERBUFFER,thumbnailFloat?gl.RGBA16F:gl.RGBA8,gl.SAMPLES);
+  const thumbnailDepthSamples=gl.getInternalformatParameter(gl.RENDERBUFFER,gl.DEPTH_COMPONENT24,gl.SAMPLES);
+  const thumbnailSamples=[4,2].find(samples=>thumbnailColorSamples.includes(samples)&&thumbnailDepthSamples.includes(samples))??0;
+  const thumbnailTarget=new THREE.WebGLRenderTarget(320,180,{depthBuffer:false});
+  const thumbnailSource=new THREE.WebGLRenderTarget(320,180,{type:thumbnailFloat?THREE.HalfFloatType:THREE.UnsignedByteType,samples:thumbnailSamples});
+  const thumbnailOutput=new OutputPass(),thumbnailCamera=new THREE.PerspectiveCamera(48,16/9,.1,500);
+  let pixels=new Uint8Array(320*180*4),thumbnailImage=new ImageData(320,180);
   const paintedThumbnails=new WeakMap();
   let thumbnailContext,thumbnailGeneration=0;
   let lastThumbnailAt=-Infinity,thumbnailIndex=0,thumbnailPending=false;
@@ -399,6 +402,7 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
     if(thumbnailPending||draggingCamera||now-lastCameraInputAt<200||elapsed<125||!lastState)return;
     const sidebar=document.querySelector('.mc-device-content')?.getBoundingClientRect();
     const destinations=new Map();
+    let visibleWidth=0;
     for(const target of document.querySelectorAll('canvas[data-device-camera]')){
       const {deviceCamera:id,cameraYaw:yaw,cameraPitch:pitch}=target.dataset;
       if(!agents.has(id))continue;
@@ -408,12 +412,16 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
         paintedThumbnails.delete(target);
         continue;
       }
-      const key=JSON.stringify([thumbnailGeneration,id,yaw,pitch]);
+      visibleWidth=Math.max(visibleWidth,rect.width);
+      const key=JSON.stringify([id,yaw,pitch]);
       if(!destinations.has(key))destinations.set(key,{id,yaw,pitch,key,targets:[]});
       destinations.get(key).targets.push(target);
     }
     if(!destinations.size)return;
+    // Share each rendered view across its visible canvases at display resolution.
+    const width=quality.cameraWidth(qualityName,visibleWidth,window.devicePixelRatio),height=width*9/16;
     const views=[...destinations.values()];
+    for(const view of views)view.key=JSON.stringify([thumbnailGeneration,width,view.key]);
     // Paint newly visible cameras and changed angles before the steady refresh cycle.
     let next=views.find(view=>view.targets.some(target=>paintedThumbnails.get(target)!==view.key));
     if(!next){
@@ -448,21 +456,31 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
     }
     thumbnailCamera.far=Math.max(100,Number(mountedCamera?.range)||500);
     thumbnailCamera.updateProjectionMatrix();
+    const samples=qualityName==='low'?0:thumbnailSamples;
+    if(thumbnailSource.samples!==samples&&thumbnailSource.width===width)thumbnailSource.dispose();
+    thumbnailSource.samples=samples;
+    if(thumbnailTarget.width!==width){
+      thumbnailSource.setSize(width,height);
+      thumbnailTarget.setSize(width,height);
+      pixels=new Uint8Array(width*height*4);
+      thumbnailImage=new ImageData(width,height);
+    }
     const generation=thumbnailGeneration,tick=lastState.tick;
     thumbnailPending=true;
     try{
       renderer.setRenderTarget(thumbnailSource);renderer.render(scene,thumbnailCamera);
       // Match the main canvas: linear lighting -> ACES/exposure -> sRGB bytes.
       thumbnailOutput.render(renderer,thumbnailTarget,thumbnailSource);
-      renderer.readRenderTargetPixelsAsync(thumbnailTarget,0,0,thumbnailWidth,thumbnailHeight,pixels).then(()=>{
+      renderer.readRenderTargetPixelsAsync(thumbnailTarget,0,0,width,height,pixels).then(()=>{
         if(graphicsLost||thumbnailGeneration!==generation)return;
-        const stride=thumbnailWidth*4;
-        for(let y=0;y<thumbnailHeight;y++){
-          const start=(thumbnailHeight-1-y)*stride;
+        const stride=width*4;
+        for(let y=0;y<height;y++){
+          const start=(height-1-y)*stride;
           thumbnailImage.data.set(pixels.subarray(start,start+stride),y*stride);
         }
         for(const target of targets){
           if(!target.isConnected||target.dataset.deviceCamera!==id)continue;
+          if(target.width!==width||target.height!==height){target.width=width;target.height=height}
           target.getContext('2d').putImageData(thumbnailImage,0,0);
           target.dataset.ready='true';
           target.dataset.renderedTick=String(tick);
