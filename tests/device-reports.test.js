@@ -1,11 +1,31 @@
 'use strict';
 const assert=require('node:assert/strict'),vm=require('node:vm'),{buildSync}=require('esbuild'),E=require('../src/engine'),Replay=require('../src/replay');
+const {deviceSnapshot,fixedSensorSnapshots}=require('../packages/world/src/device-telemetry');
 const scope={module:{exports:{}},exports:{}};vm.runInNewContext(buildSync({entryPoints:['src/device-reports.ts'],bundle:true,write:false,platform:'node',format:'cjs',target:'es2020'}).outputFiles[0].text,scope);const D=scope.module.exports;
+const observationScope={module:{exports:{}},exports:{},require};
+vm.runInNewContext(buildSync({entryPoints:['packages/console/src/device-observations.tsx'],bundle:true,write:false,
+ platform:'node',format:'cjs',external:['react'],mainFields:['module','main']}).outputFiles[0].text,observationScope);
+const {projectDeviceObservations,projectSensorObservations}=observationScope.module.exports;
 function fixture(){const s=E.getScene('lunar-outpost-v1');s.obstacles=[];s.terrain=[];s.sensorRange=100;s.agents=[{role:'worker',label:'Worker',count:2,capabilities:['inspect','sample'],speed:3,mobility:'ground'}];s.tasks=[{id:'sample',name:'Collect soil',behavior:'sample',role:'worker',capability:'sample',target:[20,20],duration:2,dependsOn:[]},{id:'later',name:'Later work',behavior:'survey',role:'worker',capability:'inspect',target:[90,80],duration:30,dependsOn:[]}];Object.assign(s.communication,{delay:2,ttl:20,lossRate:0});const w=E.create(42,'nearest',s,{dispatchMode:'external'});Object.assign(w.agents[0],{x:20,y:20});assert(E.submitAction(w,'worker-1',{requestId:'scan-source',type:'scan',targetTick:1,expiresTick:40}).ok);for(let n=0;n<3;n++)E.step(w);assert(E.assign(w,'sample','worker-1').ok);for(let n=0;n<4;n++)E.step(w);assert(E.observe(w,'worker-1').samples.length);return {s,w}}
 function context(w,selected='worker-1'){return {key:'one',observer:false,imported:false,latest:true,failed:false,done:w.done,busy:false,running:false,remote:false,tick:w.tick,mode:w.executionMode,selected,agents:w.agents,tasks:[],actions:w.actions,reports:D.projectDeviceReports(E.observe(w,selected),selected)}}
 function local(w){let serial=0,busy=false,writes=0,reads=0;const frames=[E.snapshot(w)],client={get writes(){return writes},get reads(){return reads},frames,submit:D.createDeviceReportController({read:()=>({...context(w),busy}),id:()=>'report-'+(++serial),setBusy(v){busy=v},send(a,kind,input){writes++;assert.deepEqual(Object.keys(input).sort(),['requestId',kind==='scan'?'scanRequestId':'taskId'].sort());const result=kind==='scan'?E.submitEvidence(w,a,input):E.submitSampleReport(w,a,input);if(result.ok&&!result.duplicate)frames.push(E.snapshot(w));return result},refresh(){reads++}})};return client}
 (async()=>{
  const {s,w}=fixture(),client=local(w),initial=context(w);assert.equal(D.reportChoices(initial,'scan')[0].id,'scan-source');assert.equal(D.reportChoices(initial,'sample')[0].id,'sample');assert.equal(D.reportChoices(context(w,'worker-2'),'scan').length,0);assert.equal(D.reportChoices(context(w,'worker-2'),'sample').length,0);
+ const ownSnapshot=deviceSnapshot(w,null,E.observe(w,'worker-1'),{});
+ const otherSnapshot=deviceSnapshot(w,null,E.observe(w,'worker-2'),{});
+ const records=projectDeviceObservations(ownSnapshot);
+ assert(records.some(row=>row.id==='scan:scan-source'&&row.tick===ownSnapshot.actions[0].result.observedTick));
+ assert(records.some(row=>row.source==='采样'&&row.tick===ownSnapshot.samples[0].collectedTick&&row.detail==='20.0 / 20.0 m'));
+ assert(projectDeviceObservations(otherSnapshot).every(row=>row.source==='周边感知'));
+ assert(projectDeviceObservations({...ownSnapshot,observedTick:0}).every(row=>row.tick===0));
+ const sensorWorld=E.create(42,'nearest',E.getScene('industrial-park-fixed-sensor-v1'),{dispatchMode:'external'});
+ for(let i=0;i<18;i++)E.step(sensorWorld);
+ const [sensor]=fixedSensorSnapshots(sensorWorld);
+ const sensorRecords=projectSensorObservations(sensor,sensorWorld.events,sensorWorld.tick);
+ assert.equal(sensorRecords.length,1);
+ assert.equal(sensorRecords[0].tick,sensor.reading.observedTick);
+ assert(sensorRecords[0].detail.includes(`T+${sensor.reading.receivedTick} 送达`));
+ assert.equal(projectSensorObservations(sensor,sensorWorld.events,sensor.reading.receivedTick-1).length,0);
  assert.equal(D.projectDeviceReports(E.observe(w,'worker-1'),'worker-2').scans.length,0);const projected=D.projectDeviceReports(E.observe(w,'worker-1'),'worker-1');projected.samples[0].position[0]=-100;assert.equal(E.observe(w,'worker-1').samples[0].position[0],20);
  assert(E.interruptCommunication(w,'worker-1',2).ok);
  for(const [kind,sourceId]of [['scan','scan-source'],['sample','sample']]){const r=await client.submit('one','worker-1',{kind,sourceId,result:{kind:'normal'},position:[0,0]});assert(r.ok);assert.equal(D.reportChoices(context(w),kind).length,0);assert.equal((await client.submit('one','worker-1',{kind,sourceId})).reason,'source_unavailable')}
