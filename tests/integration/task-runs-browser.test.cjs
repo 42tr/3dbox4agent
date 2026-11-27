@@ -37,6 +37,35 @@ async function waitForCenteredAgent(page, agentId) {
   }, agentId);
 }
 
+async function verifyCompletedReplay(page) {
+  const replay = page.getByRole('button', {name: '回放', exact: true});
+  const pause = page.getByRole('button', {name: '暂停回放', exact: true});
+  const timeline = page.getByRole('slider', {name: '回放时间'});
+  await replay.waitFor({timeout: 45000});
+  const finalFrame = Number(await timeline.inputValue());
+  assert(finalFrame > 2);
+  await replay.click();
+  await pause.click();
+  const pausedFrame = Number(await timeline.inputValue());
+  assert(pausedFrame < finalFrame, 'replay starts before the finished frame');
+  await page.waitForTimeout(350);
+  assert.equal(Number(await timeline.inputValue()), pausedFrame);
+
+  await timeline.fill(String(finalFrame - 1));
+  await replay.click();
+  await page.waitForFunction(() => {
+    const slider = document.getElementById('timeline');
+    return slider.value === slider.max;
+  });
+  assert(await replay.isEnabled(), 'replay remains available after playback ends');
+
+  await replay.click();
+  await pause.waitFor();
+  await page.getByRole('button', {name: '返回实时', exact: true}).click();
+  await replay.waitFor();
+  assert.equal(Number(await timeline.inputValue()), finalFrame);
+}
+
 (async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'box-task-browser-'));
   const world = createServer({catalogPath: path.join(dir, 'catalog.sqlite3'),
@@ -411,6 +440,20 @@ async function waitForCenteredAgent(page, agentId) {
     await observations.scrollIntoViewIfNeeded();
     assert(await observations.evaluate(element=>element.scrollWidth<=element.clientWidth));
 
+    const completedResponse=await fetch(sessionRoute+'/step',{method:'POST',headers:worldHeaders,body:JSON.stringify({count:600})});
+    assert(completedResponse.ok);
+    const completedSession=await completedResponse.json();
+    assert(completedSession.world.done&&!completedSession.world.failed);
+    const replayWrites=[];
+    replayPage.on('request',request=>{
+      if(request.method()==='POST'&&new URL(request.url()).pathname.startsWith(`/control/sessions/${editableSession.sessionId}/`)) replayWrites.push(request.url());
+    });
+    await verifyCompletedReplay(replayPage);
+    const afterPlayback=await (await fetch(sessionRoute,{headers:worldHeaders})).json();
+    assert.equal(afterPlayback.revision,completedSession.revision);
+    assert.equal(afterPlayback.running,false);
+    assert.deepEqual(replayWrites,[]);
+
     const local=await browser.newPage({viewport:{width:1440,height:1000}});
     local.on('pageerror',error=>errors.push(error.message));
     await local.goto(url+'/');
@@ -440,6 +483,13 @@ async function waitForCenteredAgent(page, agentId) {
     await localControls.getByRole('button',{name:/取消动作 panel-/}).click();
     await localControls.getByText('悬停 · 已取消',{exact:true}).waitFor();
     assert.equal(await local.locator('.mc-tick').innerText(),pausedTick);
+    await local.evaluate(()=>{
+      const speed=document.getElementById('speed');
+      speed.value='5';
+      speed.dispatchEvent(new Event('change'));
+    });
+    await local.getByRole('button',{name:'开始运行',exact:true}).click();
+    await verifyCompletedReplay(local);
     await local.close();
     assert.deepEqual(errors, []);
     console.log('Task browser: login, MCP camera follow, readonly observer, direct device execution in both worlds, pause, replay and scoped observations passed.');
