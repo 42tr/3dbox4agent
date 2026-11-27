@@ -10,7 +10,7 @@ import quality from './render-quality.js';
 import graphics from './graphics-state.js';
 import {createLunarEnvironment} from './lunar-environment.js';
 import {createIndustrialPark,industrialCampusLayout,isIndustrialPark} from './industrial-park.mjs';
-import {createIndustrialDroneFactory,overviewDroneScale} from './industrial-drone.mjs';
+import {createIndustrialDeviceModels,industrialDeviceScale,truckCargo} from './industrial-devices.mjs';
 import {createSurfacePresentation} from './surface-presentation.js';
 import {createTreeModel} from './tree-model.mjs';
 import surfaceDomain from '@42tr/3dbox4agent-world/surface-domain';
@@ -138,7 +138,7 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   const surfacePresentation=createSurfacePresentation(scene);
   const legacyPark=createIndustrialPark(scene);
   const modernPark=createIndustrialPark(scene,{modern:true});
-  const buildIndustrialDrone=createIndustrialDroneFactory();
+  const industrialModels=createIndustrialDeviceModels();
   let park=legacyPark;
   const parkGround=box(scene,100,1,100,ground,0,-.5,0);
   const shoreWater=box(scene,35,.04,100,mat(0x77acba),-32.5,.02,0);shoreWater.visible=false;
@@ -206,15 +206,17 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
   const VISUAL_RADIUS=.78;
   function fitAgentVisual(group,excluded){const bounds=new THREE.Box3();group.traverse(o=>{if(o.isMesh&&o!==excluded&&o.visible!==false)bounds.expandByObject(o)});if(!Number.isFinite(bounds.min.x))return;const radius=Math.hypot(bounds.max.x-bounds.min.x,bounds.max.z-bounds.min.z)/2;if(radius>VISUAL_RADIUS)group.scale.multiplyScalar(VISUAL_RADIUS/radius)}
   function updateLinks(hops,visible){messageLines.visible=visible&&hops.length>0;if(!messageLines.visible)return;const key=JSON.stringify([hops,lastState?.heightfield]);if(key===linksKey)return;linksKey=key;const positions=[],colors=[],palette={in_range:0x087a76,out_of_range:0xd07a3b,obstructed:0x985ac0,interrupted:0xc45444,unavailable:0xc45444};function segment(a,b,color){positions.push(...a,...b);colors.push(color.r,color.g,color.b,color.r,color.g,color.b)}for(const h of hops){const color=new THREE.Color(palette[h.status]??0xc45444),a=[h.fromX-center,h.fromAir?16.5:2+floor(h.fromX,h.fromY),h.fromY-center],b=[h.toX-center,h.toAir?16.5:2+floor(h.toX,h.toY),h.toY-center];segment(a,b,color);const dx=b[0]-a[0],dz=b[2]-a[2],length=Math.hypot(dx,dz);if(length>1e-6){const ux=dx/length,uz=dz/length,p=[a[0]+dx*.7,a[1]+(b[1]-a[1])*.7,a[2]+dz*.7],size=Math.min(2,length*.12);segment(p,[p[0]-ux*size-uz*size*.5,p[1],p[2]-uz*size+ux*size*.5],color);segment(p,[p[0]-ux*size+uz*size*.5,p[1],p[2]-uz*size-ux*size*.5],color)}}const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));messageLines.geometry.dispose();messageLines.geometry=geometry;}
-  function agentVisualKey(agent,model){
-    const style=modern&&model==='air'?'industrial-drone':lastState?.sceneId?.startsWith('lunar')?'lunar':'other';
-    return agent.role+'|'+model+'|'+style;
+  function industrialDeviceKind(agent,model){
+    if(!modern)return null;
+    if(model==='air')return 'drone';
+    if(model==='robot')return 'repair';
+    if(model==='wheeled'&&agent.role==='vehicle')return 'truck';
+    return null;
   }
-  function createAgent(a){const g=new THREE.Group();g.userData.agentId=a.id;const visual=new THREE.Group();g.add(visual);
-    const hex=window.SandboxAgentVisual.color(a.role),model=window.SandboxAgentVisual.model(a,window.SandboxSensors.isAir(a));let color=agentMaterials.get(hex);if(!color){color=mat(hex);agentMaterials.set(hex,color)}
-    const industrialDrone=modern&&model==='air';
-    if(industrialDrone){
-      buildIndustrialDrone(visual);
+  function createAgent(a,model,industrialKind,visualKey){const g=new THREE.Group();g.userData.agentId=a.id;const visual=new THREE.Group();g.add(visual);
+    const hex=window.SandboxAgentVisual.color(a.role);let color=agentMaterials.get(hex);if(!color){color=mat(hex);agentMaterials.set(hex,color)}
+    if(industrialKind){
+      industrialModels[industrialKind](visual);
     }else if(model==='air'){
       // Streamlined quad-rotor: enclosed battery, connected diagonal arms,
       // protected rotors, navigation lights, landing skids and a camera gimbal.
@@ -286,7 +288,7 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
         agentMesh(visual,agentGeometry.box,agentMetal,.05,1.12,z*1.28,.28,.22,.18);
       }
     }
-    const hit=new THREE.Mesh(new THREE.BoxGeometry(5,5,5),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));hit.position.y=window.SandboxSensors.isAir(a)?0:2;hit.userData.agentId=a.id;g.add(hit);pickables.push(hit);scene.add(g);if(lastState?.sceneId?.startsWith('lunar')&&model!=='air')lunarEnvironment.agentModel(visual,a.role);agents.set(a.id,{group:g,hit,visualKey:agentVisualKey(a,model),overviewDrone:industrialDrone?visual:null});if(!industrialDrone&&!lastState?.sceneId?.startsWith('lunar'))fitAgentVisual(visual,hit);
+    const hit=new THREE.Mesh(new THREE.BoxGeometry(5,5,5),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));hit.position.y=window.SandboxSensors.isAir(a)?0:2;hit.userData.agentId=a.id;g.add(hit);pickables.push(hit);scene.add(g);if(lastState?.sceneId?.startsWith('lunar')&&model!=='air')lunarEnvironment.agentModel(visual,a.role);agents.set(a.id,{group:g,hit,visual,visualKey,industrialKind});if(!industrialKind&&!lastState?.sceneId?.startsWith('lunar'))fitAgentVisual(visual,hit);
   }
   function focusTerrainEffects(state,selected){return state.agents.some(a=>a.id===selected)?[]:state.terrainEffects||[]}
   function update(state,selected,showLinks=true,options={}){
@@ -312,14 +314,39 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
       park.setDetail(park.yard,quality.profile(qualityName).detail);
     }
     lunarEnvironment.root.visible=lunar;parkGround.visible=!industrial&&!lunar&&!state.heightfield;parkGround.scale.set((state.worldSize??100)/100,1,(state.worldSize??100)/100);updateField(state,lunar);if(lunar)lunarEnvironment.mount(state.obstacles,state.heightfield);roads.visible=!industrial&&!lunar&&!shore&&!state.heightfield&&center===50;trees.visible=!industrial&&!lunar&&!shore&&quality.profile(qualityName).detail;shoreWater.visible=shore&&!state.surfaceDomain;surfacePresentation.update(state.surfaceDomain,state.terrain||[],focusTerrainEffects(state,selected));ground.color.setHex(lunar?0x8b8985:shore?0xd8c9a5:0xc7dbd1);building.color.setHex(lunar?0xbcbcb6:shore?0xc4b89b:0xf4f7f3);roof.color.setHex(lunar?0x8b8f8c:shore?0x938f7d:0xb1c9bf);const backdrop=lunar?0x756754:industrial?0x758a94:0xdce9e4;renderer.setClearColor(backdrop);scene.fog.color.setHex(backdrop);updateBuildings(lunar&&state.obstacles.some(o=>o.id==='habitat')?[]:state.obstacles);scene.fog.near=lunar?160:modern?475:industrial?345:230;scene.fog.far=lunar?330:modern?610:industrial?485:400;const focus=state.agents.find(a=>a.id===selected);updateFixedSensors(state.fixedSensors||[],!focus);updateRoadblocks(state.roadblocks||[],!focus);updateRisk(focus?[]:state.riskZones||[]);updateTerrain(lunar?[]:(state.terrain||[]).filter(z=>!state.surfaceDomain||surfaceDomain.regionKind(state.surfaceDomain,z)!=='water'),focus?[]:state.terrainEffects||[]);const observation=focus?window.SandboxEngine.observe(state,focus.id):null,visibleIds=new Set(observation?.nearby.map(a=>a.id)||[]);updateConstruction(state,window.SandboxConstruction.visualPlan(state.construction,!!focus));updateLinks(focus?[]:window.SandboxLinks.activeHops(state),!focus&&showLinks);
-    for(const a of state.agents){const old=agents.get(a.id),model=window.SandboxAgentVisual.model(a,window.SandboxSensors.isAir(a)),key=agentVisualKey(a,model);if(old&&old.visualKey!==key){old.group.userData.releaseSurface?.();scene.remove(old.group);pickables.splice(pickables.indexOf(old.hit),1);old.group.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedAgentAsset&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()});old.hit.material.dispose();agents.delete(a.id)}if(!agents.has(a.id))createAgent(a);const {group}=agents.get(a.id),wasVisible=group.visible,visible=!focus||a.id===focus.id||visibleIds.has(a.id),height=window.SandboxSensors.isAir(a)?(a.flightZ??16):floor(a.x,a.y),target={x:a.x-center,y:a.y-center};if(smooth&&old&&old.visualKey===key&&wasVisible&&visible){transitions.set(a.id,{from:{x:group.position.x,y:group.position.z},to:target,start:now,duration:options.duration||50});group.position.y=height}else if(!same||!movingLive){transitions.delete(a.id);group.position.set(target.x,height,target.y)}group.visible=visible;if((lunar||modern)&&model!=='air'){const previous=previousDisplay&&state.tick===previousDisplay.tick+1&&state.sceneId===previousDisplay.sceneId?previousDisplay.agents.find(p=>p.id===a.id):null;group.rotation.y=vehicleHeading.yaw(a,previous,group.rotation.y)}else group.rotation.y=model==='wheeled'?Math.PI/2:0;group.traverse(o=>{if(o.isMesh&&o!==agents.get(a.id).hit)o.material=a.disabled?disabledMaterial(o.material):restoreMaterial(o.material)});}
+    for(const a of state.agents){
+      const old=agents.get(a.id),air=window.SandboxSensors.isAir(a),model=window.SandboxAgentVisual.model(a,air);
+      const industrialKind=industrialDeviceKind(a,model);
+      const style=industrialKind||(state.sceneId?.startsWith('lunar')?'lunar':'other');
+      const key=a.role+'|'+model+'|'+style;
+      if(old&&old.visualKey!==key){old.group.userData.releaseSurface?.();scene.remove(old.group);pickables.splice(pickables.indexOf(old.hit),1);old.group.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedAgentAsset&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()});old.hit.material.dispose();agents.delete(a.id)}
+      if(!agents.has(a.id))createAgent(a,model,industrialKind,key);
+      const {group,hit}=agents.get(a.id),wasVisible=group.visible,visible=!focus||a.id===focus.id||visibleIds.has(a.id);
+      const height=air?(a.flightZ??16):floor(a.x,a.y),target={x:a.x-center,y:a.y-center};
+      if(smooth&&old?.visualKey===key&&wasVisible&&visible){
+        transitions.set(a.id,{from:{x:group.position.x,y:group.position.z},to:target,start:now,duration:options.duration||50});
+        group.position.y=height;
+      }else if(!same||!movingLive){transitions.delete(a.id);group.position.set(target.x,height,target.y)}
+      group.visible=visible;
+      if((lunar||modern)&&model!=='air'){
+        const previous=previousDisplay&&state.tick===previousDisplay.tick+1&&state.sceneId===previousDisplay.sceneId?previousDisplay.agents.find(p=>p.id===a.id):null;
+        group.rotation.y=vehicleHeading.yaw(a,previous,group.rotation.y);
+      }else group.rotation.y=model==='wheeled'?Math.PI/2:0;
+      group.traverse(o=>{if(o.isMesh&&o!==hit)o.material=a.disabled?disabledMaterial(o.material):restoreMaterial(o.material)});
+    }
     const ids=new Set(state.agents.map(a=>a.id));for(const [id,v] of agents)if(!ids.has(id)){v.group.userData.releaseSurface?.();scene.remove(v.group);v.group.traverse(o=>{if(o.isMesh&&!o.geometry.userData.sharedAgentAsset&&!o.geometry.userData.sharedLunarAsset&&!o.geometry.userData.sharedSurfaceAsset)o.geometry.dispose()});v.hit.material.dispose();pickables.splice(pickables.indexOf(v.hit),1);agents.delete(id);transitions.delete(id)}
     const cameraChanged=updateCameraFocus(sceneChanged);
     if(cameraChanged||selectionChanged||options.thumbnailContext!==thumbnailContext){
       thumbnailContext=options.thumbnailContext;
       refreshThumbnails();
     }
-    const part=state.part;const carrier=state.agents.find(a=>a.id===part.carrierId);const p=carrier?[carrier.x,carrier.y]:part.position;carriedBy=carrier?.id||null;partMesh.scale.setScalar(lunar ? .6 : 1);partMesh.visible=!focus&&!!p&&part.location!=='consumed';if(p)partMesh.position.set(p[0]-center,(carrier&&window.SandboxSensors.isAir(carrier)?(carrier.flightZ??16):floor(p[0],p[1]))+(carrier?(lunar?1.8:3):(lunar ? .54 : .9)),p[1]-center);
+    const part=state.part,carrier=state.agents.find(a=>a.id===part.carrierId),p=carrier?[carrier.x,carrier.y]:part.position;
+    carriedBy=carrier?.id||null;
+    partMesh.visible=!focus&&!!p&&part.location!=='consumed';
+    partMesh.castShadow=agents.get(carriedBy)?.industrialKind!=='truck';
+    partMesh.rotation.y=0;
+    partMesh.scale.setScalar(lunar ? .6 : 1);
+    if(p)partMesh.position.set(p[0]-center,(carrier&&window.SandboxSensors.isAir(carrier)?(carrier.flightZ??16):floor(p[0],p[1]))+(carrier?(lunar?1.8:3):(lunar ? .54 : .9)),p[1]-center);
     const taskAgent=state.tasks.find(task=>task.status==='active')?.assignee;
     const movingAgents=state.agents.filter(a=>(a.status==='working'||a.status==='manual')&&a.route.length);
     const taskRoute=movingAgents.find(a=>a.id===taskAgent);
@@ -487,22 +514,34 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
     agentLabel.style.visibility=visible?'visible':'hidden';
   }
   let renderWidth=0,renderHeight=0;
-  const viewPosition=new THREE.Vector3(),enlargedDrones=[];
-  function renderViewport(height){
+  const viewPosition=new THREE.Vector3(),enlargedDevices=[];
+  function placeTruckCargo(truck,scale=1){
+    const [width,height,depth]=truckCargo.size;
+    partMesh.position.set(truckCargo.x,truckCargo.height+height/2,0).multiplyScalar(scale)
+      .applyQuaternion(truck.quaternion).add(truck.position);
+    partMesh.rotation.y=truck.rotation.y;
+    partMesh.scale.set(width/1.8,height/1.8,depth/1.8).multiplyScalar(scale);
+  }
+  function renderViewport(height,loadedTruck){
+    let scaledCargo=false;
     if(modern){
       viewCamera.updateMatrixWorld();
       const projection=viewCamera.projectionMatrix.elements[5];
-      for(const {group,overviewDrone} of agents.values()){
-        if(!overviewDrone||!group.visible)continue;
+      for(const {group,visual,industrialKind} of agents.values()){
+        if(!industrialKind||!group.visible)continue;
         const depth=-viewPosition.copy(group.position).applyMatrix4(viewCamera.matrixWorldInverse).z;
-        const scale=overviewDroneScale(depth,height,projection);
-        if(scale>1){overviewDrone.scale.setScalar(scale);enlargedDrones.push(overviewDrone)}
+        const scale=industrialDeviceScale(industrialKind,depth,height,projection);
+        if(scale<=1)continue;
+        visual.scale.setScalar(scale);
+        enlargedDevices.push(visual);
+        if(group===loadedTruck){placeTruckCargo(group,scale);scaledCargo=true}
       }
     }
     try{renderer.render(scene,viewCamera)}finally{
       // Device cameras use the normal model dimensions.
-      for(const drone of enlargedDrones)drone.scale.setScalar(1);
-      enlargedDrones.length=0;
+      for(const visual of enlargedDevices)visual.scale.setScalar(1);
+      enlargedDevices.length=0;
+      if(scaledCargo)placeTruckCargo(loadedTruck);
     }
   }
   function animate(now){
@@ -523,9 +562,14 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
       if(spec&&!window.SandboxSensors.isAir(spec))agent.group.position.y=floor(p.x+center,p.y+center);
       if(p.done)transitions.delete(id);
     }
-    if(carriedBy&&partMesh.visible){
-      const agent=agents.get(carriedBy);
-      if(agent){partMesh.position.x=agent.group.position.x;partMesh.position.z=agent.group.position.z;partMesh.position.y=agent.group.position.y+(lastState?.sceneId?.startsWith('lunar')?1.8:3)}
+    let loadedTruck=null;
+    const carrier=partMesh.visible&&agents.get(carriedBy);
+    if(carrier?.industrialKind==='truck'){
+      loadedTruck=carrier.group;
+      placeTruckCargo(loadedTruck);
+    }else if(carrier){
+      partMesh.position.copy(carrier.group.position);
+      partMesh.position.y+=lastState?.sceneId?.startsWith('lunar')?1.8:3;
     }
     const w=canvas.clientWidth,h=canvas.clientHeight;
     if(w&&h&&(w!==renderWidth||h!==renderHeight)){
@@ -533,7 +577,7 @@ window.createParkView = function(canvas, onSelect, onUnavailable) {
       renderer.setSize(w,h,false);setViewportProjection(w/h);
     }
     updateViewCamera(elapsed);
-    if(w&&h)renderViewport(h);
+    if(w&&h)renderViewport(h,loadedTruck);
     positionAgentLabel(w,h);
     thumbnails(now);
   }

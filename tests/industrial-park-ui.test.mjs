@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import * as THREE from 'three';
-import {createIndustrialDroneFactory, overviewDroneScale} from '../packages/console/src/industrial-drone.mjs';
+import {createIndustrialDeviceModels, industrialDeviceScale, truckCargo} from '../packages/console/src/industrial-devices.mjs';
 import {createIndustrialPark, industrialCampusLayout, industrialDistricts, industrialEntrances, industrialGroundSize, industrialParkSize, isIndustrialPark} from '../packages/console/src/industrial-park.mjs';
 
 const require = createRequire(import.meta.url);
@@ -24,18 +24,41 @@ const modernBounds = modernScene.obstacles.map(obstacle => {
 });
 assert.equal(modernScene.worldSize, 224);
 
-const buildDrone = createIndustrialDroneFactory();
+const deviceModels = createIndustrialDeviceModels();
 const drone = new THREE.Group();
 const otherDrone = new THREE.Group();
-buildDrone(drone);
-buildDrone(otherDrone);
+deviceModels.drone(drone);
+deviceModels.drone(otherDrone);
 const guards = drone.children.filter(mesh => mesh.geometry.type === 'TorusGeometry');
 assert.equal(new Set(guards.map(({position}) => `${position.x},${position.z}`)).size, 4);
 assert(drone.children.every((mesh, i) => mesh.geometry === otherDrone.children[i].geometry));
-assert.equal(overviewDroneScale(15, 640, 2.6), 1);
-assert(overviewDroneScale(300, 640, 2.6) > 2);
+assert.equal(industrialDeviceScale('drone', 15, 640, 2.6), 1);
+assert(industrialDeviceScale('drone', 300, 640, 2.6) > 2);
 const droneSize = new THREE.Box3().setFromObject(drone).getSize(new THREE.Vector3());
-assert(Math.max(droneSize.x, droneSize.z) * overviewDroneScale(1000, 400, 2.6) < 5, 'enlarged drone stays within its picking bounds');
+assert(Math.max(droneSize.x, droneSize.z) * industrialDeviceScale('drone', 1000, 400, 2.6) < 5, 'enlarged drone stays within its picking bounds');
+
+const groundDevices = {};
+const groundPickingBounds = new THREE.Box3(new THREE.Vector3(-2.5, -.5, -2.5), new THREE.Vector3(2.5, 4.5, 2.5));
+for (const kind of ['truck', 'repair']) {
+  const group = new THREE.Group();
+  deviceModels[kind](group);
+  groundDevices[kind] = group;
+  const bounds = new THREE.Box3();
+  for (const mesh of group.children) {
+    if (mesh.geometry.type !== 'PlaneGeometry') bounds.expandByObject(mesh);
+  }
+  assert(Math.abs(bounds.min.y) < .01, `${kind} rests on the ground`);
+  assert.equal(industrialDeviceScale(kind, 15, 640, 2.6), 1);
+  assert(industrialDeviceScale(kind, 300, 640, 2.6) > 1.5);
+  const cap = industrialDeviceScale(kind, 1000, 400, 2.6);
+  bounds.min.multiplyScalar(cap);
+  bounds.max.multiplyScalar(cap);
+  assert(groundPickingBounds.containsBox(bounds), `${kind} stays within its picking bounds`);
+}
+const cameraMount = new THREE.Vector3(...modernScene.agents.find(agent => agent.role === 'vehicle').camera.mount);
+assert(!groundDevices.truck.children.some(mesh => new THREE.Box3().setFromObject(mesh).containsPoint(cameraMount)));
+const deck = groundDevices.truck.children.find(mesh => Math.abs(mesh.position.y + mesh.scale.y / 2 - truckCargo.height) < .001 && mesh.position.x === truckCargo.x);
+assert(deck && deck.scale.x >= truckCargo.size[0] && deck.scale.z >= truckCargo.size[2], 'truck deck fits the carried part');
 
 for (const gate of industrialCampusLayout.gates) {
   const point = new THREE.Vector3(gate.x - 112, 1, gate.y - 112);
