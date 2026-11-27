@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import * as THREE from 'three';
+import {createIndustrialDroneFactory, overviewDroneScale} from '../packages/console/src/industrial-drone.mjs';
 import {createIndustrialPark, industrialCampusLayout, industrialDistricts, industrialEntrances, industrialGroundSize, industrialParkSize, isIndustrialPark} from '../packages/console/src/industrial-park.mjs';
 
 const require = createRequire(import.meta.url);
@@ -22,6 +23,20 @@ const modernBounds = modernScene.obstacles.map(obstacle => {
   return new THREE.Box3().setFromObject(group);
 });
 assert.equal(modernScene.worldSize, 224);
+
+const buildDrone = createIndustrialDroneFactory();
+const drone = new THREE.Group();
+const otherDrone = new THREE.Group();
+buildDrone(drone);
+buildDrone(otherDrone);
+const guards = drone.children.filter(mesh => mesh.geometry.type === 'TorusGeometry');
+assert.equal(new Set(guards.map(({position}) => `${position.x},${position.z}`)).size, 4);
+assert(drone.children.every((mesh, i) => mesh.geometry === otherDrone.children[i].geometry));
+assert.equal(overviewDroneScale(15, 640, 2.6), 1);
+assert(overviewDroneScale(300, 640, 2.6) > 2);
+const droneSize = new THREE.Box3().setFromObject(drone).getSize(new THREE.Vector3());
+assert(Math.max(droneSize.x, droneSize.z) * overviewDroneScale(1000, 400, 2.6) < 5, 'enlarged drone stays within its picking bounds');
+
 for (const gate of industrialCampusLayout.gates) {
   const point = new THREE.Vector3(gate.x - 112, 1, gate.y - 112);
   assert(!modernBounds.some(bounds => bounds.containsPoint(point)), gate.label + ' is open');
