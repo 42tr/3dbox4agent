@@ -335,8 +335,6 @@ function App(){
  useLayoutEffect(()=>{const canvas=document.querySelector<HTMLCanvasElement>('[data-world-minimap]');if(!canvas)return;const c=canvas.getContext('2d');if(!c)return;const size=s.worldSize??100,sx=220/size,sy=170/size;c.clearRect(0,0,220,170);c.fillStyle='#20211fe8';c.fillRect(0,0,220,170);c.strokeStyle='#72726450';c.lineWidth=.7;for(let i=0;i<=10;i++){c.beginPath();c.moveTo(i*22,0);c.lineTo(i*22,170);c.stroke();c.beginPath();c.moveTo(0,i*17);c.lineTo(220,i*17);c.stroke()}if(s.heightfield){const h=s.heightfield,w=100/(h.cols-1),d=100/(h.rows-1);for(let r=0;r<h.rows-1;r++)for(let col=0;col<h.cols-1;col++){const i=r*h.cols+col,a=h.heights[i],b=h.heights[i+1],q=h.heights[i+h.cols],z=h.heights[i+h.cols+1],grade=Math.max(Math.hypot((b-a)/w,(q-a)/d),Math.hypot((z-q)/w,(z-b)/d)),blocked=Math.atan(grade)*180/Math.PI>h.maxSlopeDegrees+1e-9;c.fillStyle=blocked?'#d1934c88':`rgba(172,164,141,${.08+Math.min(.3,Math.abs(a)/30)})`;c.fillRect(col*w*sx,r*d*sy,w*sx,d*sy)}}if(s.sceneId==='industrial-park-v2'){const campus=(window as Window & {SandboxIndustrialCampus?:{roads:number[][];yards:number[][]}}).SandboxIndustrialCampus;if(campus){c.fillStyle='#55554b';for(const [x,y,w,h] of campus.yards)c.fillRect(x*sx,y*sy,w*sx,h*sy);c.fillStyle='#777d80';for(const [x,y,w,h] of campus.roads)c.fillRect(x*sx,y*sy,w*sx,h*sy)}}c.fillStyle='#bdb09866';for(const o of s.obstacles||[])c.fillRect(o.x*sx,o.y*sy,o.w*sx,o.h*sy);for(const a of s.agents){c.fillStyle=a.disabled?'#d4776b':a.status==='working'?'#90c8b8':'#bec3dd';c.beginPath();c.arc(a.x*sx,a.y*sy,2.5,0,Math.PI*2);c.fill()}},[s]);
  useEffect(()=>{const open=()=>openTools('设备通信');window.addEventListener('sandbox-message-tools',open);return()=>window.removeEventListener('sandbox-message-tools',open)},[]);
  const openTaskAssignment=(taskId:string)=>{if(!s.manual||assignmentBlock(s.manual)||!assignmentTasks(s.manual.tasks).some(t=>t.id===taskId))return;setAssignmentRequest(old=>({key:s.manual!.key,taskId,serial:(old?.serial||0)+1}));openTools('人工任务分配')};
- const submitInspectorAction=(key:string,agentId:string,draft:DeviceDraft):Promise<DeviceResult>=>
-  actions.inspectedDeviceAction?.(key,agentId,draft)||Promise.resolve({ok:false,reason:'request_failed'});
  const focused=s.selected!=='global';
  const complete=s.tasks.filter(t=>t.status==='done').length;
  const cameraHistory=s.source==='导入回放'||s.frame<s.frames-1;
@@ -372,6 +370,11 @@ function App(){
  const inspectDevice=(id:string,kind:'device'|'sensor'='device')=>{
   setInspected({world:inspectorWorld,id,kind});
   setTab('devices');
+ };
+ const submitInspectorAction=(key:string,agentId:string,draft:DeviceDraft):Promise<DeviceResult>=>{
+  // The steps for this action can activate an automatic task on a different device.
+  if(pinned?.kind!=='device'||pinned.id!==agentId)inspectDevice(agentId);
+  return actions.inspectedDeviceAction?.(key,agentId,draft)||Promise.resolve({ok:false,reason:'request_failed'});
  };
  const focusedAgent=focused?s.agents[0]:undefined;
  const displayTitle=task?.name||(s.done?s.failed?'任务失败':'任务完成':focused?'观察 '+s.selected:ready?'等待任务':'正在加载');
@@ -490,7 +493,7 @@ function App(){
     <div className="mc-mission-title"><span>{sceneTitle}</span><h1>{displayTitle}</h1></div>
     <div className="mc-mission-meta">
      <div>任务进度 <strong>{complete} / {s.tasks.length}</strong></div>
-     <div>执行设备 {taskAgent?<button type="button" onClick={()=>inspectDevice(taskAgent.id)}>{taskAgent.id}</button>:<strong>—</strong>}</div>
+     <div>执行设备 {taskAgent?<button type="button" onClick={()=>inspectDevice(taskAgent.id)}>{deviceTitle(taskAgent)}</button>:<strong>—</strong>}</div>
     </div>
    </section>
    <div className="mc-left">

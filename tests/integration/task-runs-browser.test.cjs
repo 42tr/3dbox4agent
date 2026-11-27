@@ -350,10 +350,10 @@ async function waitForCenteredAgent(page, agentId) {
     await replayPage.setViewportSize({width:1536,height:1028});
 
     const roster = replayPage.getByRole('list', {name:'设备列表',exact:true});
-    const droneRow=roster.getByRole('button',{name:/^无人机 3\b/});
-    await droneRow.click();
-    assert.equal(await droneRow.getByText('无人机 3',{exact:true}).getAttribute('title'),'drone-3');
-    await replayPage.getByText('无人机 3 · 仿真相机',{exact:true}).waitFor();
+    const droneRow=roster.getByRole('button',{name:/^无人机 1\b/});
+    await replayPage.getByText('无人机 1 · 仿真相机',{exact:true}).waitFor();
+    assert.equal(await droneRow.getAttribute('aria-pressed'),'true');
+    assert.equal(await droneRow.getByText('无人机 1',{exact:true}).getAttribute('title'),'drone-1');
     const operations = replayPage.getByRole('region', {name:'设备操作',exact:true});
     const observations = replayPage.getByRole('region', {name:'观测数据',exact:true});
     await operations.getByRole('button', {name:'定向移动',exact:true}).click();
@@ -364,7 +364,7 @@ async function waitForCenteredAgent(page, agentId) {
     await operations.getByLabel('移动目标 X').waitFor();
     const scan = operations.getByRole('button', {name:'扫描周边',exact:true});
     const submitted = replayPage.waitForResponse(response => response.request().method()==='POST' &&
-      new URL(response.url()).pathname.endsWith(`/sessions/${editableSession.sessionId}/agents/drone-3/actions`));
+      new URL(response.url()).pathname.endsWith(`/sessions/${editableSession.sessionId}/agents/drone-1/actions`));
     await scan.click();
     const submittedResponse = await submitted;
     assert(submittedResponse.ok());
@@ -374,13 +374,19 @@ async function waitForCenteredAgent(page, agentId) {
     await replayPage.getByRole('button',{name:'开始运行',exact:true}).waitFor();
     const sessionRoute=`${worldUrl}/sessions/${editableSession.sessionId}`;
     const worldHeaders={authorization:`Bearer ${editableSession.adminToken}`,'content-type':'application/json'};
-    const read=await fetch(sessionRoute+'/observations/drone-3?include=device',{headers:worldHeaders});
+    const read=await fetch(sessionRoute+'/observations/drone-1?include=device',{headers:worldHeaders});
     assert(read.ok);
     const latestScan=(await read.json()).device.actions.find(action=>action.requestId===scanAction.requestId);
     assert.equal(latestScan.status,'completed');
     const sessionState=await (await fetch(sessionRoute,{headers:worldHeaders})).json();
     assert.equal(sessionState.running,false);
     assert.equal(sessionState.world.tick,latestScan.result.observedTick);
+    const activeTask=sessionState.world.tasks.find(task=>task.status==='active');
+    const executingAgent=sessionState.world.agents.find(device=>device.id===activeTask?.assignee);
+    assert(executingAgent && executingAgent.id!=='drone-1');
+    await replayPage.locator('.mc-mission-meta').getByRole('button',{name:executingAgent.name,exact:true}).waitFor();
+    assert.equal(await droneRow.getAttribute('aria-pressed'),'true');
+    assert(await scan.isEnabled());
     const scanRow=observations.getByRole('row').filter({hasText:'主动扫描'});
     await scanRow.getByText(`T+${latestScan.result.observedTick}`,{exact:true}).waitFor();
     assert.match(await scanRow.innerText(),new RegExp(({anomaly:'发现异常',normal:'状态正常',not_detected:'未探测到目标'})[latestScan.result.kind]));
@@ -408,7 +414,9 @@ async function waitForCenteredAgent(page, agentId) {
     const local=await browser.newPage({viewport:{width:1440,height:1000}});
     local.on('pageerror',error=>errors.push(error.message));
     await local.goto(url+'/');
-    await local.getByRole('list',{name:'设备列表'}).getByRole('button',{name:/^无人机 3\b/}).click();
+    const localDrone=local.getByRole('list',{name:'设备列表'}).getByRole('button',{name:/^无人机 1\b/});
+    await local.getByRole('region',{name:'无人机 1 详情',exact:true}).waitFor();
+    assert.equal(await localDrone.getAttribute('aria-pressed'),'true');
     const localControls=local.getByRole('region',{name:'设备操作',exact:true});
     await localControls.getByRole('button',{name:'扫描周边',exact:true}).click();
     await localControls.getByText('扫描周边 · 已完成',{exact:true}).waitFor();
@@ -417,6 +425,7 @@ async function waitForCenteredAgent(page, agentId) {
     await localControls.getByLabel('距离（m）').fill('1');
     await localControls.getByRole('button',{name:'提交定向移动',exact:true}).click();
     await localControls.getByText('定向移动 · 已完成',{exact:true}).waitFor();
+    assert.equal(await localDrone.getAttribute('aria-pressed'),'true');
     await localControls.locator('.mc-inline-action-history summary').click();
     await localControls.getByText(/已移动 1\.0 \/ 1 m/).waitFor();
     await localControls.locator('.mc-inline-action-history summary').click();
