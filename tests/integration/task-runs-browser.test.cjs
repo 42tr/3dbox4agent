@@ -26,7 +26,7 @@ async function dragCamera(page, camera) {
   await page.mouse.up();
 }
 
-async function waitForCenteredAgent(page, agentId) {
+async function waitForCenteredAgent(page, agentId, name) {
   await page.waitForFunction(id => {
     const marker = document.querySelector('.mc-stage-agent');
     if (marker?.dataset.stageAgent !== id || getComputedStyle(marker).visibility !== 'visible') return false;
@@ -35,6 +35,7 @@ async function waitForCenteredAgent(page, agentId) {
     return Math.abs(agent.left - map.left - map.width / 2) < 35 &&
       Math.abs(agent.top - map.top - map.height / 2) < 95;
   }, agentId);
+  assert.equal(await page.locator('.mc-stage-agent').textContent(), name);
 }
 
 async function verifyCompletedReplay(page) {
@@ -185,6 +186,7 @@ async function verifyCompletedReplay(page) {
     await page.locator('.mc-feed').getByText(note, {exact: true}).waitFor();
     const camera = page.locator(cameraSelector);
     await page.locator(`${cameraSelector}[data-rendered-tick="0"]`).waitFor();
+    assert.equal(await page.locator('.mc-scene-camera span').textContent(), '无人机 1');
     const observerControls = page.locator('.mc-inline-device-actions');
     await observerControls.getByText('当前为只读观察，不能发送设备意图。').waitFor();
     assert.equal(await observerControls.count(), 1);
@@ -198,11 +200,12 @@ async function verifyCompletedReplay(page) {
     await feed.getByText('协调器视图', {exact: true}).first().waitFor();
     const task = view.observation.tasks.find(task => task.candidates.length);
     const agent = task.candidates[0];
+    const agentName = '无人机 ' + agent.id.split('-').at(-1);
     await mcpTool('box_assign_task', {...args, request_id: 'assign',
       expected_revision: view.world_revision, task_id: task.id, agent_id: agent.id});
-    const firstFollow = stageView.getByText('跟随 ' + agent.id, {exact: true});
+    const firstFollow = stageView.getByText('跟随 ' + agentName, {exact: true});
     await firstFollow.waitFor();
-    await waitForCenteredAgent(page, agent.id);
+    await waitForCenteredAgent(page, agent.id, agentName);
     const action = await api('/tools/box_submit_action', token, {...args, agent_id: agent.id,
       action: {requestId: 'execute', type: 'execute_task', taskId: task.id,
         targetTick: view.observation.tick + 1, expiresTick: view.observation.tick + 40}});
@@ -224,7 +227,7 @@ async function verifyCompletedReplay(page) {
       const inset = document.querySelector('.mc-scene-camera canvas');
       return card && card.dataset.renderedTick === inset?.dataset.renderedTick && card.toDataURL() === inset.toDataURL();
     }, latestCamera);
-    await waitForCenteredAgent(page, agent.id);
+    await waitForCenteredAgent(page, agent.id, agentName);
     if (process.env.BOX_BROWSER_SCREENSHOT) {
       await page.screenshot({path: process.env.BOX_BROWSER_SCREENSHOT, fullPage: true});
     }
@@ -252,9 +255,10 @@ async function verifyCompletedReplay(page) {
     assert.equal(await firstFollow.count(), 1);
     await mcpTool('box_submit_action', {...args, agent_id: otherAgentId,
       action: {requestId: 'follow-scan', type: 'scan', targetTick: advance.end_tick + 1, expiresTick: advance.end_tick + 4}});
-    const secondFollow = stageView.getByText('跟随 ' + otherAgentId, {exact: true});
+    const otherAgentName = '运输车 1';
+    const secondFollow = stageView.getByText('跟随 ' + otherAgentName, {exact: true});
     await secondFollow.waitFor();
-    await waitForCenteredAgent(page, otherAgentId);
+    await waitForCenteredAgent(page, otherAgentId, otherAgentName);
     assert.equal(await page.getByRole('button', {name: '返回全局观察'}).count(), 0);
 
     const map = page.locator('#map3d');

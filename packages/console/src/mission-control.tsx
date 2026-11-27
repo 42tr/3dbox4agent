@@ -339,13 +339,14 @@ function App(){
  const cameraHistory=s.source==='导入回放'||s.frame<s.frames-1;
  const operationAgentId=useRunOperationAgent(s.observerRunId);
  const canAutoFollow=!!s.observerRunId&&s.is3d;
- const followedAgentId=canAutoFollow&&autoFollow&&!focused&&!cameraHistory&&s.agents.some(a=>a.id===operationAgentId)?operationAgentId:'';
+ const followedAgent=canAutoFollow&&autoFollow&&!focused&&!cameraHistory?s.agents.find(a=>a.id===operationAgentId):undefined;
+ const followedAgentId=followedAgent?.id??'';
  const viewToolbar=viewTools&&canAutoFollow?stage.current?.querySelector('.mc-world > .toolbar'):null;
  useLayoutEffect(()=>{actions.followAgent?.(followedAgentId)},[followedAgentId]);
  const cameraMode=s.available3d?'webgl':s.remoteSession&&!cameraHistory?'remote':'still';
  const activeTask=s.tasks.find(t=>t.status==='active');
  const taskAgent=activeTask?s.agents.find(a=>a.id===activeTask.assignee):undefined;
- const stageAgentId=followedAgentId||taskAgent?.id;
+ const stageAgent=followedAgent??taskAgent;
  const orderedAgents=[...s.agents].sort((a,b)=>devicePriority(a,taskAgent)-devicePriority(b,taskAgent));
  const inspectorWorld=s.manual?.key||s.sceneId;
  const pinned=inspected?.world===inspectorWorld?inspected:null;
@@ -376,7 +377,7 @@ function App(){
  };
  const focusedAgent=focused?s.agents[0]:undefined;
  const status=s.statusLabel||(s.done?s.failed?'任务失败':'任务完成':s.running?'运行中':'等待运行');
- const viewLabel=focused?s.selected:followedAgentId?'跟随 '+followedAgentId:s.is3d?'全局观察':'二维观察';
+ const viewLabel=focusedAgent?deviceTitle(focusedAgent):followedAgent?`跟随 ${deviceTitle(followedAgent)}`:s.is3d?'全局观察':'二维观察';
  const openDeviceTools=()=>{
   if(inspectedAgent)select('deviceagent',inspectedAgent.id);
   openTools('设备操作');
@@ -501,9 +502,9 @@ function App(){
      </div>}
      {s.observer&&s.available3d&&inspectedAgent&&<div className="mc-scene-camera">
       <canvas key={inspectorWorld} data-device-camera={inspectedAgent.id}/>
-      <span>{inspectedAgent.id}</span>
+      <span>{deviceTitle(inspectedAgent)}</span>
      </div>}
-     <span className="mc-stage-agent" data-stage-agent={s.is3d&&!focused?stageAgentId:undefined} aria-hidden="true">{stageAgentId}</span>
+     <span className="mc-stage-agent" data-stage-agent={s.is3d&&!focused?stageAgent?.id:undefined} aria-hidden="true">{stageAgent&&deviceTitle(stageAgent)}</span>
      <div className="mc-minimap"><canvas data-world-minimap width="220" height="170" role="img" aria-label="设备位置小地图"/></div>
     </section>
     <section className="mc-console" aria-label="运行记录">
